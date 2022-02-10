@@ -64,7 +64,7 @@ class Upload < ActiveRecord::Base
     )
   end
 
-  def selef.add_unused_callback(&block)
+  def self.add_unused_callback(&block)
     (@unused_callbacks ||= []) << block
   end
 
