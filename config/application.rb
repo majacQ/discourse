@@ -145,6 +145,13 @@ module Discourse
                                   "lib/onebox/sanitize_config.rb"
                                  )
 
+    config.eager_load_paths << "#{root}/lib"
+    config.eager_load_paths << "#{root}/lib/common_passwords"
+    config.eager_load_paths << "#{root}/lib/highlight_js"
+    config.eager_load_paths << "#{root}/lib/validators"
+    config.eager_load_paths << "#{root}/lib/svg_sprite"
+    config.eager_load_paths << "#{root}/lib/guardian"
+
     # Only load the plugins named here, in the order given (default is alphabetical).
     # :all can be used as a placeholder for all plugins not explicitly named.
     # config.plugins = [ :exception_notification, :ssl_requirement, :all ]
