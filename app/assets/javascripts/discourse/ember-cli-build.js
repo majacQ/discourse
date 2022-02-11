@@ -17,6 +17,7 @@ module.exports = function (defaults) {
   const lowMem = process.env.DISCOURSE_LOW_MEM;
 
   const isProduction = EmberApp.env().includes("production");
+  console.log("Terser enabled?: ", !lowMem && isProduction);
   let app = new EmberApp(defaults, {
     autoRun: false,
     "ember-qunit": {
