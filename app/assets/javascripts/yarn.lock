@@ -11241,7 +11241,7 @@ testem@^3.2.0:
     styled_string "0.0.1"
     tap-parser "^7.0.0"
     tmp "0.0.33"
-    xmldom "^0.1.19"
+    xmldom "^0.7.0"
 
 text-table@^0.2.0:
   version "0.2.0"
