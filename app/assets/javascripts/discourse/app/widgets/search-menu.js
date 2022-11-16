@@ -1,21 +1,27 @@
-import { isValidSearchTerm, searchForTerm } from "discourse/lib/search";
+import {
+  isValidSearchTerm,
+  searchForTerm,
+  updateRecentSearches,
+} from "discourse/lib/search";
 import DiscourseURL from "discourse/lib/url";
 import { createWidget } from "discourse/widgets/widget";
 import discourseDebounce from "discourse-common/lib/debounce";
 import getURL from "discourse-common/lib/get-url";
 import { h } from "virtual-dom";
 import { iconNode } from "discourse-common/lib/icon-library";
-import { isiPad } from "discourse/lib/utilities";
+import { isiPad, translateModKey } from "discourse/lib/utilities";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { Promise } from "rsvp";
 import { search as searchCategoryTag } from "discourse/lib/category-tag-search";
 import userSearch from "discourse/lib/user-search";
 import { CANCELLED_STATUS } from "discourse/lib/autocomplete";
 import { cancel } from "@ember/runloop";
+import I18n from "I18n";
 
 const CATEGORY_SLUG_REGEXP = /(\#[a-zA-Z0-9\-:]*)$/gi;
 const USERNAME_REGEXP = /(\@[a-zA-Z0-9\-\_]*)$/gi;
 const SUGGESTIONS_REGEXP = /(in:|status:|order:|:)([a-zA-Z]*)$/gi;
+const SECOND_ENTER_MAX_DELAY = 15000;
 export const MODIFIER_REGEXP = /.*(\#|\@|:).*$/gi;
 export const DEFAULT_TYPE_FILTER = "exclude_topics";
 
@@ -111,14 +117,14 @@ const SearchHelper = {
 
     if (!term) {
       searchData.noResults = false;
-      searchData.results = [];
+      searchData.results = {};
       searchData.loading = false;
       searchData.invalidTerm = false;
 
       widget.scheduleRerender();
     } else if (!isValidSearchTerm(term, widget.siteSettings)) {
       searchData.noResults = true;
-      searchData.results = [];
+      searchData.results = {};
       searchData.loading = false;
       searchData.invalidTerm = true;
 
@@ -184,6 +190,7 @@ const SearchHelper = {
 
 export default createWidget("search-menu", {
   tagName: "div.search-menu",
+  services: ["search"],
   searchData,
 
   buildKey: () => "search-menu",
@@ -191,6 +198,8 @@ export default createWidget("search-menu", {
   defaultState(attrs) {
     return {
       inTopicContext: attrs.inTopicContext,
+      inPMInboxContext: this.search?.searchContext?.type === "private_messages",
+      _lastEnterTimestamp: null,
       _debouncer: null,
     };
   },
@@ -203,6 +212,14 @@ export default createWidget("search-menu", {
       let query = "";
 
       query += `q=${encodeURIComponent(searchData.term)}`;
+
+      const searchContext = this.searchContext();
+
+      if (searchContext?.type === "topic") {
+        query += encodeURIComponent(` topic:${searchContext.id}`);
+      } else if (searchContext?.type === "private_messages") {
+        query += encodeURIComponent(` in:messages`);
+      }
 
       if (query) {
         params.push(query);
@@ -222,7 +239,6 @@ export default createWidget("search-menu", {
 
   panelContents() {
     let searchInput = [];
-
     if (this.state.inTopicContext) {
       searchInput.push(
         this.attach("button", {
@@ -231,6 +247,17 @@ export default createWidget("search-menu", {
           title: "search.in_this_topic_tooltip",
           className: "btn btn-small search-context",
           action: "clearTopicContext",
+          iconRight: true,
+        })
+      );
+    } else if (this.state.inPMInboxContext) {
+      searchInput.push(
+        this.attach("button", {
+          icon: "times",
+          label: "search.in_messages",
+          title: "search.in_messages_tooltip",
+          className: "btn btn-small search-context",
+          action: "clearPMInboxContext",
           iconRight: true,
         })
       );
@@ -270,6 +297,11 @@ export default createWidget("search-menu", {
       this.state.inTopicContext &&
       (!SearchHelper.includesTopics() || !searchData.term)
     ) {
+      const isMobileDevice = this.site.isMobileDevice;
+
+      if (!isMobileDevice) {
+        results.push(this.attach("browser-search-tip"));
+      }
       return results;
     }
 
@@ -283,6 +315,7 @@ export default createWidget("search-menu", {
           suggestionKeyword: searchData.suggestionKeyword,
           suggestionResults: searchData.suggestionResults,
           searchTopics: SearchHelper.includesTopics(),
+          inPMInboxContext: this.state.inPMInboxContext,
         })
       );
     }
@@ -296,13 +329,6 @@ export default createWidget("search-menu", {
     searchInput.value = "";
     searchInput.focus();
     this.triggerSearch();
-  },
-
-  searchService() {
-    if (!this._searchService) {
-      this._searchService = this.register.lookup("search-service:main");
-    }
-    return this._searchService;
   },
 
   html(attrs, state) {
@@ -324,9 +350,15 @@ export default createWidget("search-menu", {
     this.sendWidgetAction("clearContext");
   },
 
+  clearPMInboxContext() {
+    this.state.inPMInboxContext = false;
+    this.sendWidgetAction("focusSearchInput");
+  },
+
   keyDown(e) {
-    if (e.which === 27 /* escape */) {
+    if (e.key === "Escape") {
       this.sendWidgetAction("toggleSearchMenu");
+      document.querySelector("#search-button").focus();
       e.preventDefault();
       return false;
     }
@@ -335,7 +367,7 @@ export default createWidget("search-menu", {
       return;
     }
 
-    if (e.which === 65 /* a */) {
+    if (e.key === "A") {
       if (document.activeElement?.classList.contains("search-link")) {
         if (document.querySelector("#reply-control.open")) {
           // add a link and focus composer
@@ -356,8 +388,8 @@ export default createWidget("search-menu", {
       }
     }
 
-    const up = e.which === 38;
-    const down = e.which === 40;
+    const up = e.key === "ArrowUp";
+    const down = e.key === "ArrowDown";
     if (up || down) {
       let focused = document.activeElement.closest(".search-menu")
         ? document.activeElement
@@ -411,19 +443,30 @@ export default createWidget("search-menu", {
     }
 
     const searchInput = document.querySelector("#search-term");
-    if (e.which === 13 && e.target === searchInput) {
+    if (e.key === "Enter" && e.target === searchInput) {
+      const recentEnterHit =
+        this.state._lastEnterTimestamp &&
+        Date.now() - this.state._lastEnterTimestamp < SECOND_ENTER_MAX_DELAY;
+
       // same combination as key-enter-escape mixin
-      if (e.ctrlKey || e.metaKey || (isiPad() && e.altKey)) {
+      if (
+        e.ctrlKey ||
+        e.metaKey ||
+        (isiPad() && e.altKey) ||
+        (searchData.typeFilter !== DEFAULT_TYPE_FILTER && recentEnterHit)
+      ) {
         this.fullSearch();
       } else {
         searchData.typeFilter = null;
         this.triggerSearch();
       }
+      this.state._lastEnterTimestamp = Date.now();
     }
 
-    if (e.target === searchInput && e.which === 8 /* backspace */) {
+    if (e.target === searchInput && e.key === "Backspace") {
       if (!searchInput.value) {
         this.clearTopicContext();
+        this.clearPMInboxContext();
       }
     }
   },
@@ -432,12 +475,15 @@ export default createWidget("search-menu", {
     searchData.noResults = false;
     if (SearchHelper.includesTopics()) {
       if (this.state.inTopicContext) {
-        this.searchService().set("highlightTerm", searchData.term);
+        this.search.set("highlightTerm", searchData.term);
       }
 
       searchData.loading = true;
       cancel(this.state._debouncer);
       SearchHelper.perform(this);
+      if (this.currentUser) {
+        updateRecentSearches(this.currentUser, searchData.term);
+      }
     } else {
       searchData.loading = false;
       if (!this.state.inTopicContext) {
@@ -471,7 +517,6 @@ export default createWidget("search-menu", {
   },
 
   fullSearch() {
-    searchData.results = [];
     searchData.loading = false;
     SearchHelper.cancel();
     const url = this.fullSearchUrl();
@@ -482,10 +527,27 @@ export default createWidget("search-menu", {
   },
 
   searchContext() {
-    if (this.state.inTopicContext) {
-      return this.searchService().get("searchContext");
+    if (this.state.inTopicContext || this.state.inPMInboxContext) {
+      return this.search.searchContext;
     }
 
     return false;
+  },
+});
+
+createWidget("browser-search-tip", {
+  buildKey: () => "browser-search-tip",
+  tagName: "div.browser-search-tip",
+
+  html() {
+    return [
+      h(
+        "span.tip-label",
+        I18n.t("search.browser_tip", {
+          modifier: translateModKey("Meta"),
+        })
+      ),
+      h("span.tip-description", I18n.t("search.browser_tip_description")),
+    ];
   },
 });

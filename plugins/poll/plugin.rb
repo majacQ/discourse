@@ -147,7 +147,7 @@ after_initialize do
     post = options[:post]
 
     replacement = post&.url.present? ?
-      "<a href='#{UrlHelper.escape_uri(post.url)}'>#{I18n.t("poll.poll")}</a>" :
+      "<a href='#{UrlHelper.normalized_encode(post.url)}'>#{I18n.t("poll.poll")}</a>" :
       I18n.t("poll.poll")
 
     doc.css("div.poll").each do |poll|
@@ -159,10 +159,11 @@ after_initialize do
     guardian = Guardian.new(user)
     DiscoursePoll::Poll.schedule_jobs(post)
 
-    unless post.is_first_post?
-      polls = ActiveModel::ArraySerializer.new(post.polls, each_serializer: PollSerializer, root: false, scope: guardian).as_json
-      post.publish_message!("/polls/#{post.topic_id}", post_id: post.id, polls: polls)
-    end
+    next if post.is_first_post?
+    next if post.custom_fields[DiscoursePoll::HAS_POLLS].blank?
+
+    polls = ActiveModel::ArraySerializer.new(post.polls, each_serializer: PollSerializer, root: false, scope: guardian).as_json
+    post.publish_message!("/polls/#{post.topic_id}", post_id: post.id, polls: polls)
   end
 
   on(:merging_users) do |source_user, target_user|

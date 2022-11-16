@@ -22,14 +22,12 @@ export const ERRORS_COLLECTION = "ERRORS_COLLECTION";
 
 const EMPTY_OBJECT = Object.freeze({});
 const SELECT_KIT_OPTIONS = Mixin.create({
-  mergedProperties: ["selectKitOptions"],
+  concatenatedProperties: ["selectKitOptions"],
   selectKitOptions: EMPTY_OBJECT,
 });
 
 function isDocumentRTL() {
-  return (
-    window.getComputedStyle(document.querySelector("html")).direction === "rtl"
-  );
+  return document.documentElement.classList.contains("rtl");
 }
 
 export default Component.extend(
@@ -209,9 +207,14 @@ export default Component.extend(
     didReceiveAttrs() {
       this._super(...arguments);
 
-      const computedOptions = {};
-      Object.keys(this.selectKitOptions).forEach((key) => {
-        const value = this.selectKitOptions[key];
+      const mergedOptions = Object.assign({}, ...this.selectKitOptions);
+      Object.keys(mergedOptions).forEach((key) => {
+        if (isPresent(this.options[key])) {
+          this.selectKit.options.set(key, this.options[key]);
+          return;
+        }
+
+        const value = mergedOptions[key];
 
         if (
           key === "componentForRow" ||
@@ -219,9 +222,9 @@ export default Component.extend(
           key === "componentForCollection"
         ) {
           if (typeof value === "string") {
-            computedOptions[key] = () => value;
+            this.selectKit.options.set(key, () => value);
           } else {
-            computedOptions[key] = bind(this, value);
+            this.selectKit.options.set(key, bind(this, value));
           }
 
           return;
@@ -229,20 +232,18 @@ export default Component.extend(
 
         if (
           typeof value === "string" &&
-          value.indexOf(".") < 0 &&
+          !value.includes(".") &&
           value in this
         ) {
           const computedValue = get(this, value);
           if (typeof computedValue !== "function") {
-            computedOptions[key] = get(this, value);
+            this.selectKit.options.set(key, computedValue);
             return;
           }
         }
-        computedOptions[key] = value;
+
+        this.selectKit.options.set(key, value);
       });
-      this.selectKit.options.setProperties(
-        Object.assign(computedOptions, this.options || {})
-      );
 
       this.selectKit.setProperties({
         hasSelection: !isEmpty(this.value),
@@ -264,6 +265,7 @@ export default Component.extend(
     },
 
     selectKitOptions: {
+      allowAny: false,
       showFullTitle: true,
       none: null,
       translatedNone: null,
@@ -277,11 +279,11 @@ export default Component.extend(
       maximum: null,
       maximumLabel: null,
       minimum: null,
-      minimumLabel: null,
       autoInsertNoneItem: true,
       closeOnChange: true,
       limitMatches: null,
       placement: isDocumentRTL() ? "bottom-end" : "bottom-start",
+      verticalOffset: 3,
       filterComponent: "select-kit/select-kit-filter",
       selectedNameComponent: "selected-name",
       selectedChoiceComponent: "selected-choice",
@@ -289,6 +291,11 @@ export default Component.extend(
       focusAfterOnChange: true,
       triggerOnChangeOnTab: true,
       autofocus: false,
+      placementStrategy: null,
+      mobilePlacementStrategy: null,
+      desktopPlacementStrategy: null,
+      hiddenValues: null,
+      disabled: false,
     },
 
     autoFilterable: computed("content.[]", "selectKit.filter", function () {
@@ -444,7 +451,10 @@ export default Component.extend(
         resolve(items);
       }).finally(() => {
         if (!this.isDestroying && !this.isDestroyed) {
-          if (this.selectKit.options.closeOnChange) {
+          if (
+            this.selectKit.options.closeOnChange ||
+            (isPresent(value) && this.selectKit.options.maximum === 1)
+          ) {
             this.selectKit.close(event);
           }
 
@@ -586,7 +596,7 @@ export default Component.extend(
         filter = this._normalize(filter);
         content = content.filter((c) => {
           const name = this._normalize(this.getName(c));
-          return name && name.indexOf(filter) > -1;
+          return name?.includes(filter);
         });
       }
       return content;
@@ -708,7 +718,7 @@ export default Component.extend(
         rowContainer = this.element.querySelector(".select-kit-row.is-none");
       }
 
-      rowContainer && rowContainer.focus({ preventScroll });
+      rowContainer?.focus({ preventScroll });
     },
 
     _highlightLast() {
@@ -846,33 +856,50 @@ export default Component.extend(
       }
 
       this.selectKit.mainElement().open = true;
-
       this.clearErrors();
-
-      const inModal = this.element.closest("#discourse-modal");
-
       this.selectKit.onOpen(event);
 
       if (!this.popper) {
+        const inModal = this.element.closest("#discourse-modal");
         const anchor = document.querySelector(
           `#${this.selectKit.uniqueID}-header`
         );
         const popper = document.querySelector(
           `#${this.selectKit.uniqueID}-body`
         );
-
-        const placementStrategy = this?.site?.mobileView ? "absolute" : "fixed";
-        const verticalOffset = 3;
+        const strategy = this._computePlacementStrategy();
 
         this.popper = createPopper(anchor, popper, {
           eventsEnabled: false,
-          strategy: placementStrategy,
+          strategy,
           placement: this.selectKit.options.placement,
           modifiers: [
             {
+              name: "eventListeners",
+              options: {
+                resize: !this.site.mobileView,
+                scroll: !this.site.mobileView,
+              },
+            },
+            {
+              name: "flip",
+              enabled: !inModal,
+              options: {
+                padding: {
+                  top:
+                    parseInt(
+                      document.documentElement.style.getPropertyValue(
+                        "--header-offset"
+                      ),
+                      10
+                    ) || 0,
+                },
+              },
+            },
+            {
               name: "offset",
               options: {
-                offset: [0, verticalOffset],
+                offset: [0, this.selectKit.options.verticalOffset],
               },
             },
             {
@@ -882,7 +909,11 @@ export default Component.extend(
               fn({ state }) {
                 if (!inModal) {
                   let { x } = state.elements.reference.getBoundingClientRect();
-                  state.modifiersData.popperOffsets.x = -x + 10;
+                  if (strategy === "fixed") {
+                    state.modifiersData.popperOffsets.x = 0 + 10;
+                  } else {
+                    state.modifiersData.popperOffsets.x = -x + 10;
+                  }
                 }
               },
             },
@@ -911,7 +942,7 @@ export default Component.extend(
               },
             },
             {
-              name: "sameWidth",
+              name: "minWidth",
               enabled: window.innerWidth > 450,
               phase: "beforeWrite",
               requires: ["computeStyles"],
@@ -920,24 +951,12 @@ export default Component.extend(
                   state.rects.reference.width,
                   220
                 )}px`;
-
-                if (state.rects.reference.width >= 300) {
-                  state.styles.popper.maxWidth = `${state.rects.reference.width}px`;
-                } else {
-                  state.styles.popper.maxWidth = "300px";
-                }
               },
               effect: ({ state }) => {
                 state.elements.popper.style.minWidth = `${Math.max(
                   state.elements.reference.offsetWidth,
                   220
                 )}px`;
-
-                if (state.elements.reference.offsetWidth >= 300) {
-                  state.elements.popper.style.maxWidth = `${state.elements.reference.offsetWidth}px`;
-                } else {
-                  state.elements.popper.style.maxWidth = "300px";
-                }
               },
             },
             {
@@ -984,7 +1003,7 @@ export default Component.extend(
         }
 
         if (highlighted) {
-          this._scrollToRow(highlighted);
+          this._scrollToRow(highlighted, false);
           this.set("selectKit.highlighted", highlighted);
         }
       }
@@ -1030,13 +1049,31 @@ export default Component.extend(
       this._deprecateOptions();
     },
 
+    _computePlacementStrategy() {
+      let placementStrategy = this.selectKit.options.placementStrategy;
+
+      if (placementStrategy) {
+        return placementStrategy;
+      }
+
+      if (this.capabilities?.isIpadOS || this.site?.mobileView) {
+        placementStrategy =
+          this.selectKit.options.mobilePlacementStrategy || "absolute";
+      } else {
+        placementStrategy =
+          this.selectKit.options.desktopPlacementStrategy || "fixed";
+      }
+
+      return placementStrategy;
+    },
+
     _deprecated(text) {
       const discourseSetup = document.getElementById("data-discourse-setup");
       if (
         discourseSetup &&
         discourseSetup.getAttribute("data-environment") === "development"
       ) {
-        deprecated(text, { since: "v2.4.0" });
+        deprecated(text, { since: "v2.4.0", dropFrom: "2.9.0.beta1" });
       }
     },
 
@@ -1080,6 +1117,7 @@ export default Component.extend(
         none: "options.none",
         rootNone: "options.none",
         disabled: "options.disabled",
+        isDisabled: "options.disabled",
         rootNoneLabel: "options.none",
         showFullTitle: "options.showFullTitle",
         title: "options.translatedNone",

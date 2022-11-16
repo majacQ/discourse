@@ -39,7 +39,7 @@ module("Unit | Model | category", function () {
     slugFor(
       store.createRecord("category", {
         slug: "luke",
-        parentCategory: parentCategory,
+        parentCategory,
       }),
       "darth/luke",
       "it uses the parent slug before the child"
@@ -48,7 +48,7 @@ module("Unit | Model | category", function () {
     slugFor(
       store.createRecord("category", {
         id: 555,
-        parentCategory: parentCategory,
+        parentCategory,
       }),
       "darth/555-category",
       "it uses the parent slug before the child and then uses id"
@@ -58,7 +58,7 @@ module("Unit | Model | category", function () {
     slugFor(
       store.createRecord("category", {
         id: 555,
-        parentCategory: parentCategory,
+        parentCategory,
       }),
       "345-category/555-category",
       "it uses the parent before the child and uses ids for both"
@@ -128,8 +128,6 @@ module("Unit | Model | category", function () {
       bah,
       "we can find a category with english slug whose parent slug is CJK"
     );
-
-    sinon.restore();
   });
 
   test("findSingleBySlug", function (assert) {
@@ -221,6 +219,49 @@ module("Unit | Model | category", function () {
     assert.deepEqual(Category.findBySlugPathWithID("foo/baz/3"), baz);
   });
 
+  test("minimumRequiredTags", function (assert) {
+    const store = createStore();
+
+    let foo = store.createRecord("category", {
+      id: 1,
+      slug: "foo",
+      required_tag_groups: [{ name: "bar", min_count: 2 }],
+    });
+
+    assert.equal(foo.minimumRequiredTags, 2);
+
+    foo = store.createRecord("category", {
+      id: 2,
+      slug: "foo",
+    });
+
+    assert.equal(foo.minimumRequiredTags, null);
+
+    foo = store.createRecord("category", {
+      id: 3,
+      slug: "foo",
+      minimum_required_tags: 0,
+    });
+
+    assert.equal(foo.minimumRequiredTags, null);
+
+    foo = store.createRecord("category", {
+      id: 4,
+      slug: "foo",
+      minimum_required_tags: 2,
+    });
+
+    assert.equal(foo.minimumRequiredTags, 2);
+
+    foo = store.createRecord("category", {
+      id: 5,
+      slug: "foo",
+      required_tag_groups: [],
+    });
+
+    assert.equal(foo.minimumRequiredTags, null);
+  });
+
   test("search with category name", function (assert) {
     const store = createStore(),
       category1 = store.createRecord("category", {
@@ -232,9 +273,17 @@ module("Unit | Model | category", function () {
         id: 2,
         name: "middle term",
         slug: "another-different-slug",
+      }),
+      subcategory = store.createRecord("category", {
+        id: 3,
+        name: "middle term",
+        slug: "another-different-slug2",
+        parent_category_id: 2,
       });
 
-    sinon.stub(Category, "listByActivity").returns([category1, category2]);
+    sinon
+      .stub(Category, "listByActivity")
+      .returns([category1, category2, subcategory]);
 
     assert.deepEqual(
       Category.search("term", { limit: 0 }),
@@ -248,22 +297,28 @@ module("Unit | Model | category", function () {
     );
     assert.deepEqual(
       Category.search("term"),
-      [category1, category2],
+      [category1, category2, subcategory],
       "orders by activity"
     );
 
     category2.set("name", "TeRm start");
     assert.deepEqual(
       Category.search("tErM"),
-      [category2, category1],
+      [category2, category1, subcategory],
       "ignores case of category name and search term"
     );
 
     category2.set("name", "term start");
     assert.deepEqual(
       Category.search("term"),
-      [category2, category1],
+      [category2, category1, subcategory],
       "orders matching begin with and then contains"
+    );
+
+    assert.deepEqual(
+      Category.search("term", { parentCategoryId: 2 }),
+      [subcategory],
+      "search only subcategories belonging to specific parent category"
     );
 
     sinon.restore();
@@ -311,8 +366,6 @@ module("Unit | Model | category", function () {
       [child_category1, category2, read_restricted_category],
       "prioritize non read_restricted with limit"
     );
-
-    sinon.restore();
   });
 
   test("search with category slug", function (assert) {
@@ -347,5 +400,31 @@ module("Unit | Model | category", function () {
       [category2],
       "ignores case of category slug and search term"
     );
+  });
+
+  test("sortCategories returns categories with child categories sorted after parent categories", function (assert) {
+    const categories = [
+      { id: 1003, name: "Test Sub Sub", parent_category_id: 1002 },
+      { id: 1001, name: "Test" },
+      { id: 1004, name: "Test Sub Sub Sub", parent_category_id: 1003 },
+      { id: 1002, name: "Test Sub", parent_category_id: 1001 },
+      { id: 1005, name: "Test Sub Sub Sub2", parent_category_id: 1003 },
+      { id: 1006, name: "Test2" },
+      { id: 1000, name: "Test2 Sub", parent_category_id: 1006 },
+      { id: 997, name: "Test2 Sub Sub2", parent_category_id: 1000 },
+      { id: 999, name: "Test2 Sub Sub", parent_category_id: 1000 },
+    ];
+
+    assert.deepEqual(Category.sortCategories(categories).mapBy("name"), [
+      "Test",
+      "Test Sub",
+      "Test Sub Sub",
+      "Test Sub Sub Sub",
+      "Test Sub Sub Sub2",
+      "Test2",
+      "Test2 Sub",
+      "Test2 Sub Sub2",
+      "Test2 Sub Sub",
+    ]);
   });
 });

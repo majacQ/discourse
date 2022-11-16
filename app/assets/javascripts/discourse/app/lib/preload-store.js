@@ -2,10 +2,10 @@
 // The data can be accessed once by a key, after which it is removed
 
 export default {
-  data: {},
+  data: new Map(),
 
   store(key, value) {
-    this.data[key] = value;
+    this.data.set(key, value);
   },
 
   /**
@@ -14,11 +14,19 @@ export default {
     from the store.
     So, for example, you can't load a preloaded topic more than once.
   **/
+  <<<<<<< asyncify-preload-store
   async getAndRemove(key, finder) {
     if (this.data[key]) {
       const result = this.data[key];
       delete this.data[key];
       return result;
+  =======
+  getAndRemove(key, finder) {
+    if (this.data.has(key)) {
+      let promise = Promise.resolve(this.data.get(key));
+      this.data.delete(key);
+      return promise;
+  >>>>>>> chat-quotes
     }
 
     if (finder) {
@@ -29,14 +37,18 @@ export default {
   },
 
   get(key) {
-    return this.data[key];
+    return this.data.get(key);
   },
 
   remove(key) {
+  <<<<<<< asyncify-preload-store
     delete this.data[key];
+  =======
+    this.data.delete(key);
+  >>>>>>> chat-quotes
   },
 
   reset() {
-    this.data = {};
+    this.data = new Map();
   },
 };

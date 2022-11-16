@@ -69,12 +69,14 @@ export default Controller.extend({
   loadGroups() {
     if (this.currentUser) {
       return Group.findAll({ ignore_automatic: true }).then((groups) => {
-        const groupOptions = groups.map((group) => {
-          return {
-            name: group.full_name || group.name,
-            id: group.name,
-          };
-        });
+        const groupOptions = groups
+          .filter((group) => group.can_see_members)
+          .map((group) => {
+            return {
+              name: group.full_name || group.name,
+              id: group.name,
+            };
+          });
         this.set("groupOptions", groupOptions);
       });
     }
@@ -83,7 +85,7 @@ export default Controller.extend({
   @action
   groupChanged(_, groupAttrs) {
     // First param is the group name, which include none or 'all groups'. Ignore this and look at second param.
-    this.set("group", groupAttrs.id);
+    this.set("group", groupAttrs?.id);
   },
 
   @action

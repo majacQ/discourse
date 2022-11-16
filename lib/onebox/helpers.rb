@@ -66,7 +66,7 @@ module Onebox
       end
 
       result = StringIO.new
-      Net::HTTP.start(uri.host, uri.port, open_timeout: Onebox.options.connect_timeout, use_ssl: uri.normalized_scheme == 'https') do |http|
+      FinalDestination::HTTP.start(uri.host, uri.port, open_timeout: Onebox.options.connect_timeout, use_ssl: uri.normalized_scheme == 'https') do |http|
         http.read_timeout = Onebox.options.timeout
         http.verify_mode = OpenSSL::SSL::VERIFY_NONE  # Work around path building bugs
 
@@ -120,7 +120,7 @@ module Onebox
     def self.fetch_content_length(location)
       uri = URI(location)
 
-      Net::HTTP.start(uri.host, uri.port, open_timeout: Onebox.options.connect_timeout, use_ssl: uri.is_a?(URI::HTTPS)) do |http|
+      FinalDestination::HTTP.start(uri.host, uri.port, open_timeout: Onebox.options.connect_timeout, use_ssl: uri.is_a?(URI::HTTPS)) do |http|
         http.read_timeout = Onebox.options.timeout
         if uri.is_a?(URI::HTTPS)
           http.use_ssl = true
@@ -199,18 +199,11 @@ module Onebox
     end
 
     def self.get_absolute_image_url(src, url)
-      if src && !!(src =~ /^\/\//)
-        uri = URI(url)
-        src = "#{uri.scheme}:#{src}"
-      elsif src && src.match(/^https?:\/\//i).nil?
-        uri = URI(url)
-        src = if !src.start_with?("/") && uri.path.present?
-          "#{uri.scheme}://#{uri.host.sub(/\/$/, '')}#{uri.path.sub(/\/$/, '')}/#{src.sub(/^\//, '')}"
-        else
-          "#{uri.scheme}://#{uri.host.sub(/\/$/, '')}/#{src.sub(/^\//, '')}"
-        end
+      begin
+        URI.parse(url).merge(src).to_s
+      rescue ArgumentError, URI::BadURIError, URI::InvalidURIError
+        src
       end
-      src
     end
 
     # Percent-encodes a URI string per RFC3986 - https://tools.ietf.org/html/rfc3986

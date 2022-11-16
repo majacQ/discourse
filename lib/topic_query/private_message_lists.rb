@@ -2,19 +2,21 @@
 
 class TopicQuery
   module PrivateMessageLists
-    def list_private_messages(user)
+    def list_private_messages(user, &blk)
       list = private_messages_for(user, :user)
       list = not_archived(list, user)
+      list = have_posts_from_others(list, user)
 
-      list = list.where(<<~SQL)
-        NOT (
-          topics.participant_count = 1
-          AND topics.user_id = #{user.id.to_i}
-          AND topics.moderator_posts_count = 0
-        )
-      SQL
+      create_list(:private_messages, {}, list, &blk)
+    end
 
-      create_list(:private_messages, {}, list)
+    def list_private_messages_direct_and_groups(user, &blk)
+      list = private_messages_for(user, :all)
+      list = not_archived(list, user)
+      list = not_archived_in_groups(list)
+      list = have_posts_from_others(list, user)
+
+      create_list(:private_messages, {}, list, &blk)
     end
 
     def list_private_messages_archive(user)
@@ -39,7 +41,7 @@ class TopicQuery
 
     def list_private_messages_new(user, type = :user)
       list = filter_private_message_new(user, type)
-      list = remove_muted_tags(list, user)
+      list = TopicQuery.remove_muted_tags(list, user)
       list = remove_dismissed(list, user)
 
       create_list(:private_messages, {}, list)
@@ -116,20 +118,20 @@ class TopicQuery
           result = result.joins("INNER JOIN group_users gu ON gu.group_id = tag.group_id AND gu.user_id = #{user.id.to_i}")
         end
       elsif type == :user
-        result = result.where("topics.id IN (SELECT topic_id FROM topic_allowed_users WHERE user_id = #{user.id.to_i})")
+        result = result.where("topics.id IN (SELECT topic_id FROM topic_allowed_users WHERE user_id = ?)", user.id.to_i)
       elsif type == :all
         group_ids = group_with_messages_ids(user)
 
         result =
         if group_ids.present?
-          result.where(<<~SQL)
+          result.where(<<~SQL, user.id.to_i, group_ids)
             topics.id IN (
               SELECT topic_id
               FROM topic_allowed_users
-              WHERE user_id = #{user.id.to_i}
+              WHERE user_id = ?
               UNION ALL
               SELECT topic_id FROM topic_allowed_groups
-              WHERE group_id IN (#{group_ids.join(",")})
+              WHERE group_id IN (?)
             )
           SQL
         else
@@ -165,7 +167,7 @@ class TopicQuery
     def filter_private_messages_unread(user, type)
       list = TopicQuery.unread_filter(
         private_messages_for(user, type),
-        staff: user.staff?
+        whisperer: user.whisperer?
       )
 
       first_unread_pm_at =
@@ -250,6 +252,20 @@ class TopicQuery
       list.joins("LEFT JOIN user_archived_messages um
                          ON um.user_id = #{user.id.to_i} AND um.topic_id = topics.id")
         .where('um.user_id IS NULL')
+    end
+
+    def not_archived_in_groups(list)
+      list.left_joins(:group_archived_messages).where(group_archived_messages: { id: nil })
+    end
+
+    def have_posts_from_others(list, user)
+      list.where(<<~SQL, user.id.to_i)
+        NOT (
+          topics.participant_count = 1
+          AND topics.user_id = ?
+          AND topics.moderator_posts_count = 0
+        )
+      SQL
     end
 
     def group

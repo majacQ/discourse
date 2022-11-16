@@ -4,6 +4,8 @@ import {
 } from "discourse/tests/helpers/qunit-helpers";
 import { test } from "qunit";
 import { PresenceChannelNotFound } from "discourse/services/presence";
+import { setTestPresence } from "discourse/lib/user-presence";
+import sinon from "sinon";
 
 function usersFixture() {
   return [
@@ -41,7 +43,7 @@ acceptance("Presence - Subscribing", function (needs) {
             last_message_id: 1,
             users: usersFixture(),
           };
-        } else if (c.startsWith("/countonly/")) {
+        } else if (c.startsWith("/count-only/")) {
           response[c] = {
             count: 3,
             last_message_id: 1,
@@ -58,16 +60,21 @@ acceptance("Presence - Subscribing", function (needs) {
   test("subscribing and receiving updates", async function (assert) {
     let presenceService = this.container.lookup("service:presence");
     let channel = presenceService.getChannel("/test/ch1");
+    let changes = 0;
+    const countChanges = () => changes++;
+    channel.on("change", countChanges);
+
     assert.strictEqual(channel.name, "/test/ch1");
 
     await channel.subscribe({
       users: usersFixture(),
       last_message_id: 1,
     });
+    assert.strictEqual(changes, 1);
 
     assert.strictEqual(channel.users.length, 3, "it starts with three users");
 
-    publishToMessageBus(
+    await publishToMessageBus(
       "/presence/test/ch1",
       {
         leaving_user_ids: [1],
@@ -77,8 +84,9 @@ acceptance("Presence - Subscribing", function (needs) {
     );
 
     assert.strictEqual(channel.users.length, 2, "one user is removed");
+    assert.strictEqual(changes, 2);
 
-    publishToMessageBus(
+    await publishToMessageBus(
       "/presence/test/ch1",
       {
         entering_users: [usersFixture()[0]],
@@ -88,6 +96,8 @@ acceptance("Presence - Subscribing", function (needs) {
     );
 
     assert.strictEqual(channel.users.length, 3, "one user is added");
+    assert.strictEqual(changes, 3);
+    channel.off("change", countChanges);
   });
 
   test("fetches data when no initial state", async function (assert) {
@@ -98,7 +108,7 @@ acceptance("Presence - Subscribing", function (needs) {
 
     assert.strictEqual(channel.users.length, 3, "loads initial state");
 
-    publishToMessageBus(
+    await publishToMessageBus(
       "/presence/test/ch1",
       {
         leaving_user_ids: [1],
@@ -113,7 +123,13 @@ acceptance("Presence - Subscribing", function (needs) {
       "updates following messagebus message"
     );
 
-    publishToMessageBus(
+    const stub = sinon
+      .stub(console, "log")
+      .withArgs(
+        "PresenceChannel '/test/ch1' dropped message (received 99, expecting 3), resyncing..."
+      );
+
+    await publishToMessageBus(
       "/presence/test/ch1",
       {
         leaving_user_ids: [2],
@@ -122,8 +138,7 @@ acceptance("Presence - Subscribing", function (needs) {
       99
     );
 
-    await channel._presenceState._resubscribePromise;
-
+    sinon.assert.calledOnce(stub);
     assert.strictEqual(
       channel.users.length,
       3,
@@ -144,7 +159,7 @@ acceptance("Presence - Subscribing", function (needs) {
 
   test("can subscribe to count_only channel", async function (assert) {
     let presenceService = this.container.lookup("service:presence");
-    let channel = presenceService.getChannel("/countonly/ch1");
+    let channel = presenceService.getChannel("/count-only/ch1");
 
     await channel.subscribe();
 
@@ -152,8 +167,8 @@ acceptance("Presence - Subscribing", function (needs) {
     assert.strictEqual(channel.countOnly, true, "identifies as countOnly");
     assert.strictEqual(channel.users, null, "has null users list");
 
-    publishToMessageBus(
-      "/presence/countonly/ch1",
+    await publishToMessageBus(
+      "/presence/count-only/ch1",
       {
         count_delta: 1,
       },
@@ -163,16 +178,14 @@ acceptance("Presence - Subscribing", function (needs) {
 
     assert.strictEqual(channel.count, 4, "updates the count via messagebus");
 
-    publishToMessageBus(
-      "/presence/countonly/ch1",
+    await publishToMessageBus(
+      "/presence/count-only/ch1",
       {
         leaving_user_ids: [2],
       },
       0,
       3
     );
-
-    await channel._presenceState._resubscribePromise;
 
     assert.strictEqual(
       channel.count,
@@ -215,14 +228,14 @@ acceptance("Presence - Subscribing", function (needs) {
     assert.strictEqual(channel.subscribed, false, "channel can unsubscribe");
     assert.strictEqual(
       channelDup._presenceState,
-      channel._presenceState,
-      "state is maintained"
+      presenceService._presenceChannelStates.get(channel.name),
+      "state is maintained in the subscribed channel"
     );
 
     await channelDup.unsubscribe();
     assert.strictEqual(channel.subscribed, false, "channelDup can unsubscribe");
     assert.strictEqual(
-      channelDup._presenceState,
+      presenceService._presenceChannelStates.get(channel.name),
       undefined,
       "state is cleared"
     );
@@ -279,9 +292,9 @@ acceptance("Presence - Entering and Leaving", function (needs) {
     );
   });
 
-  test("raises an error when entering a non-existant channel", async function (assert) {
+  test("raises an error when entering a non-existent channel", async function (assert) {
     const presenceService = this.container.lookup("service:presence");
-    const channel = presenceService.getChannel("/blah/doesnotexist");
+    const channel = presenceService.getChannel("/blah/does-not-exist");
     await assert.rejects(
       channel.enter(),
       PresenceChannelNotFound,
@@ -324,6 +337,57 @@ acceptance("Presence - Entering and Leaving", function (needs) {
     assert.notOk(
       presenceService._presentChannels.has("/test/ch1"),
       "service shows absent"
+    );
+  });
+
+  test("handles the onlyWhileActive flag", async function (assert) {
+    const presenceService = this.container.lookup("service:presence");
+    const channel = presenceService.getChannel("/test/ch1");
+    await channel.enter();
+    requests.pop(); // Throw away this request
+
+    const channel2 = presenceService.getChannel("/test/ch2");
+    await channel2.enter({ onlyWhileActive: false });
+
+    assert.strictEqual(requests.length, 1, "updated the server");
+    let presentChannels = requests.pop().getAll("present_channels[]");
+    assert.deepEqual(
+      presentChannels,
+      ["/test/ch1", "/test/ch2"],
+      "included both channels when active"
+    );
+
+    setTestPresence(false);
+    await presenceService._updateServer();
+    assert.strictEqual(
+      requests.length,
+      1,
+      "updated the server after going idle"
+    );
+    let request = requests.pop();
+    assert.deepEqual(
+      request.getAll("present_channels[]"),
+      ["/test/ch2"],
+      "ch2 remained present"
+    );
+    assert.ok(
+      request.getAll("leave_channels[]").includes("/test/ch1"),
+      "left ch1"
+    );
+
+    await channel2.leave();
+    assert.strictEqual(requests.length, 1, "updated the server");
+    request = requests.pop();
+    assert.ok(
+      request.getAll("leave_channels[]").includes("/test/ch2"),
+      "left ch2"
+    );
+
+    await presenceService._updateServer();
+    assert.strictEqual(
+      requests.length,
+      0,
+      "skips sending empty updates to the server"
     );
   });
 });

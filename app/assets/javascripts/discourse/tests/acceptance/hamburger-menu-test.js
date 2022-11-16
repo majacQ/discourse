@@ -1,9 +1,10 @@
 import {
   acceptance,
-  queryAll,
+  exists,
+  query,
   updateCurrentUser,
 } from "discourse/tests/helpers/qunit-helpers";
-import { click, visit } from "@ember/test-helpers";
+import { click, triggerKeyEvent, visit } from "@ember/test-helpers";
 import { test } from "qunit";
 
 acceptance(
@@ -20,9 +21,18 @@ acceptance(
       await click(".hamburger-dropdown");
 
       assert.strictEqual(
-        queryAll(".review .badge-notification.reviewables").text(),
+        query(".review .badge-notification.reviewables").innerText,
         "3"
       );
     });
   }
 );
+
+acceptance("Hamburger Menu accessibility", function () {
+  test("Escape key closes hamburger menu", async function (assert) {
+    await visit("/");
+    await click("#toggle-hamburger-menu");
+    await triggerKeyEvent(".hamburger-panel", "keydown", "Escape");
+    assert.ok(!exists(".hamburger-panel"), "Esc closes the hamburger panel");
+  });
+});

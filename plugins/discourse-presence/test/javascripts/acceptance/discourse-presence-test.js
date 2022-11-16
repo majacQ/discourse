@@ -1,7 +1,8 @@
 import {
   acceptance,
   count,
-  queryAll,
+  exists,
+  query,
 } from "discourse/tests/helpers/qunit-helpers";
 import { click, currentURL, fillIn, visit } from "@ember/test-helpers";
 import { test } from "qunit";
@@ -14,12 +15,15 @@ import User from "discourse/models/user";
 import selectKit from "discourse/tests/helpers/select-kit-helper";
 
 acceptance("Discourse Presence Plugin", function (needs) {
-  needs.user();
+  needs.user({ whisperer: true });
   needs.settings({ enable_whispers: true });
 
   test("Doesn't break topic creation", async function (assert) {
     await visit("/");
     await click("#create-topic");
+    const categoryChooser = selectKit(".category-chooser");
+    await categoryChooser.expand();
+    await categoryChooser.selectRowByValue(2);
     await fillIn("#reply-title", "Internationalization Localization");
     await fillIn(
       ".d-editor-input",
@@ -115,8 +119,8 @@ acceptance("Discourse Presence Plugin", function (needs) {
     await click(".topic-post:nth-of-type(1) button.edit");
 
     assert.strictEqual(
-      queryAll(".d-editor-input").val(),
-      queryAll(".topic-post:nth-of-type(1) .cooked > p").text(),
+      query(".d-editor-input").value,
+      query(".topic-post:nth-of-type(1) .cooked > p").innerText,
       "composer has contents of post to be edited"
     );
 
@@ -160,16 +164,16 @@ acceptance("Discourse Presence Plugin", function (needs) {
 
     await joinChannel("/discourse-presence/reply/280", {
       id: 123,
-      avatar_template: "/a/b/c.jpg",
-      username: "myusername",
+      avatar_template: "/images/avatar.png",
+      username: "my-username",
     });
 
     assert.strictEqual(count(avatarSelector), 1, "avatar displayed");
 
     await joinChannel("/discourse-presence/whisper/280", {
       id: 124,
-      avatar_template: "/a/b/c.jpg",
-      username: "myusername2",
+      avatar_template: "/images/avatar.png",
+      username: "my-username2",
     });
 
     assert.strictEqual(count(avatarSelector), 2, "whisper avatar displayed");
@@ -192,26 +196,21 @@ acceptance("Discourse Presence Plugin", function (needs) {
     await click("#topic-footer-buttons .btn.create");
     assert.ok(exists(".d-editor-input"), "the composer input is visible");
 
-    const avatarSelector =
-      ".composer-fields-outlet.presence .presence-avatars .avatar";
-    assert.ok(
-      exists(".composer-fields-outlet.presence"),
-      "includes the presence component"
-    );
+    const avatarSelector = ".reply-to .presence-avatars .avatar";
     assert.strictEqual(count(avatarSelector), 0, "no avatars displayed");
 
     await joinChannel("/discourse-presence/reply/280", {
       id: 123,
-      avatar_template: "/a/b/c.jpg",
-      username: "myusername",
+      avatar_template: "/images/avatar.png",
+      username: "my-username",
     });
 
     assert.strictEqual(count(avatarSelector), 1, "avatar displayed");
 
     await joinChannel("/discourse-presence/whisper/280", {
       id: 124,
-      avatar_template: "/a/b/c.jpg",
-      username: "myusername2",
+      avatar_template: "/images/avatar.png",
+      username: "my-username2",
     });
 
     assert.strictEqual(count(avatarSelector), 2, "whisper avatar displayed");

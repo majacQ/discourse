@@ -15,7 +15,8 @@ class S3Helper
   # * cache time for secure-media URLs
   # * expiry time for S3 presigned URLs, which include backup downloads and
   #   any upload that has a private ACL (e.g. secure uploads)
-  DOWNLOAD_URL_EXPIRES_AFTER_SECONDS ||= 5.minutes.to_i
+  #
+  # SiteSetting.s3_presigned_get_url_expires_after_seconds
 
   ##
   # Controls the following:
@@ -78,6 +79,10 @@ class S3Helper
     [path, etag.gsub('"', '')]
   end
 
+  def path_from_url(url)
+    URI.parse(url).path.delete_prefix("/")
+  end
+
   def remove(s3_filename, copy_to_tombstone = false)
     s3_filename = s3_filename.dup
 
@@ -92,12 +97,21 @@ class S3Helper
     # delete the file
     s3_filename.prepend(multisite_upload_path) if Rails.configuration.multisite
     delete_object(get_path_for_s3_upload(s3_filename))
-  rescue Aws::S3::Errors::NoSuchKey
+  rescue Aws::S3::Errors::NoSuchKey, Aws::S3::Errors::NotFound
   end
 
   def delete_object(key)
     s3_bucket.object(key).delete
-  rescue Aws::S3::Errors::NoSuchKey
+  rescue Aws::S3::Errors::NoSuchKey, Aws::S3::Errors::NotFound
+  end
+
+  def delete_objects(keys)
+    s3_bucket.delete_objects({
+      delete: {
+        objects: keys.map { |k| { key: k } },
+        quiet: true,
+      },
+    })
   end
 
   def copy(source, destination, options: {})
@@ -106,37 +120,39 @@ class S3Helper
     end
 
     destination = get_path_for_s3_upload(destination)
-    if !Rails.configuration.multisite
-      options[:copy_source] = File.join(@s3_bucket_name, source)
+    source_object = if !Rails.configuration.multisite || source.include?(multisite_upload_path) || source.include?(@tombstone_prefix)
+      s3_bucket.object(source)
+    elsif @s3_bucket_folder_path
+      folder, filename = source.split("/", 2)
+      s3_bucket.object(File.join(folder, multisite_upload_path, filename))
     else
-      if source.include?(multisite_upload_path) || source.include?(@tombstone_prefix)
-        options[:copy_source] = File.join(@s3_bucket_name, source)
-      elsif @s3_bucket_folder_path
-        folder, filename = begin
-                             source.split("/", 2)
-                           end
-        options[:copy_source] = File.join(@s3_bucket_name, folder, multisite_upload_path, filename)
-      else
-        options[:copy_source] = File.join(@s3_bucket_name, multisite_upload_path, source)
-      end
+      s3_bucket.object(File.join(multisite_upload_path, source))
+    end
+
+    if source_object.size > FIFTEEN_MEGABYTES
+      options[:multipart_copy] = true
+      options[:content_length] = source_object.size
     end
 
     destination_object = s3_bucket.object(destination)
 
-    # TODO: copy_source is a legacy option here and may become unsupported
-    # in later versions, we should change to use Aws::S3::Client#copy_object
-    # at some point.
-    #
-    # See https://github.com/aws/aws-sdk-ruby/blob/version-3/gems/aws-sdk-s3/lib/aws-sdk-s3/customizations/object.rb#L67-L74
-    #
-    # ----
-    #
-    # Also note, any options for metadata (e.g. content_disposition, content_type)
-    # will not be applied unless the metadata_directive = "REPLACE" option is passed
-    # in. If this is not passed in, the source object's metadata will be used.
-    response = destination_object.copy_from(options)
+    # Note for small files that do not use multipart copy: Any options for metadata
+    # (e.g. content_disposition, content_type) will not be applied unless the
+    # metadata_directive = "REPLACE" option is passed in. If this is not passed in,
+    # the source object's metadata will be used.
+    # For larger files it copies the metadata from the source file and merges it
+    # with values from the copy call.
+    response = destination_object.copy_from(source_object, options)
 
-    [destination, response.copy_object_result.etag.gsub('"', '')]
+    etag = if response.respond_to?(:copy_object_result)
+      # small files, regular copy
+      response.copy_object_result.etag
+    else
+      # larger files, multipart copy
+      response.data.etag
+    end
+
+    [destination, etag.gsub('"', '')]
   end
 
   # Several places in the application need certain CORS rules to exist
@@ -280,6 +296,92 @@ class S3Helper
 
   def s3_inventory_path(path = 'inventory')
     get_path_for_s3_upload(path)
+  end
+
+  def abort_multipart(key:, upload_id:)
+    s3_client.abort_multipart_upload(
+      bucket: s3_bucket_name,
+      key: key,
+      upload_id: upload_id
+    )
+  end
+
+  def create_multipart(key, content_type, metadata: {})
+    response = s3_client.create_multipart_upload(
+      acl: "private",
+      bucket: s3_bucket_name,
+      key: key,
+      content_type: content_type,
+      metadata: metadata
+    )
+    { upload_id: response.upload_id, key: key }
+  end
+
+  def presign_multipart_part(upload_id:, key:, part_number:)
+    presigned_url(
+      key,
+      method: :upload_part,
+      expires_in: S3Helper::UPLOAD_URL_EXPIRES_AFTER_SECONDS,
+      opts: {
+        part_number: part_number,
+        upload_id: upload_id
+      }
+    )
+  end
+
+  # Important note from the S3 documentation:
+  #
+  # This request returns a default and maximum of 1000 parts.
+  # You can restrict the number of parts returned by specifying the
+  # max_parts argument. If your multipart upload consists of more than 1,000
+  # parts, the response returns an IsTruncated field with the value of true,
+  # and a NextPartNumberMarker element.
+  #
+  # In subsequent ListParts requests you can include the part_number_marker arg
+  # using the NextPartNumberMarker the field value from the previous response to
+  # get more parts.
+  #
+  # See https://docs.aws.amazon.com/sdk-for-ruby/v3/api/Aws/S3/Client.html#list_parts-instance_method
+  def list_multipart_parts(upload_id:, key:, max_parts: 1000, start_from_part_number: nil)
+    options = {
+      bucket: s3_bucket_name,
+      key: key,
+      upload_id: upload_id,
+      max_parts: max_parts
+    }
+
+    if start_from_part_number.present?
+      options[:part_number_marker] = start_from_part_number
+    end
+
+    s3_client.list_parts(options)
+  end
+
+  def complete_multipart(upload_id:, key:, parts:)
+    s3_client.complete_multipart_upload(
+      bucket: s3_bucket_name,
+      key: key,
+      upload_id: upload_id,
+      multipart_upload: {
+        parts: parts
+      }
+    )
+  end
+
+  def presigned_url(
+    key,
+    method:,
+    expires_in: S3Helper::UPLOAD_URL_EXPIRES_AFTER_SECONDS,
+    opts: {}
+  )
+    Aws::S3::Presigner.new(client: s3_client).presigned_url(
+      method,
+      {
+        bucket: s3_bucket_name,
+        key: key,
+        expires_in: expires_in,
+      }.merge(opts)
+    )
   end
 
   private

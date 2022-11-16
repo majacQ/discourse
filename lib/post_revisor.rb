@@ -113,7 +113,14 @@ class PostRevisor
         DB.after_commit do
           post = tc.topic.ordered_posts.first
           notified_user_ids = [post.user_id, post.last_editor_id].uniq
-          Jobs.enqueue(:notify_tag_change, post_id: post.id, notified_user_ids: notified_user_ids, diff_tags: ((tags - prev_tags) | (prev_tags - tags)))
+          if !SiteSetting.disable_tags_edit_notifications
+            Jobs.enqueue(
+              :notify_tag_change,
+              post_id: post.id,
+              notified_user_ids: notified_user_ids,
+              diff_tags: ((tags - prev_tags) | (prev_tags - tags))
+            )
+          end
         end
       end
     end
@@ -159,7 +166,16 @@ class PostRevisor
       end
     end
 
-    return false unless should_revise?
+    if !should_revise?
+      # the draft sequence is advanced here to handle the edge case where a
+      # user opens the composer to edit a post and makes some changes (which
+      # saves a draft), but then un-does the changes and clicks save. In this
+      # case, should_revise? returns false because nothing has really changed
+      # in the post, but we want to get rid of the draft so we advance the
+      # sequence.
+      advance_draft_sequence if !opts[:keep_existing_draft]
+      return false
+    end
 
     @post.acting_user = @editor
     @topic.acting_user = @editor
@@ -204,7 +220,7 @@ class PostRevisor
       plugin_callbacks
 
       revise_topic
-      advance_draft_sequence
+      advance_draft_sequence if !opts[:keep_existing_draft]
     end
 
     # Lock the post by default if the appropriate setting is true
@@ -271,7 +287,6 @@ class PostRevisor
         return true
       end
     end
-    advance_draft_sequence
     false
   end
 
@@ -437,22 +452,19 @@ class PostRevisor
       private_message = @topic.private_message?
 
       prev_owner_user_stat = prev_owner.user_stat
+
       unless private_message
-        prev_owner_user_stat.post_count -= 1 if @post.post_type == Post.types[:regular]
-        prev_owner_user_stat.topic_count -= 1 if @post.is_first_post?
+        UserStatCountUpdater.decrement!(@post, user_stat: prev_owner_user_stat) if !@post.trashed?
         prev_owner_user_stat.likes_received -= likes
       end
 
       if @post.created_at == prev_owner.user_stat.first_post_created_at
-        prev_owner_user_stat.first_post_created_at = prev_owner.posts.order('created_at ASC').first.try(:created_at)
+        prev_owner_user_stat.update!(first_post_created_at: prev_owner.posts.order('created_at ASC').first.try(:created_at))
       end
-
-      prev_owner_user_stat.save!
 
       new_owner_user_stat = new_owner.user_stat
       unless private_message
-        new_owner_user_stat.post_count += 1 if @post.post_type == Post.types[:regular]
-        new_owner_user_stat.topic_count += 1 if @post.is_first_post?
+        UserStatCountUpdater.increment!(@post, user_stat: new_owner_user_stat) if !@post.trashed?
         new_owner_user_stat.likes_received += likes
       end
       new_owner_user_stat.save!
@@ -531,9 +543,9 @@ class PostRevisor
 
     modifications.each_key do |field|
       if revision.modifications.has_key?(field)
-        old_value = revision.modifications[field][0].to_s
-        new_value = modifications[field][1].to_s
-        if old_value != new_value
+        old_value = revision.modifications[field][0]
+        new_value = modifications[field][1]
+        if old_value.to_s != new_value.to_s
           revision.modifications[field] = [old_value, new_value]
         else
           revision.modifications.delete(field)
@@ -545,9 +557,10 @@ class PostRevisor
     # should probably do this before saving the post!
     if revision.modifications.empty?
       revision.destroy
+      @post.last_editor_id = PostRevision.where(post_id: @post.id).order(number: :desc).pluck_first(:user_id) || @post.user_id
       @post.version -= 1
       @post.public_version -= 1
-      @post.save
+      @post.save(validate: @validate_post)
     else
       revision.save
     end
@@ -617,6 +630,7 @@ class PostRevisor
 
     update_topic_excerpt
     update_category_description
+    hide_welcome_topic_banner
   end
 
   def update_topic_excerpt
@@ -636,6 +650,15 @@ class PostRevisor
     else
       @post.errors.add(:base, I18n.t("category.errors.description_incomplete"))
     end
+  end
+
+  def hide_welcome_topic_banner
+    return unless guardian.is_admin?
+    return unless @topic.id == SiteSetting.welcome_topic_id
+    return unless Discourse.cache.read(Site.welcome_topic_banner_cache_key(@editor.id))
+
+    Discourse.cache.write(Site.welcome_topic_banner_cache_key(@editor.id), false)
+    MessageBus.publish("/site/welcome-topic-banner", false)
   end
 
   def advance_draft_sequence

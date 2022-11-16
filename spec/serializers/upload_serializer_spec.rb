@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe UploadSerializer do
   fab!(:upload) { Fabricate(:upload) }
   let(:subject) { UploadSerializer.new(upload, root: false) }
@@ -20,17 +18,17 @@ RSpec.describe UploadSerializer do
   context "when the upload is secure" do
     fab!(:upload) { Fabricate(:secure_upload) }
 
-    context "when secure media is disabled" do
+    context "when secure uploads is disabled" do
       it "just returns the normal URL, otherwise S3 errors are encountered" do
         UrlHelper.expects(:cook_url).with(upload.url, secure: false)
         subject.to_json
       end
     end
 
-    context "when secure media is enabled" do
+    context "when secure uploads is enabled" do
       before do
         setup_s3
-        SiteSetting.secure_media = true
+        SiteSetting.secure_uploads = true
       end
 
       it "returns the cooked URL based on the upload URL" do

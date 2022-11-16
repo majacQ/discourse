@@ -2,10 +2,12 @@ import {
   acceptance,
   count,
   exists,
+  query,
   queryAll,
 } from "discourse/tests/helpers/qunit-helpers";
 import { click, fillIn, visit } from "@ember/test-helpers";
 import { test } from "qunit";
+import I18n from "I18n";
 
 acceptance("Admin - Watched Words", function (needs) {
   needs.user();
@@ -56,33 +58,65 @@ acceptance("Admin - Watched Words", function (needs) {
   test("add words", async function (assert) {
     await visit("/admin/customize/watched_words/action/block");
 
-    click(".show-words-checkbox");
-    fillIn(".watched-word-form input", "poutine");
-
+    await click(".show-words-checkbox");
+    await fillIn(".watched-word-form input", "poutine");
     await click(".watched-word-form button");
 
     let found = [];
-    $.each(queryAll(".watched-words-list .watched-word"), (index, elem) => {
-      if ($(elem).text().trim() === "poutine") {
+    [...queryAll(".watched-words-list .watched-word")].forEach((elem) => {
+      if (elem.innerText.trim() === "poutine") {
         found.push(true);
       }
     });
+
     assert.strictEqual(found.length, 1);
+    assert.strictEqual(count(".watched-words-list .case-sensitive"), 0);
+  });
+
+  test("add case-sensitive words", async function (assert) {
+    await visit("/admin/customize/watched_words/action/block");
+    const submitButton = query(".watched-word-form button");
+    assert.strictEqual(
+      submitButton.disabled,
+      true,
+      "Add button is disabled by default"
+    );
+    await click(".show-words-checkbox");
+    await fillIn(".watched-word-form input", "Discourse");
+    await click(".case-sensitivity-checkbox");
+    assert.strictEqual(
+      submitButton.disabled,
+      false,
+      "Add button should no longer be disabled after input is filled"
+    );
+    await click(submitButton);
+
+    assert
+      .dom(".watched-words-list .watched-word")
+      .hasText(`Discourse ${I18n.t("admin.watched_words.case_sensitive")}`);
+
+    await fillIn(".watched-word-form input", "discourse");
+    await click(".case-sensitivity-checkbox");
+    await click(submitButton);
+
+    assert
+      .dom(".watched-words-list .watched-word")
+      .hasText(`discourse ${I18n.t("admin.watched_words.case_sensitive")}`);
   });
 
   test("remove words", async function (assert) {
     await visit("/admin/customize/watched_words/action/block");
     await click(".show-words-checkbox");
 
-    let word = null;
+    let wordId = null;
 
-    $.each(queryAll(".watched-words-list .watched-word"), (index, elem) => {
-      if ($(elem).text().trim() === "anise") {
-        word = elem;
+    [...queryAll(".watched-words-list .watched-word")].forEach((elem) => {
+      if (elem.innerText.trim() === "anise") {
+        wordId = elem.getAttribute("id");
       }
     });
 
-    await click(`#${$(word).attr("id")} .delete-word-record`);
+    await click(`#${wordId} .delete-word-record`);
 
     assert.strictEqual(count(".watched-words-list .watched-word"), 2);
   });
@@ -91,16 +125,16 @@ acceptance("Admin - Watched Words", function (needs) {
     await visit("/admin/customize/watched_words/action/replace");
     await click(".watched-word-test");
     await fillIn(".modal-body textarea", "Hi there!");
-    assert.strictEqual(find(".modal-body li .match").text(), "Hi");
-    assert.strictEqual(find(".modal-body li .replacement").text(), "hello");
+    assert.strictEqual(query(".modal-body li .match").innerText, "Hi");
+    assert.strictEqual(query(".modal-body li .replacement").innerText, "hello");
   });
 
   test("test modal - tag", async function (assert) {
     await visit("/admin/customize/watched_words/action/tag");
     await click(".watched-word-test");
     await fillIn(".modal-body textarea", "Hello world!");
-    assert.strictEqual(find(".modal-body li .match").text(), "Hello");
-    assert.strictEqual(find(".modal-body li .tag").text(), "greeting");
+    assert.strictEqual(query(".modal-body li .match").innerText, "Hello");
+    assert.strictEqual(query(".modal-body li .tag").innerText, "greeting");
   });
 });
 

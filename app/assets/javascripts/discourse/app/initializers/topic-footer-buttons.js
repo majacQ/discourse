@@ -1,4 +1,8 @@
 import I18n from "I18n";
+import {
+  NO_REMINDER_ICON,
+  WITH_REMINDER_ICON,
+} from "discourse/models/bookmark";
 import { registerTopicFooterButton } from "discourse/lib/register-topic-footer-button";
 import showModal from "discourse/lib/show-modal";
 
@@ -18,14 +22,19 @@ export default {
       priority: SHARE_PRIORITY,
       label() {
         if (!this.get("topic.isPrivateMessage") || this.site.mobileView) {
-          return "topic.share.title";
+          return "footer_nav.share";
         }
       },
       title: "topic.share.help",
       action() {
-        const controller = showModal("share-topic");
+        const controller = showModal("share-topic", {
+          model: this.topic.category,
+        });
         controller.setProperties({
-          allowInvites: this.canInviteTo && !this.inviteDisabled,
+          allowInvites:
+            this.currentUser.can_invite_to_forum &&
+            this.canInviteTo &&
+            !this.inviteDisabled,
           topic: this.topic,
         });
       },
@@ -68,9 +77,9 @@ export default {
       id: "bookmark",
       icon() {
         if (this.topic.bookmarks.some((bookmark) => bookmark.reminder_at)) {
-          return "discourse-bookmark-clock";
+          return WITH_REMINDER_ICON;
         }
-        return "bookmark";
+        return NO_REMINDER_ICON;
       },
       priority: BOOKMARK_PRIORITY,
       classNames() {
@@ -93,9 +102,11 @@ export default {
         if (this.topic.bookmarkCount === 0) {
           return I18n.t("bookmarked.help.bookmark");
         } else if (this.topic.bookmarkCount === 1) {
-          if (
-            this.topic.bookmarks.filter((bookmark) => bookmark.for_topic).length
-          ) {
+          const anyTopicBookmarks = this.topic.bookmarks.some(
+            (bookmark) => bookmark.bookmarkable_type === "Topic"
+          );
+
+          if (anyTopicBookmarks) {
             return I18n.t("bookmarked.help.edit_bookmark_for_topic");
           } else {
             return I18n.t("bookmarked.help.edit_bookmark");

@@ -11,6 +11,7 @@ import {
 } from "discourse/tests/helpers/qunit-helpers";
 import { fixturesByUrl } from "discourse/tests/helpers/create-pretender";
 import selectKit from "../helpers/select-kit-helper";
+import { cloneJSON } from "discourse-common/lib/object";
 
 acceptance(
   "User Private Messages - user with no group messages",
@@ -83,7 +84,7 @@ acceptance(
       });
 
       server.get("/t/13.json", () => {
-        const response = { ...fixturesByUrl["/t/12/1.json"] };
+        const response = cloneJSON(fixturesByUrl["/t/12/1.json"]);
         response.suggested_group_name = "awesome_group";
         return helper.response(response);
       });
@@ -123,7 +124,7 @@ acceptance(
 
           return helper.response({
             topic_list: {
-              topics: topics,
+              topics,
             },
           });
         });
@@ -187,7 +188,7 @@ acceptance(
     });
 
     const publishReadToMessageBus = function (opts = {}) {
-      publishToMessageBus(
+      return publishToMessageBus(
         `/private-message-topic-tracking-state/user/${opts.userId || 5}`,
         {
           topic_id: opts.topicId,
@@ -202,7 +203,7 @@ acceptance(
     };
 
     const publishUnreadToMessageBus = function (opts = {}) {
-      publishToMessageBus(
+      return publishToMessageBus(
         `/private-message-topic-tracking-state/user/${opts.userId || 5}`,
         {
           topic_id: opts.topicId,
@@ -218,7 +219,7 @@ acceptance(
     };
 
     const publishNewToMessageBus = function (opts = {}) {
-      publishToMessageBus(
+      return publishToMessageBus(
         `/private-message-topic-tracking-state/user/${opts.userId || 5}`,
         {
           topic_id: opts.topicId,
@@ -233,7 +234,7 @@ acceptance(
     };
 
     const publishGroupArchiveToMessageBus = function (opts) {
-      publishToMessageBus(
+      return publishToMessageBus(
         `/private-message-topic-tracking-state/group/${opts.groupIds[0]}`,
         {
           topic_id: opts.topicId,
@@ -247,7 +248,7 @@ acceptance(
     };
 
     const publishGroupUnreadToMessageBus = function (opts) {
-      publishToMessageBus(
+      return publishToMessageBus(
         `/private-message-topic-tracking-state/group/${opts.groupIds[0]}`,
         {
           topic_id: opts.topicId,
@@ -263,7 +264,7 @@ acceptance(
     };
 
     const publishGroupNewToMessageBus = function (opts) {
-      publishToMessageBus(
+      return publishToMessageBus(
         `/private-message-topic-tracking-state/group/${opts.groupIds[0]}`,
         {
           topic_id: opts.topicId,
@@ -290,13 +291,11 @@ acceptance(
     test("incoming group archive message acted by current user", async function (assert) {
       await visit("/u/charlie/messages");
 
-      publishGroupArchiveToMessageBus({
+      await publishGroupArchiveToMessageBus({
         groupIds: [14],
         topicId: 1,
         actingUserId: 5,
       });
-
-      await visit("/u/charlie/messages"); // wait for re-render
 
       assert.ok(
         !exists(".show-mores"),
@@ -311,9 +310,7 @@ acceptance(
       ]) {
         await visit(url);
 
-        publishGroupArchiveToMessageBus({ groupIds: [14], topicId: 1 });
-
-        await visit(url); // wait for re-render
+        await publishGroupArchiveToMessageBus({ groupIds: [14], topicId: 1 });
 
         assert.ok(
           exists(".show-mores"),
@@ -327,9 +324,7 @@ acceptance(
       ]) {
         await visit(url);
 
-        publishGroupArchiveToMessageBus({ groupIds: [14], topicId: 1 });
-
-        await visit(url); // wait for re-render
+        await publishGroupArchiveToMessageBus({ groupIds: [14], topicId: 1 });
 
         assert.ok(
           !exists(".show-mores"),
@@ -341,10 +336,8 @@ acceptance(
     test("incoming unread and new messages on all filter", async function (assert) {
       await visit("/u/charlie/messages");
 
-      publishUnreadToMessageBus({ topicId: 1 });
-      publishNewToMessageBus({ topicId: 2 });
-
-      await visit("/u/charlie/messages"); // wait for re-render
+      await publishUnreadToMessageBus({ topicId: 1 });
+      await publishNewToMessageBus({ topicId: 2 });
 
       assert.strictEqual(
         query(".messages-nav li a.new").innerText.trim(),
@@ -362,9 +355,7 @@ acceptance(
     test("incoming new messages while viewing new", async function (assert) {
       await visit("/u/charlie/messages/new");
 
-      publishNewToMessageBus({ topicId: 1 });
-
-      await visit("/u/charlie/messages/new"); // wait for re-render
+      await publishNewToMessageBus({ topicId: 1 });
 
       assert.strictEqual(
         query(".messages-nav li a.new").innerText.trim(),
@@ -378,9 +369,7 @@ acceptance(
     test("incoming unread messages while viewing unread", async function (assert) {
       await visit("/u/charlie/messages/unread");
 
-      publishUnreadToMessageBus();
-
-      await visit("/u/charlie/messages/unread"); // wait for re-render
+      await publishUnreadToMessageBus();
 
       assert.strictEqual(
         query(".messages-nav li a.unread").innerText.trim(),
@@ -391,13 +380,11 @@ acceptance(
       assert.ok(exists(".show-mores"), "displays the topic incoming info");
     });
 
-    test("incoming unread messages while viewing group unread", async function (assert) {
+    test("incoming unread and new messages while viewing group unread", async function (assert) {
       await visit("/u/charlie/messages/group/awesome_group/unread");
 
-      publishUnreadToMessageBus({ groupIds: [14], topicId: 1 });
-      publishNewToMessageBus({ groupIds: [14], topicId: 2 });
-
-      await visit("/u/charlie/messages/group/awesome_group/unread"); // wait for re-render
+      await publishUnreadToMessageBus({ groupIds: [14], topicId: 1 });
+      await publishNewToMessageBus({ groupIds: [14], topicId: 2 });
 
       assert.strictEqual(
         query(".messages-nav li a.unread").innerText.trim(),
@@ -432,9 +419,8 @@ acceptance(
       await visit("/u/charlie/messages");
       await visit("/t/13");
 
-      publishNewToMessageBus({ topicId: 1, userId: 5 });
+      await publishNewToMessageBus({ topicId: 1, userId: 5 });
 
-      await visit("/t/13"); // await re-render
       await visit("/u/charlie/messages");
 
       assert.ok(
@@ -446,9 +432,9 @@ acceptance(
     test("dismissing all unread messages", async function (assert) {
       await visit("/u/charlie/messages/unread");
 
-      publishUnreadToMessageBus({ topicId: 1, userId: 5 });
-      publishUnreadToMessageBus({ topicId: 2, userId: 5 });
-      publishUnreadToMessageBus({ topicId: 3, userId: 5 });
+      await publishUnreadToMessageBus({ topicId: 1, userId: 5 });
+      await publishUnreadToMessageBus({ topicId: 2, userId: 5 });
+      await publishUnreadToMessageBus({ topicId: 3, userId: 5 });
 
       assert.strictEqual(
         count(".topic-list-item"),
@@ -513,9 +499,9 @@ acceptance(
     test("dismissing new messages", async function (assert) {
       await visit("/u/charlie/messages/new");
 
-      publishNewToMessageBus({ topicId: 1, userId: 5 });
-      publishNewToMessageBus({ topicId: 2, userId: 5 });
-      publishNewToMessageBus({ topicId: 3, userId: 5 });
+      await publishNewToMessageBus({ topicId: 1, userId: 5 });
+      await publishNewToMessageBus({ topicId: 2, userId: 5 });
+      await publishNewToMessageBus({ topicId: 3, userId: 5 });
 
       assert.strictEqual(
         count(".topic-list-item"),
@@ -610,9 +596,7 @@ acceptance(
     test("suggested messages with new and unread", async function (assert) {
       await visit("/t/12");
 
-      publishNewToMessageBus({ userId: 5, topicId: 1 });
-
-      await visit("/t/12"); // await re-render
+      await publishNewToMessageBus({ userId: 5, topicId: 1 });
 
       assert.strictEqual(
         query(".suggested-topics-message").innerText.trim(),
@@ -620,9 +604,7 @@ acceptance(
         "displays the right browse more message"
       );
 
-      publishUnreadToMessageBus({ userId: 5, topicId: 2 });
-
-      await visit("/t/12"); // await re-render
+      await publishUnreadToMessageBus({ userId: 5, topicId: 2 });
 
       assert.strictEqual(
         query(".suggested-topics-message").innerText.trim(),
@@ -630,9 +612,7 @@ acceptance(
         "displays the right browse more message"
       );
 
-      publishReadToMessageBus({ userId: 5, topicId: 2 });
-
-      await visit("/t/12"); // await re-render
+      await publishReadToMessageBus({ userId: 5, topicId: 2 });
 
       assert.strictEqual(
         query(".suggested-topics-message").innerText.trim(),
@@ -657,9 +637,7 @@ acceptance(
     test("suggested messages for group messages with new and unread", async function (assert) {
       await visit("/t/13");
 
-      publishGroupNewToMessageBus({ groupIds: [14], topicId: 1 });
-
-      await visit("/t/13"); // await re-render
+      await publishGroupNewToMessageBus({ groupIds: [14], topicId: 1 });
 
       assert.ok(
         query(".suggested-topics-message")
@@ -670,9 +648,7 @@ acceptance(
         "displays the right browse more message"
       );
 
-      publishGroupUnreadToMessageBus({ groupIds: [14], topicId: 2 });
-
-      await visit("/t/13"); // await re-render
+      await publishGroupUnreadToMessageBus({ groupIds: [14], topicId: 2 });
 
       assert.ok(
         query(".suggested-topics-message")

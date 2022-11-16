@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
 RSpec.describe Onebox::Helpers do
   describe '.blank?' do
     it { expect(described_class.blank?("")).to be(true) }
@@ -43,6 +41,14 @@ RSpec.describe Onebox::Helpers do
         described_class.fetch_response('http://example.com/large-file')
       }.to raise_error(Onebox::Helpers::DownloadTooLarge)
     end
+
+    it "raises an exception when private url requested" do
+      FinalDestination::TestHelper.stub_to_fail do
+        expect {
+          described_class.fetch_response('http://example.com/large-file')
+        }.to raise_error(FinalDestination::SSRFDetector::DisallowedIpError)
+      end
+    end
   end
 
   describe "fetch_html_doc" do
@@ -53,7 +59,7 @@ RSpec.describe Onebox::Helpers do
       expect(described_class.fetch_html_doc(uri).to_s).to match("success")
     end
 
-    context "canonical link" do
+    context "with canonical link" do
       it "follows canonical link" do
         uri = 'https://www.example.com'
         stub_request(:get, uri).to_return(status: 200, body: "<!DOCTYPE html><link rel='canonical' href='http://foobar.com/'/><p>invalid</p>")
@@ -65,9 +71,21 @@ RSpec.describe Onebox::Helpers do
 
       it "does not follow canonical link pointing at localhost" do
         uri = 'https://www.example.com'
-        stub_request(:get, uri).to_return(status: 200, body: "<!DOCTYPE html><link rel='canonical' href='http://localhost:3000/'/><p>success</p>")
+        FinalDestination::SSRFDetector.stubs(:lookup_ips).with { |h| h == "localhost" }.returns(["127.0.0.1"])
+        stub_request(:get, uri).to_return(status: 200, body: "<!DOCTYPE html><link rel='canonical' href='http://localhost/test'/><p>success</p>")
 
         expect(described_class.fetch_html_doc(uri).to_s).to match("success")
+      end
+    end
+  end
+
+  describe ".fetch_content_length" do
+    it "does not connect to private IP" do
+      uri = 'https://www.example.com'
+      FinalDestination::TestHelper.stub_to_fail do
+        expect {
+          described_class.fetch_content_length(uri)
+        }.to raise_error(FinalDestination::SSRFDetector::DisallowedIpError)
       end
     end
   end
@@ -135,7 +153,7 @@ RSpec.describe Onebox::Helpers do
   end
 
   describe "user_agent" do
-    context "default" do
+    context "with default" do
       it "has the default Discourse user agent" do
         stub_request(:get, "http://example.com/some-resource")
           .with(headers: { "user-agent" => /Discourse Forum Onebox/ })
@@ -145,7 +163,7 @@ RSpec.describe Onebox::Helpers do
       end
     end
 
-    context "Custom option" do
+    context "with custom option" do
       around do |example|
         previous_options = Onebox.options.to_h
         Onebox.options = { user_agent: "EvilTroutBot v0.1" }
@@ -174,6 +192,15 @@ RSpec.describe Onebox::Helpers do
     it { expect(described_class.normalize_url_for_output('//example.com/hello')).to eq("//example.com/hello") }
     it { expect(described_class.normalize_url_for_output('example.com/hello')).to eq("") }
     it { expect(described_class.normalize_url_for_output('linear-gradient(310.77deg, #29AA9F 0%, #098EA6 100%)')).to eq("") }
+  end
+
+  describe '.get_absolute_image_url' do
+    it { expect(described_class.get_absolute_image_url('//meta.discourse.org/favicon.ico', 'https://meta.discourse.org')).to eq('https://meta.discourse.org/favicon.ico') }
+    it { expect(described_class.get_absolute_image_url('http://meta.discourse.org/favicon.ico', 'https://meta.discourse.org')).to eq('http://meta.discourse.org/favicon.ico') }
+    it { expect(described_class.get_absolute_image_url('https://meta.discourse.org/favicon.ico', 'https://meta.discourse.org')).to eq('https://meta.discourse.org/favicon.ico') }
+    it { expect(described_class.get_absolute_image_url('/favicon.ico', 'https://meta.discourse.org')).to eq('https://meta.discourse.org/favicon.ico') }
+    it { expect(described_class.get_absolute_image_url('/favicon.ico', 'https://meta.discourse.org/forum/subdir')).to eq('https://meta.discourse.org/favicon.ico') }
+    it { expect(described_class.get_absolute_image_url('../favicon.ico', 'https://meta.discourse.org/forum/subdir/')).to eq('https://meta.discourse.org/forum/favicon.ico') }
   end
 
   describe '.uri_encode' do

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 ##
-# There are certain conditions with secure media when the security of
+# There are certain conditions with secure uploads when the security of
 # uploads will need to change depending on the context they reside in.
 #
 # For example on these conditions:
@@ -38,16 +38,16 @@ class TopicUploadSecurityManager
       end
     end
 
-    return if !SiteSetting.secure_media
+    return if !SiteSetting.secure_uploads
 
-    # we only want to do this if secure media is enabled. if
+    # we only want to do this if secure uploads is enabled. if
     # the setting is turned on after a site has been running
     # already, we want to make sure that any post moves after
     # this are handled and upload secure statuses and ACLs
     # are updated appropriately, as well as setting the access control
     # post for secure uploads missing it.
     #
-    # examples (all after secure media is enabled):
+    # examples (all after secure uploads is enabled):
     #
     #  -> a public topic is moved to a private category after
     #  -> a PM is converted to a public topic
@@ -59,7 +59,7 @@ class TopicUploadSecurityManager
         post.topic = @topic
 
         secure_status_did_change = post.uploads.any? do |upload|
-          first_post_upload_appeared_in = upload.post_uploads.first.post
+          first_post_upload_appeared_in = upload.upload_references.where(target_type: 'Post').first.target
           if first_post_upload_appeared_in == post
             upload.update(access_control_post: post)
             upload.update_secure_status(source: "topic upload security")
@@ -85,8 +85,8 @@ class TopicUploadSecurityManager
   def posts_with_unowned_uploads
     Post
       .where(topic_id: @topic.id)
-      .joins('INNER JOIN post_uploads ON post_uploads.post_id = posts.id')
-      .joins('INNER JOIN uploads ON post_uploads.upload_id = uploads.id')
+      .joins("INNER JOIN upload_references ON upload_references.target_type = 'Post' AND upload_references.target_id = posts.id")
+      .joins('INNER JOIN uploads ON upload_references.upload_id = uploads.id')
       .where('uploads.access_control_post_id IS NULL')
       .includes(:uploads)
   end

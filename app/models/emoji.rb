@@ -2,7 +2,7 @@
 
 class Emoji
   # update this to clear the cache
-  EMOJI_VERSION = "10"
+  EMOJI_VERSION = "12"
 
   FITZPATRICK_SCALE ||= [ "1f3fb", "1f3fc", "1f3fd", "1f3fe", "1f3ff" ]
 
@@ -10,7 +10,15 @@ class Emoji
 
   include ActiveModel::SerializerSupport
 
-  attr_accessor :name, :url, :tonable, :group
+  attr_accessor :name, :url, :tonable, :group, :search_aliases
+
+  def self.global_emoji_cache
+    @global_emoji_cache ||= DistributedCache.new("global_emoji_cache", namespace: false)
+  end
+
+  def self.site_emoji_cache
+    @site_emoji_cache ||= DistributedCache.new("site_emoji_cache")
+  end
 
   def self.all
     Discourse.cache.fetch(cache_key("all_emojis")) { standard | custom }
@@ -21,11 +29,11 @@ class Emoji
   end
 
   def self.aliases
-    Discourse.cache.fetch(cache_key("aliases_emojis")) { db['aliases'] }
+    db['aliases']
   end
 
   def self.search_aliases
-    Discourse.cache.fetch(cache_key("search_aliases_emojis")) { db['searchAliases'] }
+    db['searchAliases']
   end
 
   def self.translations
@@ -37,7 +45,7 @@ class Emoji
   end
 
   def self.tonable_emojis
-    Discourse.cache.fetch(cache_key("tonable_emojis")) { db['tonableEmojis'] }
+    db['tonableEmojis']
   end
 
   def self.custom?(name)
@@ -54,20 +62,41 @@ class Emoji
     is_toned = name.match?(/.+:t[1-6]/)
     normalized_name = name.gsub(/(.+):t[1-6]/, '\1')
 
-    Emoji.all.detect do |e|
-      e.name == normalized_name &&
-      (!is_toned || (is_toned && e.tonable))
+    found_emoji = nil
+
+    [[global_emoji_cache, :standard], [site_emoji_cache, :custom]].each do |cache, list_key|
+      cache_postfix, found_emoji = cache.defer_get_set(normalized_name) do
+        emoji = Emoji.public_send(list_key).detect do |e|
+          e.name == normalized_name &&
+          (!is_toned || (is_toned && e.tonable))
+        end
+        [self.cache_postfix, emoji]
+      end
+
+      if found_emoji && (cache_postfix != self.cache_postfix)
+        cache.delete(normalized_name)
+        redo
+      end
+
+      if found_emoji
+        break
+      end
     end
+
+    found_emoji
   end
 
   def self.create_from_db_item(emoji)
     name = emoji["name"]
+    return unless group = groups[name]
     filename = emoji['filename'] || name
 
     Emoji.new.tap do |e|
       e.name = name
       e.tonable = Emoji.tonable_emojis.include?(name)
       e.url = Emoji.url_for(filename)
+      e.group = group
+      e.search_aliases = search_aliases[name] || []
     end
   end
 
@@ -81,12 +110,36 @@ class Emoji
   end
 
   def self.cache_key(name)
-    "#{name}:v#{EMOJI_VERSION}:#{Plugin::CustomEmoji.cache_key}"
+    "#{name}#{cache_postfix}"
+  end
+
+  def self.cache_postfix
+    ":v#{EMOJI_VERSION}:#{Plugin::CustomEmoji.cache_key}"
   end
 
   def self.clear_cache
-    %w{custom standard aliases search_aliases translations all tonable}.each do |key|
+    %w{custom standard translations all}.each do |key|
       Discourse.cache.delete(cache_key("#{key}_emojis"))
+    end
+    global_emoji_cache.clear
+    site_emoji_cache.clear
+  end
+
+  def self.groups_file
+    @groups_file ||= "#{Rails.root}/lib/emoji/groups.json"
+  end
+
+  def self.groups
+    @groups ||= begin
+      groups = {}
+
+      File.open(groups_file, "r:UTF-8") { |f| JSON.parse(f.read) }.each do |group|
+        group["icons"].each do |icon|
+          groups[icon["name"]] = group["name"]
+        end
+      end
+
+      groups
     end
   end
 
@@ -99,7 +152,7 @@ class Emoji
   end
 
   def self.load_standard
-    db['emojis'].map { |e| Emoji.create_from_db_item(e) }
+    db['emojis'].map { |e| Emoji.create_from_db_item(e) }.compact
   end
 
   def self.load_custom
@@ -180,6 +233,7 @@ class Emoji
       replacements["\u{263B}"] = 'slight_smile'
       replacements["\u{2661}"] = 'heart'
       replacements["\u{2665}"] = 'heart'
+      replacements["\u{263A}"] = 'relaxed'
 
       replacements
     end
@@ -239,9 +293,9 @@ class Emoji
 
       if code && Emoji.custom?(code)
         emoji = Emoji[code]
-        "<img src=\"#{emoji.url}\" title=\"#{code}\" class=\"emoji\" alt=\"#{code}\">"
+        "<img src=\"#{emoji.url}\" title=\"#{code}\" class=\"emoji\" alt=\"#{code}\" loading=\"lazy\" width=\"20\" height=\"20\">"
       elsif code && Emoji.exists?(code)
-        "<img src=\"#{Emoji.url_for(code)}\" title=\"#{code}\" class=\"emoji\" alt=\"#{code}\">"
+        "<img src=\"#{Emoji.url_for(code)}\" title=\"#{code}\" class=\"emoji\" alt=\"#{code}\" loading=\"lazy\" width=\"20\" height=\"20\">"
       else
         name
       end

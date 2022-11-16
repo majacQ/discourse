@@ -5,6 +5,7 @@ import { deepMerge } from "discourse-common/lib/object";
 import { escape } from "pretty-text/sanitizer";
 import { helperContext } from "discourse-common/lib/helpers";
 import toMarkdown from "discourse/lib/to-markdown";
+import deprecated from "discourse-common/lib/deprecated";
 
 let _defaultHomepage;
 
@@ -99,9 +100,7 @@ export function avatarImg(options, customGetURL) {
 }
 
 export function tinyAvatar(avatarTemplate, options) {
-  return avatarImg(
-    deepMerge({ avatarTemplate: avatarTemplate, size: "tiny" }, options)
-  );
+  return avatarImg(deepMerge({ avatarTemplate, size: "tiny" }, options));
 }
 
 export function postUrl(slug, topicId, postNumber) {
@@ -135,16 +134,25 @@ export function highlightPost(postNumber) {
     element.removeEventListener("animationend", removeHighlighted);
   };
   element.addEventListener("animationend", removeHighlighted);
+  container.querySelector(".tabLoc").focus();
 }
 
 export function emailValid(email) {
   // see:  http://stackoverflow.com/questions/46155/validate-email-address-in-javascript
-  const re = /^[a-zA-Z0-9!#$%&'*+\/=?\^_`{|}~\-]+(?:\.[a-zA-Z0-9!#$%&'\*+\/=?\^_`{|}~\-]+)*@(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?\.)+[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?$/;
+  const re =
+    /^[a-zA-Z0-9!#$%&'*+\/=?\^_`{|}~\-]+(?:\.[a-zA-Z0-9!#$%&'\*+\/=?\^_`{|}~\-]+)*@(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?\.)+[a-zA-Z0-9](?:[a-zA-Z0-9\-]*[a-zA-Z0-9])?$/;
   return re.test(email);
 }
 
+export function hostnameValid(hostname) {
+  // see:  https://stackoverflow.com/questions/106179/regular-expression-to-match-dns-hostname-or-ip-address
+  const re =
+    /^(([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])\.)+([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9\-]*[A-Za-z0-9])$/;
+  return hostname && re.test(hostname);
+}
+
 export function extractDomainFromUrl(url) {
-  if (url.indexOf("://") > -1) {
+  if (url.includes("://")) {
     url = url.split("/")[2];
   } else {
     url = url.split("/")[0];
@@ -201,9 +209,13 @@ export function selectedText() {
 }
 
 export function selectedElement() {
+  return selectedRange()?.commonAncestorContainer;
+}
+
+export function selectedRange() {
   const selection = window.getSelection();
   if (selection.rangeCount > 0) {
-    return selection.getRangeAt(0).commonAncestorContainer;
+    return selection.getRangeAt(0);
   }
 }
 
@@ -219,7 +231,7 @@ export function caretRowCol(el) {
       return sum + row.length + 1;
     }, 0);
 
-  return { rowNum: rowNum, colNum: colNum };
+  return { rowNum, colNum };
 }
 
 // Determine the position of the caret in an element
@@ -303,35 +315,30 @@ export function isAppleDevice() {
   // IE has no DOMNodeInserted so can not get this hack despite saying it is like iPhone
   // This will apply hack on all iDevices
   let caps = helperContext().capabilities;
-  return caps.isIOS && !navigator.userAgent.match(/Trident/g);
+  return caps.isIOS && !window.navigator.userAgent.match(/Trident/g);
 }
 
 let iPadDetected = undefined;
 
-export function iOSWithVisualViewport() {
-  return isAppleDevice() && window.visualViewport !== undefined;
-}
-
 export function isiPad() {
   if (iPadDetected === undefined) {
     iPadDetected =
-      navigator.userAgent.match(/iPad/g) &&
-      !navigator.userAgent.match(/Trident/g);
+      window.navigator.userAgent.match(/iPad/g) &&
+      !window.navigator.userAgent.match(/Trident/g);
   }
   return iPadDetected;
 }
 
 export function safariHacksDisabled() {
-  if (iOSWithVisualViewport()) {
-    return false;
-  }
+  deprecated(
+    "`safariHacksDisabled()` is deprecated, it now always returns `false`",
+    {
+      since: "2.8.0.beta8",
+      dropFrom: "2.9.0.beta1",
+    }
+  );
 
-  let pref = localStorage.getItem("safari-hacks-disabled");
-  let result = false;
-  if (pref !== null) {
-    result = pref === "true";
-  }
-  return result;
+  return false;
 }
 
 const toArray = (items) => {
@@ -342,6 +349,15 @@ const toArray = (items) => {
   }
 
   return items;
+};
+
+const gifInDisguise = (clipboard) => {
+  return (
+    clipboard.files.length === 1 &&
+    clipboard.files[0].type === "image/png" &&
+    clipboard.types.every((e) => ["text/html", "Files"].includes(e)) &&
+    /<img.*src=.*\.gif/.test(clipboard.getData("text/html"))
+  );
 };
 
 export function clipboardHelpers(e, opts) {
@@ -360,7 +376,9 @@ export function clipboardHelpers(e, opts) {
 
   let canUpload = files && opts.canUpload && types.includes("Files");
   const canUploadImage =
-    canUpload && files.filter((f) => f.type.match("^image/"))[0];
+    canUpload &&
+    files.filter((f) => f.type.match("^image/"))[0] &&
+    !gifInDisguise(clipboard);
   const canPasteHtml =
     opts.siteSettings.enable_rich_text_paste &&
     types.includes("text/html") &&
@@ -423,7 +441,7 @@ export function areCookiesEnabled() {
   // see: https://github.com/Modernizr/Modernizr/blob/400db4043c22af98d46e1d2b9cbc5cb062791192/feature-detects/cookies.js
   try {
     document.cookie = "cookietest=1";
-    let ret = document.cookie.indexOf("cookietest=") !== -1;
+    let ret = document.cookie.includes("cookietest=");
     document.cookie = "cookietest=1; expires=Thu, 01-Jan-1970 00:00:01 GMT";
     return ret;
   } catch (e) {
@@ -431,17 +449,8 @@ export function areCookiesEnabled() {
   }
 }
 
-export function isiOSPWA() {
-  let caps = helperContext().capabilities;
-  return window.matchMedia("(display-mode: standalone)").matches && caps.isIOS;
-}
-
 export function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-export function isAppWebview() {
-  return window.ReactNativeWebView !== undefined;
 }
 
 export function postRNWebviewMessage(prop, value) {
@@ -450,18 +459,19 @@ export function postRNWebviewMessage(prop, value) {
   }
 }
 
-const CODE_BLOCKS_REGEX = /^(    |\t).*|`[^`]+`|^```[^]*?^```|\[code\][^]*?\[\/code\]/gm;
-//                        |      ^     |   ^   |      ^      |           ^           |
-//                               |         |          |                  |
-//                               |         |          |       code blocks between [code]
-//                               |         |          |
-//                               |         |          +--- code blocks between three backticks
-//                               |         |
-//                               |         +----- inline code between backticks
-//                               |
-//                               +------- paragraphs starting with 4 spaces or tab
+const CODE_BLOCKS_REGEX =
+  /^(  |\t).*|`[^`]+`|^```[^]*?^```|\[code\][^]*?\[\/code\]/gm;
+//|    ^     |   ^   |      ^      |           ^           |
+//     |         |          |                  |
+//     |         |          |       code blocks between [code]
+//     |         |          |
+//     |         |          +--- code blocks between three backticks
+//     |         |
+//     |         +----- inline code between backticks
+//     |
+//     +------- paragraphs starting with 2 spaces or tab
 
-const OPEN_CODE_BLOCKS_REGEX = /`[^`]+|^```[^]*?|\[code\][^]*?/gm;
+const OPEN_CODE_BLOCKS_REGEX = /^(  |\t).*|`[^`]+|^```[^]*?|\[code\][^]*?/gm;
 
 export function inCodeBlock(text, pos) {
   let end = 0;
@@ -475,14 +485,20 @@ export function inCodeBlock(text, pos) {
   // Character at position `pos` can be in a code block that is unfinished.
   // To check this case, we look for any open code blocks after the last closed
   // code block.
-  const lastOpenBlock = text.substr(end).search(OPEN_CODE_BLOCKS_REGEX);
+  const lastOpenBlock = text.slice(end).search(OPEN_CODE_BLOCKS_REGEX);
   return lastOpenBlock !== -1 && pos >= end + lastOpenBlock;
 }
 
+// Return an array of modifier keys that are pressed during a given `MouseEvent`
+// or `KeyboardEvent`.
+export function modKeysPressed(event) {
+  return ["alt", "shift", "meta", "ctrl"].filter((key) => event[`${key}Key`]);
+}
+
 export function translateModKey(string) {
-  const mac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
-  // Mac users are used to glyphs for shortcut keys
-  if (mac) {
+  const { isApple } = helperContext().capabilities;
+  // Apple device users are used to glyphs for shortcut keys
+  if (isApple) {
     string = string
       .replace("Shift", "\u21E7")
       .replace("Meta", "\u2318")
@@ -498,5 +514,129 @@ export function translateModKey(string) {
 
   return string;
 }
+
+// Use this version of clipboardCopy if you already have the text to
+// be copied in memory, and you do not need to make an AJAX call to
+// the API to generate any text. See clipboardCopyAsync for the latter.
+export function clipboardCopy(text) {
+  // Use the Async Clipboard API when available.
+  // Requires a secure browsing context (i.e. HTTPS)
+  if (window.navigator.clipboard) {
+    return window.navigator.clipboard.writeText(text).catch(function (err) {
+      throw err !== undefined
+        ? err
+        : new DOMException("The request is not allowed", "NotAllowedError");
+    });
+  }
+
+  // ...Otherwise, use document.execCommand() fallback
+  return clipboardCopyFallback(text);
+}
+
+// Use this version of clipboardCopy if you must use an AJAX call
+// to retrieve/generate server-side text to copy to the clipboard,
+// otherwise this write function will error in certain browsers, because
+// the time taken from the user event to the clipboard text being copied
+// will be too long.
+//
+// Note that the promise passed in should return a Blob with type of
+// text/plain.
+export function clipboardCopyAsync(functionReturningPromise) {
+  // Use the Async Clipboard API when available.
+  // Requires a secure browsing context (i.e. HTTPS)
+  if (window.navigator.clipboard) {
+    // Firefox does not support window.ClipboardItem yet (it is behind
+    // a flag (dom.events.asyncClipboard.clipboardItem) as at version 87.)
+    // so we need to fall back to the normal non-async clipboard copy, that
+    // works in every browser except Safari.
+    //
+    // TODO: (martin) Look at this on 2022-07-01 to see if support has
+    // changed.
+    if (!window.ClipboardItem) {
+      return functionReturningPromise().then((textBlob) => {
+        return textBlob.text().then((text) => {
+          return clipboardCopy(text);
+        });
+      });
+    }
+
+    return window.navigator.clipboard
+      .write([
+        new window.ClipboardItem({ "text/plain": functionReturningPromise() }),
+      ])
+      .catch(function (err) {
+        throw err !== undefined
+          ? err
+          : new DOMException("The request is not allowed", "NotAllowedError");
+      });
+  }
+
+  // ...Otherwise, use document.execCommand() fallback
+  return functionReturningPromise().then((textBlob) => {
+    textBlob.text().then((text) => {
+      return clipboardCopyFallback(text);
+    });
+  });
+}
+
+function clipboardCopyFallback(text) {
+  // Put the text to copy into a <span>
+  const span = document.createElement("span");
+  span.textContent = text;
+
+  // Preserve consecutive spaces and newlines
+  span.style.whiteSpace = "pre";
+
+  // Add the <span> to the page
+  document.body.appendChild(span);
+
+  // Make a selection object representing the range of text selected by the user
+  const selection = window.getSelection();
+  const range = window.document.createRange();
+  selection.removeAllRanges();
+  range.selectNode(span);
+  selection.addRange(range);
+
+  // Copy text to the clipboard
+  let success = false;
+  try {
+    success = window.document.execCommand("copy");
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.log("error", err);
+  }
+
+  // Cleanup
+  selection.removeAllRanges();
+  window.document.body.removeChild(span);
+  return success;
+}
+
+// this function takes 2 sorted lists and returns another sorted list that
+// contains both of the original lists.
+// you need to provide a callback as the 3rd argument that will be called with
+// an item from the first list (1st callback argument) and another item from
+// the second list (2nd callback argument). The callback should return true if
+// its 2nd argument should go before its 1st argument and return false
+// otherwise.
+export function mergeSortedLists(list1, list2, comparator) {
+  let index1 = 0;
+  let index2 = 0;
+  const merged = [];
+  while (index1 < list1.length || index2 < list2.length) {
+    if (
+      index1 === list1.length ||
+      (index2 < list2.length && comparator(list1[index1], list2[index2]))
+    ) {
+      merged.push(list2[index2]);
+      index2++;
+    } else {
+      merged.push(list1[index1]);
+      index1++;
+    }
+  }
+  return merged;
+}
+
 // This prevents a mini racer crash
 export default {};

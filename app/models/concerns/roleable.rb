@@ -18,6 +18,17 @@ module Roleable
     !staff?
   end
 
+  def whisperer?
+    @whisperer ||= begin
+      return false if !SiteSetting.enable_whispers?
+      return true if staff?
+      whispers_allowed_group_ids = SiteSetting.whispers_allowed_group_ids
+      return false if whispers_allowed_group_ids.blank?
+      return true if whispers_allowed_group_ids.include?(primary_group_id)
+      group_users&.exists?(group_id: whispers_allowed_group_ids)
+    end
+  end
+
   def grant_moderation!
     return if moderator
     set_permission('moderator', true)
@@ -61,10 +72,15 @@ module Roleable
     end
   end
 
+  def reload(options = nil)
+    @whisperer = nil
+    super(options)
+  end
+
   private
 
   def auto_approve_user
-    if reviewable = ReviewableUser.find_by(target: self, status: Reviewable.statuses[:pending])
+    if reviewable = ReviewableUser.pending.find_by(target: self)
       reviewable.perform(Discourse.system_user, :approve_user, send_email: false)
     else
       ReviewableUser.set_approved_fields!(self, Discourse.system_user)

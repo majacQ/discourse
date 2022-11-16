@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe Jobs::GroupSmtpEmail do
   fab!(:topic) { Fabricate(:private_message_topic, title: "Help I need support") }
   fab!(:post) do
@@ -61,7 +59,7 @@ RSpec.describe Jobs::GroupSmtpEmail do
     PostReply.create(post: second_post, reply: post)
     subject.execute(args)
     email_log = EmailLog.find_by(post_id: post.id, topic_id: post.topic_id, user_id: recipient_user.id)
-    expect(email_log.raw_headers).to include("In-Reply-To: <topic/#{post.topic_id}/#{second_post.id}@#{Email::Sender.host_for(Discourse.base_url)}>")
+    expect(email_log.raw_headers).to include("In-Reply-To: <discourse/post/#{second_post.id}@#{Email::Sender.host_for(Discourse.base_url)}>")
     expect(email_log.as_mail_message.html_part.to_s).not_to include(I18n.t("user_notifications.in_reply_to"))
   end
 
@@ -82,7 +80,7 @@ RSpec.describe Jobs::GroupSmtpEmail do
     subject.execute(args)
     email_log = EmailLog.find_by(post_id: post.id, topic_id: post.topic_id, user_id: recipient_user.id)
     expect(email_log).not_to eq(nil)
-    expect(email_log.message_id).to eq("topic/#{post.topic_id}/#{post.id}@test.localhost")
+    expect(email_log.message_id).to eq("discourse/post/#{post.id}@test.localhost")
   end
 
   it "creates an IncomingEmail record with the correct details to avoid double processing IMAP" do
@@ -91,7 +89,7 @@ RSpec.describe Jobs::GroupSmtpEmail do
     expect(ActionMailer::Base.deliveries.last.subject).to eq("Re: Help I need support")
     incoming_email = IncomingEmail.find_by(post_id: post.id, topic_id: post.topic_id, user_id: post.user.id)
     expect(incoming_email).not_to eq(nil)
-    expect(incoming_email.message_id).to eq("topic/#{post.topic_id}/#{post.id}@test.localhost")
+    expect(incoming_email.message_id).to eq("discourse/post/#{post.id}@test.localhost")
     expect(incoming_email.created_via).to eq(IncomingEmail.created_via_types[:group_smtp])
     expect(incoming_email.to_addresses).to eq("test@test.com")
     expect(incoming_email.cc_addresses).to eq("otherguy@test.com;cormac@lit.com")
@@ -115,7 +113,7 @@ RSpec.describe Jobs::GroupSmtpEmail do
     expect(ActionMailer::Base.deliveries.last.subject).to eq("Re: Help I need support")
     email_log = EmailLog.find_by(post_id: post.id, topic_id: post.topic_id, user_id: recipient_user.id)
     expect(email_log).not_to eq(nil)
-    expect(email_log.message_id).to eq("topic/#{post.topic_id}/#{post.id}@test.localhost")
+    expect(email_log.message_id).to eq("discourse/post/#{post.id}@test.localhost")
   end
 
   it "creates an IncomingEmail record with the correct details to avoid double processing IMAP" do
@@ -124,7 +122,7 @@ RSpec.describe Jobs::GroupSmtpEmail do
     expect(ActionMailer::Base.deliveries.last.subject).to eq("Re: Help I need support")
     incoming_email = IncomingEmail.find_by(post_id: post.id, topic_id: post.topic_id, user_id: post.user.id)
     expect(incoming_email).not_to eq(nil)
-    expect(incoming_email.message_id).to eq("topic/#{post.topic_id}/#{post.id}@test.localhost")
+    expect(incoming_email.message_id).to eq("discourse/post/#{post.id}@test.localhost")
     expect(incoming_email.created_via).to eq(IncomingEmail.created_via_types[:group_smtp])
     expect(incoming_email.to_addresses).to eq("test@test.com")
     expect(incoming_email.cc_addresses).to eq("otherguy@test.com;cormac@lit.com")
@@ -158,6 +156,16 @@ RSpec.describe Jobs::GroupSmtpEmail do
     email_log = EmailLog.find_by(post_id: post.id, topic_id: post.topic_id, user_id: recipient_user.id)
     expect(email_log.to_address).to eq("test@test.com")
     expect(email_log.smtp_group_id).to eq(group.id)
+  end
+
+  it "drops malformed cc addresses when sending the email" do
+    args2 = args.clone
+    args2[:cc_emails] << "somebadccemail@test.com<mailto:somebadccemail@test.com"
+    subject.execute(args2)
+    expect(ActionMailer::Base.deliveries.count).to eq(1)
+    last_email = ActionMailer::Base.deliveries.last
+    expect(last_email.subject).to eq("Re: Help I need support")
+    expect(last_email.cc).to match_array(["otherguy@test.com", "cormac@lit.com"])
   end
 
   context "when there are cc_addresses" do
@@ -243,7 +251,7 @@ RSpec.describe Jobs::GroupSmtpEmail do
     end
   end
 
-  context "group is deleted" do
+  context "when group is deleted" do
     it "returns without sending email" do
       group.destroy
       subject.execute(args)

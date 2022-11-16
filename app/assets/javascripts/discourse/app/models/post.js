@@ -208,6 +208,8 @@ const Post = RestModel.extend({
         deleted_at: new Date(),
         deleted_by: deletedBy,
         can_delete: false,
+        can_permanently_delete:
+          this.siteSettings.can_permanently_delete && deletedBy.admin,
         can_recover: true,
       });
     } else {
@@ -217,8 +219,9 @@ const Post = RestModel.extend({
           : "post.deleted_by_author_simple";
       promise = cookAsync(I18n.t(key)).then((cooked) => {
         this.setProperties({
-          cooked: cooked,
+          cooked,
           can_delete: false,
+          can_permanently_delete: false,
           version: this.version + 1,
           can_recover: true,
           can_edit: false,
@@ -297,7 +300,9 @@ const Post = RestModel.extend({
   },
 
   rebake() {
-    return ajax(`/posts/${this.id}/rebake`, { type: "PUT" });
+    return ajax(`/posts/${this.id}/rebake`, { type: "PUT" }).catch(
+      popupAjaxError
+    );
   },
 
   unhide() {
@@ -318,8 +323,6 @@ const Post = RestModel.extend({
       target: "post",
       targetId: this.id,
     });
-    // TODO (martin) (2022-02-01) Remove these old bookmark events, replaced by bookmarks:changed.
-    this.appEvents.trigger("page:bookmark-post-toggled", this);
     this.appEvents.trigger("post-stream:refresh", { id: this.id });
   },
 
@@ -341,14 +344,46 @@ const Post = RestModel.extend({
       target: "post",
       targetId: this.id,
     });
-    // TODO (martin) (2022-02-01) Remove these old bookmark events, replaced by bookmarks:changed.
-    this.appEvents.trigger("page:bookmark-post-toggled", this);
   },
 
   updateActionsSummary(json) {
     if (json && json.id === this.id) {
       json = Post.munge(json);
       this.set("actions_summary", json.actions_summary);
+    }
+  },
+
+  updateLikeCount(count, userId, eventType) {
+    let ownAction = User.current()?.id === userId;
+    let ownLike = ownAction && eventType === "liked";
+    let current_actions_summary = this.get("actions_summary");
+    let likeActionID = Site.current().post_action_types.find(
+      (a) => a.name_key === "like"
+    ).id;
+    const newActionObject = { id: likeActionID, count, acted: ownLike };
+
+    if (!this.actions_summary.find((entry) => entry.id === likeActionID)) {
+      let json = Post.munge({
+        id: this.id,
+        actions_summary: [newActionObject],
+      });
+      this.set(
+        "actions_summary",
+        Object.assign(current_actions_summary, json.actions_summary)
+      );
+      this.set("actionByName", json.actionByName);
+      this.set("likeAction", json.likeAction);
+    } else {
+      newActionObject.acted =
+        (ownLike || this.likeAction.acted) &&
+        !(eventType === "unliked" && ownAction);
+
+      Object.assign(
+        this.actions_summary.find((entry) => entry.id === likeActionID),
+        newActionObject
+      );
+      Object.assign(this.actionByName["like"], newActionObject);
+      Object.assign(this.likeAction, newActionObject);
     }
   },
 

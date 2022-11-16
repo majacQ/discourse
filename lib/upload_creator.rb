@@ -72,8 +72,10 @@ class UploadCreator
         extract_image_info!
         return @upload if @upload.errors.present?
 
-        if @image_info.type.to_s == "svg"
+        if @image_info.type == :svg
           clean_svg!
+        elsif @image_info.type == :ico
+          convert_favicon_to_png!
         elsif !Rails.env.test? || @opts[:force_optimize]
           convert_to_jpeg! if convert_png_to_jpeg? || should_alter_quality?
           fix_orientation! if should_fix_orientation?
@@ -92,15 +94,15 @@ class UploadCreator
       if !external_upload_too_big
         sha1 = Upload.generate_digest(@file)
       end
-      if SiteSetting.secure_media || external_upload_too_big
+      if SiteSetting.secure_uploads || external_upload_too_big
         unique_hash = generate_fake_sha1_hash
       end
 
-      # we do not check for duplicate uploads if secure media is
+      # we do not check for duplicate uploads if secure uploads is
       # enabled because we use a unique access hash to differentiate
       # between uploads instead of the sha1, and to get around various
       # access/permission issues for uploads
-      if !SiteSetting.secure_media && !external_upload_too_big
+      if !SiteSetting.secure_uploads && !external_upload_too_big
         # do we already have that upload?
         @upload = Upload.find_by(sha1: sha1)
 
@@ -138,8 +140,8 @@ class UploadCreator
       @upload.user_id           = user_id
       @upload.original_filename = fixed_original_filename || @filename
       @upload.filesize          = filesize
-      @upload.sha1              = (SiteSetting.secure_media? || external_upload_too_big) ? unique_hash : sha1
-      @upload.original_sha1     = SiteSetting.secure_media? ? sha1 : nil
+      @upload.sha1              = (SiteSetting.secure_uploads? || external_upload_too_big) ? unique_hash : sha1
+      @upload.original_sha1     = SiteSetting.secure_uploads? ? sha1 : nil
       @upload.url               = ""
       @upload.origin            = @opts[:origin][0...1000] if @opts[:origin]
       @upload.extension         = image_type || File.extname(@filename)[1..10]
@@ -166,11 +168,12 @@ class UploadCreator
         @upload.thumbnail_width, @upload.thumbnail_height = ImageSizer.resize(w, h)
         @upload.width, @upload.height = w, h
         @upload.animated = animated?
+        @upload.calculate_dominant_color!(@file.path)
       end
 
       add_metadata!
 
-      if SiteSetting.secure_media
+      if SiteSetting.secure_uploads
         secure, reason = UploadSecurity.new(@upload, @opts.merge(creating: true)).should_be_secure_with_reason
         attrs = @upload.secure_params(secure, reason, "upload creator")
         @upload.assign_attributes(attrs)
@@ -194,18 +197,24 @@ class UploadCreator
           Upload.generate_digest(@file) != sha1_before_changes
         end
 
-      if @opts[:existing_external_upload_key] && Discourse.store.external?
+      store = Discourse.store
+
+      if @opts[:existing_external_upload_key] && store.external?
         should_move = external_upload_too_big || !upload_changed
       end
 
       if should_move
         # move the file in the store instead of reuploading
-        url = Discourse.store.move_existing_stored_upload(@opts[:existing_external_upload_key], @upload)
+        url = store.move_existing_stored_upload(
+          existing_external_upload_key: @opts[:existing_external_upload_key],
+          upload: @upload
+        )
       else
         # store the file and update its url
         File.open(@file.path) do |f|
-          url = Discourse.store.store_upload(f, @upload)
+          url = store.store_upload(f, @upload)
         end
+        store.delete_file(@opts[:existing_external_upload_key]) if @opts[:existing_external_upload_key]
       end
 
       if url.present?
@@ -257,6 +266,33 @@ class UploadCreator
 
   MIN_CONVERT_TO_JPEG_BYTES_SAVED = 75_000
   MIN_CONVERT_TO_JPEG_SAVING_RATIO = 0.70
+
+  def convert_favicon_to_png!
+    png_tempfile = Tempfile.new(["image", ".png"])
+
+    from = @file.path
+    to = png_tempfile.path
+
+    OptimizedImage.ensure_safe_paths!(from, to)
+
+    from = OptimizedImage.prepend_decoder!(from, nil, filename: "image.#{@image_info.type}")
+    to = OptimizedImage.prepend_decoder!(to)
+
+    from = "#{from}[-1]" # We only want the last(largest) image of the .ico file
+
+    opts = { flatten: false } # Preserve transparency
+
+    begin
+      execute_convert(from, to, opts)
+    rescue
+      # retry with debugging enabled
+      execute_convert(from, to, opts.merge(debug: true))
+    end
+
+    @file.respond_to?(:close!) ? @file.close! : @file.close
+    @file = png_tempfile
+    extract_image_info!
+  end
 
   def convert_to_jpeg!
     return if @opts[:for_site_setting]
@@ -328,8 +364,8 @@ class UploadCreator
       "-auto-orient",
       "-background", "white",
       "-interlace", "none",
-      "-flatten"
     ]
+    command << "-flatten" unless opts[:flatten] == false
     command << "-debug" << "all" if opts[:debug]
     command << "-quality" << opts[:quality].to_s if opts[:quality]
     command << to
@@ -402,9 +438,6 @@ class UploadCreator
     doc.css('use').each do |use_el|
       if use_el.attr('href')
         use_el.remove_attribute('href') unless use_el.attr('href').starts_with?('#')
-      end
-      if use_el.attr('xlink:href')
-        use_el.remove_attribute('xlink:href') unless use_el.attr('xlink:href').starts_with?('#')
       end
     end
     File.write(@file.path, doc.to_s)

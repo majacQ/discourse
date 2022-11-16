@@ -1,11 +1,8 @@
 # frozen_string_literal: true
 
-require_dependency "file_helper"
-
-module Validators; end
+require "file_helper"
 
 class UploadValidator < ActiveModel::Validator
-
   def validate(upload)
     # staff can upload any file in PM
     if (upload.for_private_message && SiteSetting.allow_staff_to_upload_any_file_in_pm)
@@ -33,6 +30,8 @@ class UploadValidator < ActiveModel::Validator
       return true
     end
 
+    return true if changing_upload_security?(upload)
+
     if is_authorized?(upload, extension)
       if FileHelper.is_supported_image?(upload.original_filename)
         authorized_image_extension(upload, extension)
@@ -42,6 +41,16 @@ class UploadValidator < ActiveModel::Validator
         maximum_attachment_file_size(upload)
       end
     end
+  end
+
+  # this should only be run on existing records, and covers cases of
+  # upload.update_secure_status being run outside of the creation flow,
+  # where some cases e.g. have exemptions on the extension enforcement
+  def changing_upload_security?(upload)
+    !upload.new_record? && \
+      upload.changed_attributes.keys.all? do |attribute|
+        %w(secure security_last_changed_at security_last_changed_reason).include?(attribute)
+      end
   end
 
   def is_authorized?(upload, extension)
@@ -129,6 +138,8 @@ class UploadValidator < ActiveModel::Validator
   end
 
   def maximum_file_size(upload, type)
+    return if !upload.validate_file_size
+
     max_size_kb = if upload.for_export
       SiteSetting.max_export_file_size_kb
     else
@@ -145,5 +156,4 @@ class UploadValidator < ActiveModel::Validator
       upload.errors.add(:filesize, message)
     end
   end
-
 end

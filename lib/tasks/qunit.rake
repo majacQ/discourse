@@ -1,14 +1,13 @@
 # frozen_string_literal: true
 
 desc "Runs the qunit test suite"
-
-task "qunit:test", [:timeout, :qunit_path] do |_, args|
+task "qunit:test", [:timeout, :qunit_path, :filter] do |_, args|
   require "socket"
   require "chrome_installed_checker"
 
   begin
     ChromeInstalledChecker.run
-  rescue ChromeNotInstalled, ChromeVersionTooLow => err
+  rescue ChromeInstalledChecker::ChromeError => err
     abort err.message
   end
 
@@ -29,20 +28,18 @@ task "qunit:test", [:timeout, :qunit_path] do |_, args|
     false
   end
 
-  ember_cli = ENV['QUNIT_EMBER_CLI'] == "1"
+  if ENV["QUNIT_EMBER_CLI"] == "0"
+    puts "The 'legacy' ember environment is discontinued - running tests with ember-cli assets..."
+  end
 
   port = ENV['TEST_SERVER_PORT'] || 60099
   while !port_available? port
     port += 1
   end
 
-  if ember_cli
-    unicorn_port = 60098
-    while unicorn_port == port || !port_available?(unicorn_port)
-      unicorn_port += 1
-    end
-  else
-    unicorn_port = port
+  unicorn_port = 60098
+  while unicorn_port == port || !port_available?(unicorn_port)
+    unicorn_port += 1
   end
 
   env = {
@@ -54,18 +51,13 @@ task "qunit:test", [:timeout, :qunit_path] do |_, args|
     "DISCOURSE_SKIP_CSS_WATCHER" => "1",
     "UNICORN_LISTENER" => "127.0.0.1:#{unicorn_port}",
     "LOGSTASH_UNICORN_URI" => nil,
-    "UNICORN_WORKERS" => "3"
+    "UNICORN_WORKERS" => "1",
+    "UNICORN_TIMEOUT" => "90",
   }
-
-  cmd = if ember_cli
-    "#{Rails.root}/bin/ember-cli -u --port #{port} --proxy http://localhost:#{unicorn_port} -lr false"
-  else
-    "#{Rails.root}/bin/unicorn"
-  end
 
   pid = Process.spawn(
     env,
-    cmd,
+    "#{Rails.root}/bin/unicorn",
     pgroup: true
   )
 
@@ -73,9 +65,8 @@ task "qunit:test", [:timeout, :qunit_path] do |_, args|
     success = true
     test_path = "#{Rails.root}/test"
     qunit_path = args[:qunit_path]
-    qunit_path ||= "/tests" if ember_cli
-    qunit_path ||= "/qunit"
-    cmd = "node #{test_path}/run-qunit.js http://localhost:#{port}#{qunit_path}"
+    filter = args[:filter]
+
     options = { seed: (ENV["QUNIT_SEED"] || Random.new.seed), hidepassed: 1 }
 
     %w{module filter qunit_skip_core qunit_single_plugin theme_name theme_url theme_id}.each do |arg|
@@ -86,11 +77,7 @@ task "qunit:test", [:timeout, :qunit_path] do |_, args|
       options['report_requests'] = '1'
     end
 
-    cmd += "?#{options.to_query.gsub('+', '%20').gsub("&", '\\\&')}"
-
-    if args[:timeout].present?
-      cmd += " #{args[:timeout]}"
-    end
+    query = options.to_query
 
     @now = Time.now
     def elapsed
@@ -99,8 +86,10 @@ task "qunit:test", [:timeout, :qunit_path] do |_, args|
 
     # wait for server to accept connections
     require 'net/http'
-    uri = URI("http://localhost:#{port}/#{qunit_path}")
+    warmup_path = "/srv/status"
+    uri = URI("http://localhost:#{unicorn_port}/#{warmup_path}")
     puts "Warming up Rails server"
+
     begin
       Net::HTTP.get(uri)
     rescue Errno::ECONNREFUSED, Errno::EADDRNOTAVAIL, Net::ReadTimeout, EOFError
@@ -111,7 +100,24 @@ task "qunit:test", [:timeout, :qunit_path] do |_, args|
     end
     puts "Rails server is warmed up"
 
-    sh(cmd)
+    cmd = ["env", "UNICORN_PORT=#{unicorn_port}"]
+
+    if qunit_path
+      # Bypass `ember test` - it only works properly for the `/tests` path.
+      # We have to trigger a `build` manually so that JS is available for rails to serve.
+      system("yarn", "ember", "build", chdir: "#{Rails.root}/app/assets/javascripts/discourse")
+      test_page = "#{qunit_path}?#{query}&testem=1"
+      cmd += ["yarn", "testem", "ci", "-f", "testem.js", "-t", test_page]
+    else
+      cmd += ["yarn", "ember", "exam", "--query", query]
+      if parallel = ENV["QUNIT_PARALLEL"]
+        cmd += ["--load-balance", "--parallel", parallel]
+      end
+      cmd += ["--filter", filter] if filter
+    end
+
+    system(*cmd, chdir: "#{Rails.root}/app/assets/javascripts/discourse")
+
     success &&= $?.success?
   ensure
     # was having issues with HUP
@@ -125,5 +131,4 @@ task "qunit:test", [:timeout, :qunit_path] do |_, args|
     puts "\nTests Failed"
     exit(1)
   end
-
 end

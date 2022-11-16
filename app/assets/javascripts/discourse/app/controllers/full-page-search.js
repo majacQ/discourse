@@ -3,8 +3,10 @@ import discourseComputed, { observes } from "discourse-common/utils/decorators";
 import {
   getSearchKey,
   isValidSearchTerm,
+  logSearchLinkClick,
   searchContextDescription,
   translateResults,
+  updateRecentSearches,
 } from "discourse/lib/search";
 import Category from "discourse/models/category";
 import Composer from "discourse/models/composer";
@@ -12,7 +14,8 @@ import I18n from "I18n";
 import { ajax } from "discourse/lib/ajax";
 import { escapeExpression } from "discourse/lib/utilities";
 import { isEmpty } from "@ember/utils";
-import { or } from "@ember/object/computed";
+import { action } from "@ember/object";
+import { gt, or } from "@ember/object/computed";
 import { scrollTop } from "discourse/mixins/scroll-top";
 import { setTransient } from "discourse/lib/page-tracker";
 import { Promise } from "rsvp";
@@ -192,7 +195,7 @@ export default Controller.extend({
 
   @discourseComputed("q")
   showLikeCount(q) {
-    return q && q.indexOf("order:likes") > -1;
+    return q?.includes("order:likes");
   },
 
   @observes("q")
@@ -209,10 +212,11 @@ export default Controller.extend({
     return (
       q &&
       this.currentUser &&
-      (q.indexOf("in:personal") > -1 ||
-        q.indexOf(
+      (q.includes("in:messages") ||
+        q.includes("in:personal") ||
+        q.includes(
           `personal_messages:${this.currentUser.get("username_lower")}`
-        ) > -1)
+        ))
     );
   },
 
@@ -245,6 +249,13 @@ export default Controller.extend({
   @discourseComputed("hasResults")
   canBulkSelect(hasResults) {
     return this.currentUser && this.currentUser.staff && hasResults;
+  },
+
+  hasSelection: gt("selected.length", 0),
+
+  @discourseComputed("selected.length", "model.posts.length")
+  hasUnselectedResults(selectionCount, postsCount) {
+    return selectionCount < postsCount;
   },
 
   @discourseComputed("model.grouped_search_result.can_create_topic")
@@ -345,6 +356,9 @@ export default Controller.extend({
           });
         break;
       default:
+        if (this.currentUser) {
+          updateRecentSearches(this.currentUser, searchTerm);
+        }
         ajax("/search", { data: args })
           .then(async (results) => {
             const model = (await translateResults(results)) || {};
@@ -378,35 +392,47 @@ export default Controller.extend({
     }
   },
 
-  actions: {
-    createTopic(searchTerm) {
-      let topicCategory;
-      if (searchTerm.indexOf("category:") !== -1) {
-        const match = searchTerm.match(/category:(\S*)/);
-        if (match && match[1]) {
-          topicCategory = match[1];
-        }
+  @action
+  createTopic(searchTerm, event) {
+    event?.preventDefault();
+    let topicCategory;
+    if (searchTerm.includes("category:")) {
+      const match = searchTerm.match(/category:(\S*)/);
+      if (match && match[1]) {
+        topicCategory = match[1];
       }
-      this.composer.open({
-        action: Composer.CREATE_TOPIC,
-        draftKey: Composer.NEW_TOPIC_KEY,
-        topicCategory,
-      });
-    },
+    }
+    this.composer.open({
+      action: Composer.CREATE_TOPIC,
+      draftKey: Composer.NEW_TOPIC_KEY,
+      topicCategory,
+    });
+  },
 
+  actions: {
     selectAll() {
-      this.selected.addObjects(this.get("model.posts").map((r) => r.topic));
+      this.selected.addObjects(this.get("model.posts").mapBy("topic"));
+
       // Doing this the proper way is a HUGE pain,
       // we can hack this to work by observing each on the array
       // in the component, however, when we select ANYTHING, we would force
       // 50 traversals of the list
       // This hack is cheap and easy
-      $(".fps-result input[type=checkbox]").prop("checked", true);
+      document
+        .querySelectorAll(".fps-result input[type=checkbox]")
+        .forEach((checkbox) => {
+          checkbox.checked = true;
+        });
     },
 
     clearAll() {
       this.selected.clear();
-      $(".fps-result input[type=checkbox]").prop("checked", false);
+
+      document
+        .querySelectorAll(".fps-result input[type=checkbox]")
+        .forEach((checkbox) => {
+          checkbox.checked = false;
+        });
     },
 
     toggleBulkSelect() {
@@ -449,15 +475,10 @@ export default Controller.extend({
 
     logClick(topicId) {
       if (this.get("model.grouped_search_result.search_log_id") && topicId) {
-        ajax("/search/click", {
-          type: "POST",
-          data: {
-            search_log_id: this.get(
-              "model.grouped_search_result.search_log_id"
-            ),
-            search_result_id: topicId,
-            search_result_type: "topic",
-          },
+        logSearchLinkClick({
+          searchLogId: this.get("model.grouped_search_result.search_log_id"),
+          searchResultId: topicId,
+          searchResultType: "topic",
         });
       }
     },

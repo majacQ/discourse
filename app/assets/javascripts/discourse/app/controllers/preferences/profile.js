@@ -2,15 +2,16 @@ import Controller from "@ember/controller";
 import EmberObject from "@ember/object";
 import I18n from "I18n";
 import { ajax } from "discourse/lib/ajax";
-import bootbox from "bootbox";
 import { cookAsync } from "discourse/lib/text";
 import discourseComputed from "discourse-common/utils/decorators";
 import { isEmpty } from "@ember/utils";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { readOnly } from "@ember/object/computed";
 import showModal from "discourse/lib/show-modal";
+import { inject as service } from "@ember/service";
 
 export default Controller.extend({
+  dialog: service(),
   init() {
     this._super(...arguments);
     this.saveAttrNames = [
@@ -34,21 +35,20 @@ export default Controller.extend({
 
   @discourseComputed("model.user_fields.@each.value")
   userFields() {
-    let siteUserFields = this.site.get("user_fields");
-    if (!isEmpty(siteUserFields)) {
-      const userFields = this.get("model.user_fields");
-
-      // Staff can edit fields that are not `editable`
-      if (!this.get("currentUser.staff")) {
-        siteUserFields = siteUserFields.filterBy("editable", true);
-      }
-      return siteUserFields.sortBy("position").map(function (field) {
-        const value = userFields
-          ? userFields[field.get("id").toString()]
-          : null;
-        return EmberObject.create({ value, field });
-      });
+    let siteUserFields = this.site.user_fields;
+    if (isEmpty(siteUserFields)) {
+      return;
     }
+
+    // Staff can edit fields that are not `editable`
+    if (!this.currentUser.staff) {
+      siteUserFields = siteUserFields.filterBy("editable", true);
+    }
+
+    return siteUserFields.sortBy("position").map((field) => {
+      const value = this.model.user_fields?.[field.id.toString()];
+      return EmberObject.create({ field, value });
+    });
   },
 
   @discourseComputed("model.default_calendar")
@@ -70,27 +70,28 @@ export default Controller.extend({
 
   actions: {
     showFeaturedTopicModal() {
-      showModal("feature-topic-on-profile", {
+      const modal = showModal("feature-topic-on-profile", {
         model: this.model,
         title: "user.feature_topic_on_profile.title",
+      });
+      modal.set("onClose", () => {
+        document.querySelector(".feature-topic-on-profile-btn")?.focus();
       });
     },
 
     clearFeaturedTopicFromProfile() {
-      bootbox.confirm(
-        I18n.t("user.feature_topic_on_profile.clear.warning"),
-        (result) => {
-          if (result) {
-            ajax(`/u/${this.model.username}/clear-featured-topic`, {
-              type: "PUT",
+      this.dialog.yesNoConfirm({
+        message: I18n.t("user.feature_topic_on_profile.clear.warning"),
+        didConfirm: () => {
+          return ajax(`/u/${this.model.username}/clear-featured-topic`, {
+            type: "PUT",
+          })
+            .then(() => {
+              this.model.set("featured_topic", null);
             })
-              .then(() => {
-                this.model.set("featured_topic", null);
-              })
-              .catch(popupAjaxError);
-          }
-        }
-      );
+            .catch(popupAjaxError);
+        },
+      });
     },
 
     useCurrentTimezone() {
@@ -127,7 +128,7 @@ export default Controller.extend({
           // update the timezone in memory so we can use the new
           // one if we change routes without reloading the user
           if (this.currentUser.id === this.model.id) {
-            this.currentUser.changeTimezone(this.model.user_option.timezone);
+            this.currentUser.timezone = this.model.user_option.timezone;
           }
 
           cookAsync(model.get("bio_raw"))

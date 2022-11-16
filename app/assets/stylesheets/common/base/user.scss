@@ -7,12 +7,16 @@
   display: grid;
   grid-template-columns: 1fr 5fr;
   grid-template-rows: auto auto 1fr auto;
-  grid-row-gap: 20px;
+  grid-gap: 20px;
   .user-primary-navigation {
     grid-column-start: 1;
     grid-column-end: 3;
     grid-row-start: 1;
     grid-row-end: 2;
+
+    .nav-pills {
+      flex-wrap: wrap;
+    }
   }
   .user-secondary-navigation {
     grid-column-start: 1;
@@ -145,7 +149,7 @@
       border-bottom: 1px solid var(--primary-low);
 
       h1 {
-        font-size: $font-up-5;
+        font-size: var(--font-up-5);
         font-weight: normal;
         .d-icon {
           font-size: 0.8em;
@@ -167,7 +171,6 @@
       }
 
       .groups {
-        margin-left: 10px;
         display: inline;
       }
 
@@ -237,11 +240,11 @@
           }
 
           h1 {
-            font-size: $font-up-3;
+            font-size: var(--font-up-3);
           }
 
           h2 {
-            font-size: $font-up-1;
+            font-size: var(--font-up-1);
           }
           h3,
           h3.location-and-website {
@@ -255,7 +258,7 @@
           bottom: 8px;
           right: 2px;
           .d-icon {
-            font-size: $font-0;
+            font-size: var(--font-0);
           }
         }
       }
@@ -322,7 +325,7 @@
         color: var(--primary-medium);
         margin-top: 5px;
         margin-bottom: 10px;
-        font-size: $font-down-1;
+        font-size: var(--font-down-1);
       }
     }
   }
@@ -384,6 +387,9 @@
     }
     button {
       margin-left: auto;
+    }
+    label a {
+      margin: 0;
     }
   }
   $label-max-width: 300px;
@@ -459,7 +465,7 @@
 
   .value {
     font-weight: bold;
-    font-size: $font-up-2;
+    font-size: var(--font-up-2);
   }
 
   .label {
@@ -500,7 +506,7 @@
 
 .links-section {
   .domain {
-    font-size: $font-down-1;
+    font-size: var(--font-down-1);
     color: var(--primary-medium);
   }
 }
@@ -565,8 +571,8 @@
   .instructions {
     color: var(--primary-medium);
     margin-bottom: 10px;
-    font-size: $font-down-1;
-    line-height: $line-height-large;
+    font-size: var(--font-down-1);
+    line-height: var(--line-height-large);
 
     a[href] {
       color: var(--tertiary);
@@ -664,7 +670,7 @@
     font-weight: bold;
   }
   .save-theme-alert {
-    font-size: $font-down-1;
+    font-size: var(--font-down-1);
   }
 
   .control-subgroup {
@@ -747,20 +753,12 @@
   }
 }
 
-.qr-code-container {
-  display: flex;
-  .qr-code {
-    padding: 5px 5px 0 5px;
-    background-color: white;
-  }
-}
-
 .second-factor {
   &.instructions {
     color: var(--primary-medium);
     margin-top: 5px;
     margin-bottom: 10px;
-    font-size: $font-down-1;
+    font-size: var(--font-down-1);
   }
   .second-factor-item {
     margin-top: 0.75em;
@@ -810,7 +808,7 @@
     }
 
     .invite-extra {
-      font-size: $font-down-1;
+      font-size: var(--font-down-1);
       margin: 0.25em 0;
 
       a {

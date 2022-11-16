@@ -1,16 +1,20 @@
 # frozen_string_literal: true
 
 class CurrentUserSerializer < BasicUserSerializer
+  include UserTagNotificationsMixin
+  include UserSidebarTagsMixin
 
   attributes :name,
              :unread_notifications,
              :unread_private_messages,
              :unread_high_priority_notifications,
+             :all_unread_notifications_count,
              :read_first_notification?,
              :admin?,
              :notification_channel_position,
              :moderator?,
              :staff?,
+             :whisperer?,
              :title,
              :any_posts,
              :enable_quoting,
@@ -28,11 +32,11 @@ class CurrentUserSerializer < BasicUserSerializer
              :redirected_to_top,
              :custom_fields,
              :muted_category_ids,
+             :indirectly_muted_category_ids,
              :regular_category_ids,
              :tracked_category_ids,
              :watched_first_post_category_ids,
              :watched_category_ids,
-             :muted_tag_ids,
              :watched_tags,
              :watching_first_post_tags,
              :tracked_tags,
@@ -41,7 +45,8 @@ class CurrentUserSerializer < BasicUserSerializer
              :dismissed_banner_key,
              :is_anonymous,
              :reviewable_count,
-             :read_faq,
+             :unseen_reviewable_count,
+             :read_faq?,
              :automatically_unpin_topics,
              :mailing_list_mode,
              :treat_as_new_topic_start_date,
@@ -53,6 +58,7 @@ class CurrentUserSerializer < BasicUserSerializer
              :can_create_group,
              :link_posting_access,
              :external_id,
+             :associated_account_ids,
              :top_category_ids,
              :hide_profile_and_presence,
              :groups,
@@ -62,14 +68,28 @@ class CurrentUserSerializer < BasicUserSerializer
              :timezone,
              :featured_topic,
              :skip_new_user_tips,
+             :seen_popups,
              :do_not_disturb_until,
              :has_topic_draft,
              :can_review,
              :draft_count,
              :default_calendar,
+             :bookmark_auto_delete_preference,
+             :pending_posts_count,
+             :status,
+             :sidebar_category_ids,
+             :likes_notifications_disabled,
+             :grouped_unread_notifications,
+             :redesigned_user_menu_enabled,
+             :redesigned_user_page_nav_enabled,
+             :sidebar_list_destination
+
+  delegate :user_stat, to: :object, private: true
+  delegate :any_posts, :draft_count, :pending_posts_count, :read_faq?, to: :user_stat
 
   def groups
     owned_group_ids = GroupUser.where(user_id: id, owner: true).pluck(:group_id).to_set
+
     object.visible_groups.pluck(:id, :name, :has_messages).map do |id, name, has_messages|
       group = { id: id, name: name, has_messages: has_messages }
       group[:owner] = true if owned_group_ids.include?(id)
@@ -91,14 +111,6 @@ class CurrentUserSerializer < BasicUserSerializer
 
   def include_can_create_group?
     scope.can_create_group?
-  end
-
-  def read_faq
-    object.user_stat.read_faq?
-  end
-
-  def any_posts
-    object.user_stat.any_posts
   end
 
   def hide_profile_and_presence
@@ -145,12 +157,20 @@ class CurrentUserSerializer < BasicUserSerializer
     object.user_option.default_calendar
   end
 
+  def bookmark_auto_delete_preference
+    object.user_option.bookmark_auto_delete_preference
+  end
+
+  def sidebar_list_destination
+    object.user_option.sidebar_list_none_selected? ? SiteSetting.default_sidebar_list_destination : object.user_option.sidebar_list_destination
+  end
+
   def can_send_private_email_messages
     scope.can_send_private_messages_to_email?
   end
 
   def can_send_private_messages
-    scope.can_send_private_message?(Discourse.system_user)
+    scope.can_send_private_messages?
   end
 
   def can_edit
@@ -206,6 +226,10 @@ class CurrentUserSerializer < BasicUserSerializer
     categories_with_notification_level(:muted)
   end
 
+  def indirectly_muted_category_ids
+    CategoryUser.indirectly_muted_category_ids(object)
+  end
+
   def regular_category_ids
     categories_with_notification_level(:regular)
   end
@@ -220,32 +244,6 @@ class CurrentUserSerializer < BasicUserSerializer
 
   def watched_first_post_category_ids
     categories_with_notification_level(:watching_first_post)
-  end
-
-  # this is a weird outlier that is used for topic tracking state which
-  # needs the actual ids, which is why it is duplicated with muted_tags
-  def muted_tag_ids
-    TagUser.lookup(object, :muted).pluck(:tag_id)
-  end
-
-  def muted_tags
-    tags_with_notification_level(:muted)
-  end
-
-  def tracked_tags
-    tags_with_notification_level(:tracking)
-  end
-
-  def watching_first_post_tags
-    tags_with_notification_level(:watching_first_post)
-  end
-
-  def watched_tags
-    tags_with_notification_level(:watching)
-  end
-
-  def regular_tags
-    tags_with_notification_level(:regular)
   end
 
   def ignored_users
@@ -274,10 +272,6 @@ class CurrentUserSerializer < BasicUserSerializer
     object.anonymous?
   end
 
-  def reviewable_count
-    Reviewable.list_for(object).count
-  end
-
   def can_review
     scope.can_see_review_queue?
   end
@@ -294,6 +288,14 @@ class CurrentUserSerializer < BasicUserSerializer
     object.user_option.skip_new_user_tips
   end
 
+  def seen_popups
+    object.user_option.seen_popups
+  end
+
+  def include_seen_popups?
+    SiteSetting.enable_user_tips
+  end
+
   def include_primary_group_id?
     object.primary_group_id.present?
   end
@@ -306,8 +308,22 @@ class CurrentUserSerializer < BasicUserSerializer
     SiteSetting.enable_discourse_connect
   end
 
+  def associated_account_ids
+    values = {}
+
+    object.user_associated_accounts.map do |user_associated_account|
+      values[user_associated_account.provider_name] = user_associated_account.provider_uid
+    end
+
+    values
+  end
+
+  def include_associated_account_ids?
+    SiteSetting.include_associated_account_ids
+  end
+
   def second_factor_enabled
-    object.totp_enabled? || object.security_keys_enabled?
+    object.totp_enabled? || object.security_keys_enabled? || object.backup_codes_enabled?
   end
 
   def featured_topic
@@ -322,7 +338,47 @@ class CurrentUserSerializer < BasicUserSerializer
     Draft.has_topic_draft(object)
   end
 
-  def draft_count
-    object.user_stat.draft_count
+  def sidebar_category_ids
+    object.category_sidebar_section_links.pluck(:linkable_id) & scope.allowed_category_ids
+  end
+
+  def include_sidebar_category_ids?
+    SiteSetting.enable_experimental_sidebar_hamburger
+  end
+
+  def include_status?
+    SiteSetting.enable_user_status && object.has_status?
+  end
+
+  def status
+    UserStatusSerializer.new(object.user_status, root: false)
+  end
+
+  def redesigned_user_menu_enabled
+    object.redesigned_user_menu_enabled?
+  end
+
+  def likes_notifications_disabled
+    object.user_option&.likes_notifications_disabled?
+  end
+
+  def include_all_unread_notifications_count?
+    redesigned_user_menu_enabled
+  end
+
+  def include_grouped_unread_notifications?
+    redesigned_user_menu_enabled
+  end
+
+  def include_unseen_reviewable_count?
+    redesigned_user_menu_enabled
+  end
+
+  def redesigned_user_page_nav_enabled
+    if SiteSetting.enable_new_user_profile_nav_groups.present?
+      object.in_any_groups?(SiteSetting.enable_new_user_profile_nav_groups_map)
+    else
+      false
+    end
   end
 end

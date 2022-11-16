@@ -25,8 +25,13 @@ end
 # feel free to point this anywhere accessible on the filesystem
 pid (ENV["UNICORN_PID_PATH"] || "#{discourse_path}/tmp/pids/unicorn.pid")
 
+  <<<<<<< asyncify-preload-store
 if ENV["RAILS_ENV"] == "development" || !ENV["RAILS_ENV"]
   logger Logger.new($stdout)
+  =======
+if ENV["RAILS_ENV"] != "production"
+  logger Logger.new(STDOUT)
+  >>>>>>> chat-quotes
   # we want a longer timeout in dev cause first request can be really slow
   timeout (ENV["UNICORN_TIMEOUT"] && ENV["UNICORN_TIMEOUT"].to_i || 60)
 else
@@ -71,7 +76,7 @@ before_fork do |server, worker|
     if supervisor > 0
       Thread.new do
         while true
-          unless File.exists?("/proc/#{supervisor}")
+          unless File.exist?("/proc/#{supervisor}")
             puts "Kill self supervisor is gone"
             Process.kill "TERM", Process.pid
           end

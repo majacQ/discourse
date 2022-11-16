@@ -37,7 +37,7 @@ task "release_note:plugins:generate", :from, :to, :plugin_glob, :org do |t, args
   plugin_glob = args[:plugin_glob] || "./plugins/*"
   git_org = args[:org]
 
-  all_repos = Dir.glob(plugin_glob).filter { |f| File.directory?(f) && File.exists?("#{f}/.git")  }
+  all_repos = Dir.glob(plugin_glob).filter { |f| File.directory?(f) && File.exist?("#{f}/.git")  }
 
   if git_org
     all_repos = all_repos.filter { |dir| `git -C #{dir} remote get-url origin`.match?(/github.com[\/:]#{git_org}\//) }
@@ -56,7 +56,7 @@ task "release_note:plugins:generate", :from, :to, :plugin_glob, :org do |t, args
 
     puts "### #{name}\n\n"
     CHANGE_TYPES.each do |ct|
-      print_changes(ct[:heading], changes[ct], "####")
+      print_changes_plugin(ct[:heading], changes[ct])
     end
   end
 
@@ -103,6 +103,14 @@ def print_changes(heading, changes, importance)
 
   puts "#{importance} #{heading}", ""
   puts changes.to_a, ""
+end
+
+def print_changes_plugin(heading, changes)
+  return if changes.length == 0
+
+  puts "[details=\"#{heading}\"]\n", ""
+  puts changes.to_a, ""
+  puts "[/details]\n", ""
 end
 
 def better(line)

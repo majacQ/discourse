@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
 require 'file_store/s3_store'
 
 RSpec.describe 'Multisite s3 uploads', type: :multisite do
@@ -13,7 +12,7 @@ RSpec.describe 'Multisite s3 uploads', type: :multisite do
     Fabricate.build(:upload, sha1: upload_sha1, id: 1, original_filename: original_filename)
   end
 
-  context 'uploading to s3' do
+  describe 'uploading to s3' do
     before(:each) do
       setup_s3
     end
@@ -93,75 +92,87 @@ RSpec.describe 'Multisite s3 uploads', type: :multisite do
     end
   end
 
-  context 'removal from s3' do
+  describe 'removal from s3' do
     before do
       setup_s3
     end
 
     describe "#remove_upload" do
       let(:store) { FileStore::S3Store.new }
-      let(:client) { Aws::S3::Client.new(stub_responses: true) }
-      let(:resource) { Aws::S3::Resource.new(client: client) }
-      let(:s3_bucket) { resource.bucket(SiteSetting.s3_upload_bucket) }
-      let(:s3_helper) { store.s3_helper }
+
+      let(:upload) { build_upload }
+      let(:upload_key) { "#{upload_path}/original/1X/#{upload.sha1}.png" }
+
+      def prepare_fake_s3
+        @fake_s3 = FakeS3.create
+        bucket = @fake_s3.bucket(SiteSetting.s3_upload_bucket)
+        bucket.put_object(
+          key: upload_key,
+          size: upload.filesize,
+          last_modified: upload.created_at
+        )
+        bucket
+      end
 
       it "removes the file from s3 on multisite" do
         test_multisite_connection('default') do
-          upload = build_upload
-          s3_helper.expects(:s3_bucket).returns(s3_bucket).at_least_once
           upload.update!(url: "//s3-upload-bucket.s3.dualstack.us-west-1.amazonaws.com/#{upload_path}/original/1X/#{upload.sha1}.png")
-          s3_object = stub
+          tombstone_key = "uploads/tombstone/default/original/1X/#{upload.sha1}.png"
+          bucket = prepare_fake_s3
 
-          s3_bucket.expects(:object).with("uploads/tombstone/default/original/1X/#{upload.sha1}.png").returns(s3_object)
-          expect_copy_from(s3_object, "s3-upload-bucket/#{upload_path}/original/1X/#{upload.sha1}.png")
-          s3_bucket.expects(:object).with("#{upload_path}/original/1X/#{upload.sha1}.png").returns(s3_object)
-          s3_object.expects(:delete)
+          expect(bucket.find_object(upload_key)).to be_present
+          expect(bucket.find_object(tombstone_key)).to be_nil
 
           store.remove_upload(upload)
+
+          expect(bucket.find_object(upload_key)).to be_nil
+          expect(bucket.find_object(tombstone_key)).to be_present
         end
       end
 
       it "removes the file from s3 on another multisite db" do
         test_multisite_connection('second') do
-          upload = build_upload
-          s3_helper.expects(:s3_bucket).returns(s3_bucket).at_least_once
           upload.update!(url: "//s3-upload-bucket.s3.dualstack.us-west-1.amazonaws.com/#{upload_path}/original/1X/#{upload.sha1}.png")
-          s3_object = stub
+          tombstone_key = "uploads/tombstone/second/original/1X/#{upload.sha1}.png"
+          bucket = prepare_fake_s3
 
-          s3_bucket.expects(:object).with("uploads/tombstone/second/original/1X/#{upload.sha1}.png").returns(s3_object)
-          expect_copy_from(s3_object, "s3-upload-bucket/#{upload_path}/original/1X/#{upload.sha1}.png")
-          s3_bucket.expects(:object).with("#{upload_path}/original/1X/#{upload.sha1}.png").returns(s3_object)
-          s3_object.expects(:delete)
+          expect(bucket.find_object(upload_key)).to be_present
+          expect(bucket.find_object(tombstone_key)).to be_nil
 
           store.remove_upload(upload)
+
+          expect(bucket.find_object(upload_key)).to be_nil
+          expect(bucket.find_object(tombstone_key)).to be_present
         end
       end
 
       describe "when s3_upload_bucket includes folders path" do
+        let(:upload_key) { "discourse-uploads/#{upload_path}/original/1X/#{upload.sha1}.png" }
+
         before do
           SiteSetting.s3_upload_bucket = "s3-upload-bucket/discourse-uploads"
         end
 
         it "removes the file from s3 on multisite" do
           test_multisite_connection('default') do
-            upload = build_upload
-            s3_helper.expects(:s3_bucket).returns(s3_bucket).at_least_once
             upload.update!(url: "//s3-upload-bucket.s3.dualstack.us-west-1.amazonaws.com/discourse-uploads/#{upload_path}/original/1X/#{upload.sha1}.png")
-            s3_object = stub
+            tombstone_key = "discourse-uploads/uploads/tombstone/default/original/1X/#{upload.sha1}.png"
+            bucket = prepare_fake_s3
 
-            s3_bucket.expects(:object).with("discourse-uploads/uploads/tombstone/default/original/1X/#{upload.sha1}.png").returns(s3_object)
-            expect_copy_from(s3_object, "s3-upload-bucket/discourse-uploads/#{upload_path}/original/1X/#{upload.sha1}.png")
-            s3_bucket.expects(:object).with("discourse-uploads/#{upload_path}/original/1X/#{upload.sha1}.png").returns(s3_object)
-            s3_object.expects(:delete)
+            expect(bucket.find_object(upload_key)).to be_present
+            expect(bucket.find_object(tombstone_key)).to be_nil
 
             store.remove_upload(upload)
+
+            expect(bucket.find_object(upload_key)).to be_nil
+            expect(bucket.find_object(tombstone_key)).to be_present
           end
         end
       end
     end
   end
 
-  context 'secure uploads' do
+  describe 'secure uploadss' do
     let(:store) { FileStore::S3Store.new }
     let(:client) { Aws::S3::Client.new(stub_responses: true) }
     let(:resource) { Aws::S3::Resource.new(client: client) }
@@ -183,12 +194,11 @@ RSpec.describe 'Multisite s3 uploads', type: :multisite do
       it "returns signed URL with correct path" do
         test_multisite_connection('default') do
           upload = Fabricate(:upload, original_filename: "small.pdf", extension: "pdf", secure: true)
-
           path = Discourse.store.get_path_for_upload(upload)
 
           s3_helper.expects(:s3_bucket).returns(s3_bucket).at_least_once
           s3_bucket.expects(:object).with("#{upload_path}/#{path}").returns(s3_object).at_least_once
-          s3_object.expects(:presigned_url).with(:get, expires_in: S3Helper::DOWNLOAD_URL_EXPIRES_AFTER_SECONDS)
+          s3_object.expects(:presigned_url).with(:get, { expires_in: SiteSetting.s3_presigned_get_url_expires_after_seconds })
 
           upload.url = store.store_upload(uploaded_file, upload)
           expect(upload.url).to eq(
@@ -199,10 +209,10 @@ RSpec.describe 'Multisite s3 uploads', type: :multisite do
       end
     end
 
-    describe "when secure media are enabled" do
+    describe "when secure uploads are enabled" do
       before do
         SiteSetting.login_required = true
-        SiteSetting.secure_media = true
+        SiteSetting.secure_uploads = true
         s3_helper.stubs(:s3_client).returns(client)
         Discourse.stubs(:store).returns(store)
       end
@@ -312,7 +322,7 @@ RSpec.describe 'Multisite s3 uploads', type: :multisite do
 
       it "returns a presigned url with the correct params and the key for the temporary file" do
         url = store.signed_url_for_temporary_upload("test.png")
-        key = store.path_from_url(url)
+        key = store.s3_helper.path_from_url(url)
         expect(url).to match(/Amz-Expires/)
         expect(key).to match(/temp\/uploads\/default\/test_[0-9]\/[a-zA-z0-9]{0,32}\/[a-zA-z0-9]{0,32}.png/)
       end
@@ -328,7 +338,7 @@ RSpec.describe 'Multisite s3 uploads', type: :multisite do
 
       it "returns a presigned url with the correct params and the key for the temporary file" do
         url = store.signed_url_for_temporary_upload("test.png")
-        key = store.path_from_url(url)
+        key = store.s3_helper.path_from_url(url)
         expect(url).to match(/Amz-Expires/)
         expect(key).to match(/temp\/site\/uploads\/default\/test_[0-9]\/[a-zA-z0-9]{0,32}\/[a-zA-z0-9]{0,32}.png/)
       end
@@ -340,19 +350,11 @@ RSpec.describe 'Multisite s3 uploads', type: :multisite do
       it "returns a presigned url with the correct params and the key for the temporary file" do
         test_multisite_connection('second') do
           url = store.signed_url_for_temporary_upload("test.png")
-          key = store.path_from_url(url)
+          key = store.s3_helper.path_from_url(url)
           expect(url).to match(/Amz-Expires/)
           expect(key).to match(/temp\/standard99\/uploads\/second\/test_[0-9]\/[a-zA-z0-9]{0,32}\/[a-zA-z0-9]{0,32}.png/)
         end
       end
     end
-  end
-
-  def expect_copy_from(s3_object, source)
-    s3_object.expects(:copy_from).with(
-      copy_source: source
-    ).returns(
-      stub(copy_object_result: stub(etag: '"etagtest"'))
-    )
   end
 end

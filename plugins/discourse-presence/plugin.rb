@@ -5,7 +5,6 @@
 # version: 2.0
 # authors: André Pereira, David Taylor, tgxworld
 # url: https://github.com/discourse/discourse/tree/main/plugins/discourse-presence
-# transpile_js: true
 
 enabled_site_setting :presence_enabled
 hide_plugin if self.respond_to?(:hide_plugin)
@@ -23,7 +22,7 @@ after_initialize do
         config.allowed_user_ids = topic.allowed_users.pluck(:id)
         config.allowed_group_ids = topic.allowed_groups.pluck(:group_id) + [::Group::AUTO_GROUPS[:staff]]
       elsif secure_group_ids = topic.secure_group_ids
-        config.allowed_group_ids = secure_group_ids
+        config.allowed_group_ids = secure_group_ids + [::Group::AUTO_GROUPS[:admins]]
       else
         # config.public=true would make data available to anon, so use the tl0 group instead
         config.allowed_group_ids = [ ::Group::AUTO_GROUPS[:trust_level_0] ]

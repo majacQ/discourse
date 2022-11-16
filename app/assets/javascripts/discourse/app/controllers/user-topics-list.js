@@ -60,7 +60,7 @@ export default Controller.extend(BulkTopicSelection, {
 
     const opts = {
       inbox: this.inbox,
-      topicIds: topicIds,
+      topicIds,
     };
 
     if (this.group) {
@@ -81,9 +81,14 @@ export default Controller.extend(BulkTopicSelection, {
   },
 
   @action
-  showInserted() {
+  showInserted(event) {
+    event?.preventDefault();
     this.model.loadBefore(this.pmTopicTrackingState.newIncoming);
     this.pmTopicTrackingState.resetIncomingTracking();
-    return false;
+  },
+
+  @action
+  refresh() {
+    this.send("triggerRefresh");
   },
 });

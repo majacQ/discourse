@@ -1,11 +1,14 @@
+import { module, test } from "qunit";
+import { setupTest } from "ember-qunit";
+import { settled } from "@ember/test-helpers";
 import I18n from "I18n";
-import { discourseModule } from "discourse/tests/helpers/qunit-helpers";
-import { test } from "qunit";
 
-discourseModule("Unit | Controller | create-account", function () {
-  test("basicUsernameValidation", async function (assert) {
-    const testInvalidUsername = async (username, expectedReason) => {
-      const controller = this.getController("create-account");
+module("Unit | Controller | create-account", function (hooks) {
+  setupTest(hooks);
+
+  test("basicUsernameValidation", function (assert) {
+    const testInvalidUsername = (username, expectedReason) => {
+      const controller = this.owner.lookup("controller:create-account");
       controller.set("accountUsername", username);
 
       let validation = controller.basicUsernameValidation(username);
@@ -24,7 +27,7 @@ discourseModule("Unit | Controller | create-account", function () {
       I18n.t("user.username.too_long")
     );
 
-    const controller = await this.owner.lookup("controller:create-account");
+    const controller = this.owner.lookup("controller:create-account");
     controller.setProperties({
       accountUsername: "porkchops",
       prefilledUsername: "porkchops",
@@ -40,21 +43,21 @@ discourseModule("Unit | Controller | create-account", function () {
   });
 
   test("passwordValidation", async function (assert) {
-    const controller = this.getController("create-account");
+    const controller = this.owner.lookup("controller:create-account");
 
     controller.set("authProvider", "");
     controller.set("accountEmail", "pork@chops.com");
-    controller.set("accountUsername", "porkchops");
-    controller.set("prefilledUsername", "porkchops");
+    controller.set("accountUsername", "porkchops123");
+    controller.set("prefilledUsername", "porkchops123");
     controller.set("accountPassword", "b4fcdae11f9167");
 
     assert.strictEqual(
-      controller.get("passwordValidation.ok"),
+      controller.passwordValidation.ok,
       true,
       "Password is ok"
     );
     assert.strictEqual(
-      controller.get("passwordValidation.reason"),
+      controller.passwordValidation.reason,
       I18n.t("user.password.ok"),
       "Password is valid"
     );
@@ -63,27 +66,33 @@ discourseModule("Unit | Controller | create-account", function () {
       controller.set("accountPassword", password);
 
       assert.strictEqual(
-        controller.get("passwordValidation.failed"),
+        controller.passwordValidation.failed,
         true,
-        "password should be invalid: " + password
+        `password should be invalid: ${password}`
       );
       assert.strictEqual(
-        controller.get("passwordValidation.reason"),
+        controller.passwordValidation.reason,
         expectedReason,
-        "password validation reason: " + password + ", " + expectedReason
+        `password validation reason: ${password}, ${expectedReason}`
       );
     };
 
     testInvalidPassword("", null);
     testInvalidPassword("x", I18n.t("user.password.too_short"));
-    testInvalidPassword("porkchops", I18n.t("user.password.same_as_username"));
+    testInvalidPassword(
+      "porkchops123",
+      I18n.t("user.password.same_as_username")
+    );
     testInvalidPassword(
       "pork@chops.com",
       I18n.t("user.password.same_as_email")
     );
+
+    // Wait for username check request to finish
+    await settled();
   });
 
-  test("authProviderDisplayName", async function (assert) {
+  test("authProviderDisplayName", function (assert) {
     const controller = this.owner.lookup("controller:create-account");
 
     assert.strictEqual(

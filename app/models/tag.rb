@@ -15,6 +15,7 @@ class Tag < ActiveRecord::Base
 
   validate :target_tag_validator, if: Proc.new { |t| t.new_record? || t.will_save_change_to_target_tag_id? }
   validate :name_validator
+  validates :description, length: { maximum: 280 }
 
   scope :where_name, ->(name) do
     name = Array(name).map(&:downcase)
@@ -44,6 +45,7 @@ class Tag < ActiveRecord::Base
 
   belongs_to :target_tag, class_name: "Tag", optional: true
   has_many :synonyms, class_name: "Tag", foreign_key: "target_tag_id", dependent: :destroy
+  has_many :sidebar_section_links, as: :linkable, dependent: :delete_all
 
   after_save :index_search
   after_save :update_synonym_associations
@@ -215,6 +217,7 @@ end
 #  updated_at     :datetime         not null
 #  pm_topic_count :integer          default(0), not null
 #  target_tag_id  :integer
+#  description    :string
 #
 # Indexes
 #

@@ -20,7 +20,18 @@ if Rails.env != 'development' || ENV['TRACK_REQUESTS']
   end
 end
 
-if Rails.configuration.multisite
+if Rails.env.test?
+  # In test mode we can't insert/remove middlewares
+  # Therefore we insert a small helper which effectively switches the multisite
+  # middleware on/off based on the Rails.configuration.multisite value
+  class TestMultisiteMiddleware < RailsMultisite::Middleware
+    def call(env)
+      return @app.call(env) if !Rails.configuration.multisite
+      super(env)
+    end
+  end
+  Rails.configuration.middleware.unshift TestMultisiteMiddleware, RailsMultisite::DiscoursePatches.config
+elsif Rails.configuration.multisite
   assets_hostnames = GlobalSetting.cdn_hostnames
 
   if assets_hostnames.empty?
@@ -36,6 +47,14 @@ if Rails.configuration.multisite
 
   if defined?(RailsFailover::ActiveRecord) && Rails.configuration.active_record_rails_failover
     Rails.configuration.middleware.insert_after(RailsMultisite::Middleware, RailsFailover::ActiveRecord::Middleware)
+  end
+
+  if Rails.env.development?
+    # Automatically allow development multisite hosts
+    RailsMultisite::ConnectionManagement.instance.db_spec_cache.each do |db, specification|
+      next if db == "default"
+      Rails.configuration.hosts.concat(specification.spec.configuration_hash[:host_names])
+    end
   end
 elsif defined?(RailsFailover::ActiveRecord) && Rails.configuration.active_record_rails_failover
   Rails.configuration.middleware.insert_before(MessageBus::Rack::Middleware, RailsFailover::ActiveRecord::Middleware)

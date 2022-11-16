@@ -3,9 +3,9 @@
   "properties": {
     "user_badges": {
       "type": "array",
-      "items": [
+      "items": {
 
-      ]
+      }
     },
     "user": {
       "type": "object",
@@ -74,18 +74,6 @@
         "badge_count": {
           "type": "integer"
         },
-        "email": {
-          "type": "string"
-        },
-        "secondary_emails": {
-          "type": "array"
-        },
-        "unconfirmed_emails": {
-          "type": "array"
-        },
-        "associated_accounts": {
-          "type": "array"
-        },
         "second_factor_backup_enabled": {
           "type": "boolean"
         },
@@ -121,9 +109,7 @@
                 "null"
               ]
             }
-          },
-          "required": [
-          ]
+          }
         },
         "time_read": {
           "type": "integer"
@@ -206,6 +192,9 @@
         "pending_count": {
           "type": "integer"
         },
+        "pending_posts_count": {
+          "type": "integer"
+        },
         "profile_view_count": {
           "type": "integer"
         },
@@ -235,57 +224,57 @@
         },
         "muted_category_ids": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "regular_category_ids": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "watched_tags": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "watching_first_post_tags": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "tracked_tags": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "muted_tags": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "tracked_category_ids": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "watched_category_ids": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "watched_first_post_category_ids": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "system_avatar_upload_id": {
           "type": [
@@ -298,21 +287,21 @@
         },
         "muted_usernames": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "ignored_usernames": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "allowed_pm_usernames": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "mailing_list_posts_per_day": {
           "type": "integer"
@@ -337,7 +326,7 @@
         },
         "user_auth_tokens": {
           "type": "array",
-          "items": [
+          "items":
             {
               "type": "object",
               "additionalProperties": false,
@@ -386,7 +375,6 @@
                 "is_active"
               ]
             }
-          ]
         },
         "user_notification_schedule": {
           "type": "object",
@@ -461,9 +449,9 @@
         },
         "featured_user_badge_ids": {
           "type": "array",
-          "items": [
+          "items": {
 
-          ]
+          }
         },
         "invited_by": {
           "type": [
@@ -473,7 +461,7 @@
         },
         "groups": {
           "type": "array",
-          "items": [
+          "items":
             {
               "type": "object",
               "additionalProperties": false,
@@ -631,11 +619,10 @@
                 "publish_read_state"
               ]
             }
-          ]
         },
         "group_users": {
           "type": "array",
-          "items": [
+          "items":
             {
               "type": "object",
               "additionalProperties": false,
@@ -659,7 +646,6 @@
                 "notification_level"
               ]
             }
-          ]
         },
         "user_option": {
           "type": "object",
@@ -736,9 +722,9 @@
             },
             "theme_ids": {
               "type": "array",
-              "items": [
+              "items": {
 
-              ]
+              }
             },
             "theme_key_seq": {
               "type": "integer"
@@ -778,6 +764,15 @@
             },
             "default_calendar": {
               "type": "string"
+            },
+            "oldest_search_log_date": {
+              "type": ["string", "null"]
+            },
+            "sidebar_list_destination": {
+              "type": "string"
+            },
+            "seen_popups": {
+              "type": ["array", "null"]
             }
           },
           "required": [

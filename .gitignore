@@ -39,6 +39,7 @@
 !/plugins/discourse-narrative-bot
 !/plugins/discourse-presence
 !/plugins/lazy-yt/
+!/plugins/chat/
 !/plugins/poll/
 !/plugins/styleguide
 /plugins/*/auto_generated/
@@ -59,3 +60,6 @@ yarn-error.log
 
 # Generated API documentation files
 openapi/*
+
+# Cached License Data Files
+/.licenses

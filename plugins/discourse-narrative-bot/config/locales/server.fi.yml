@@ -84,6 +84,15 @@ fi:
       "10":
         quote: "Joskus pitää laittaa viatonkin vankilaan. Joskus täytyy poliisin laittaa viaton lusimaan. Arvovalta säilyy. Pelote säilyy. Aina siellä muutama viaton istuu, viaton pulmunen istuu siellä."
         author: "Rauno Repomies televisiosarjassa Pasila"
+      "11":
+        quote: "Rauha kotona, rauha maailmassa."
+        author: "Mustafa Kemal Atatürk"
+      "12":
+        quote: "Koulutus ei ole keino paeta köyhyyttä, se on keino taistella sitä vastaan."
+        author: "Julius Nyerere"
+      "13":
+        quote: "Tuhannen mailin matka alkaa yhdestä askeleesta."
+        author: "Laozi"
       results: |-
         > :left_speech_bubble: _%{quote}_ &mdash; %{author}
     magic_8_ball:
@@ -214,7 +223,7 @@ fi:
 
           – tai käytä viestieditorin <kbd><b>B</b></kbd>- tai <kbd><i>I</i></kbd>-painiketta
         reply: |-
-          Hyvin tehty! HTML ja BBCode käyvät myös muotoiluun. Jos on puhtia, [tästä johdannosta](http://commonmark.org/help) opit lisää. :nerd:
+          Hyvin tehty! HTML ja BBCode käyvät myös muotoiluun. Jos on puhtia, [tästä johdannosta](https://commonmark.org/help) opit lisää. :nerd:
         not_found: |-
           Pahus, en näe muotoilua viestissäsi. :pencil2:
 

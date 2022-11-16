@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe UploadsController do
+RSpec.describe UploadsController do
   fab!(:user) { Fabricate(:user) }
 
   describe '#create' do
@@ -11,7 +9,7 @@ describe UploadsController do
       expect(response.status).to eq(403)
     end
 
-    context 'logged in' do
+    context 'when logged in' do
       before do
         sign_in(user)
       end
@@ -310,8 +308,8 @@ describe UploadsController do
         .to eq(%Q|attachment; filename="#{upload.original_filename}"; filename*=UTF-8''#{upload.original_filename}|)
     end
 
-    context "prevent anons from downloading files" do
-      it "returns 404 when an anonymous user tries to download a file" do
+    context "when user is anonymous" do
+      it "returns 404" do
         upload = upload_file("small.pdf", "pdf")
         delete "/session/#{user.username}.json"
 
@@ -401,9 +399,9 @@ describe UploadsController do
         expect(response).to redirect_to(upload.url)
       end
 
-      context "when upload is secure and secure media enabled" do
+      context "when upload is secure and secure uploads enabled" do
         before do
-          SiteSetting.secure_media = true
+          SiteSetting.secure_uploads = true
           upload.update(secure: true)
         end
 
@@ -427,7 +425,7 @@ describe UploadsController do
           sign_in(user)
           get upload.short_path
 
-          expected_max_age = S3Helper::DOWNLOAD_URL_EXPIRES_AFTER_SECONDS - UploadsController::SECURE_REDIRECT_GRACE_SECONDS
+          expected_max_age = SiteSetting.s3_presigned_get_url_expires_after_seconds - UploadsController::SECURE_REDIRECT_GRACE_SECONDS
           expect(expected_max_age).to be > 0 # Sanity check that the constants haven't been set to broken values
 
           expect(response.headers["Cache-Control"]).to eq("max-age=#{expected_max_age}, private")
@@ -450,8 +448,8 @@ describe UploadsController do
     describe "local store" do
       fab!(:image_upload) { upload_file("smallest.png") }
 
-      it "does not return secure media when using local store" do
-        secure_url = image_upload.url.sub("/uploads", "/secure-media-uploads")
+      it "does not return secure uploads when using local store" do
+        secure_url = image_upload.url.sub("/uploads", "/secure-uploads")
         get secure_url
 
         expect(response.status).to eq(404)
@@ -460,12 +458,12 @@ describe UploadsController do
 
     describe "s3 store" do
       let(:upload) { Fabricate(:upload_s3) }
-      let(:secure_url) { upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-media-uploads") }
+      let(:secure_url) { upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-uploads") }
 
       before do
         setup_s3
         SiteSetting.authorized_extensions = "*"
-        SiteSetting.secure_media = true
+        SiteSetting.secure_uploads = true
       end
 
       it "should return 404 for anonymous requests requests" do
@@ -481,7 +479,7 @@ describe UploadsController do
         expect(response.redirect_url).to match("Amz-Expires")
       end
 
-      it "should return secure media URL when looking up urls" do
+      it "should return secure uploads URL when looking up urls" do
         upload.update_column(:secure, true)
         sign_in(user)
 
@@ -489,7 +487,7 @@ describe UploadsController do
         expect(response.status).to eq(200)
 
         result = response.parsed_body
-        expect(result[0]["url"]).to match("secure-media-uploads")
+        expect(result[0]["url"]).to match("secure-uploads")
       end
 
       context "when the upload cannot be found from the URL" do
@@ -573,9 +571,9 @@ describe UploadsController do
         end
       end
 
-      context "when secure media is disabled" do
+      context "when secure uploads is disabled" do
         before do
-          SiteSetting.secure_media = false
+          SiteSetting.secure_uploads = false
         end
 
         context "if the upload is secure false, meaning the ACL is probably public" do
@@ -584,7 +582,7 @@ describe UploadsController do
           end
 
           it "should redirect to the regular show route" do
-            secure_url = upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-media-uploads")
+            secure_url = upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-uploads")
             sign_in(user)
             get secure_url
 
@@ -599,7 +597,7 @@ describe UploadsController do
           end
 
           it "should redirect to the presigned URL still otherwise we will get a 403" do
-            secure_url = upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-media-uploads")
+            secure_url = upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-uploads")
             sign_in(user)
             get secure_url
 
@@ -624,23 +622,23 @@ describe UploadsController do
       expect(result[0]["short_path"]).to eq(upload.short_path)
     end
 
-    describe 'secure media' do
+    describe 'secure uploads' do
       let(:upload) { Fabricate(:upload_s3, secure: true) }
 
       before do
         setup_s3
         SiteSetting.authorized_extensions = "pdf|png"
-        SiteSetting.secure_media = true
+        SiteSetting.secure_uploads = true
       end
 
-      it 'returns secure url for a secure media upload' do
+      it 'returns secure url for a secure uploads upload' do
         sign_in(user)
 
         post "/uploads/lookup-urls.json", params: { short_urls: [upload.short_url] }
         expect(response.status).to eq(200)
 
         result = response.parsed_body
-        expect(result[0]["url"]).to match("/secure-media-uploads")
+        expect(result[0]["url"]).to match("/secure-uploads")
         expect(result[0]["short_path"]).to eq(upload.short_path)
       end
 
@@ -652,7 +650,7 @@ describe UploadsController do
         expect(response.status).to eq(200)
 
         result = response.parsed_body
-        expect(result[0]["url"]).to match("/secure-media-uploads")
+        expect(result[0]["url"]).to match("/secure-uploads")
         expect(result[0]["short_path"]).to eq(upload.short_path)
       end
     end
@@ -764,7 +762,7 @@ describe UploadsController do
         RateLimiter.enable
         RateLimiter.clear_all!
 
-        stub_const(UploadsController, "PRESIGNED_PUT_RATE_LIMIT_PER_MINUTE", 1) do
+        stub_const(ExternalUploadHelpers, "PRESIGNED_PUT_RATE_LIMIT_PER_MINUTE", 1) do
           post "/uploads/generate-presigned-put.json", params: { file_name: "test.png", type: "card_background", file_size: 1024 }
           post "/uploads/generate-presigned-put.json", params: { file_name: "test.png", type: "card_background", file_size: 1024 }
         end
@@ -787,14 +785,12 @@ describe UploadsController do
   describe "#create_multipart" do
     context "when the store is external" do
       let(:mock_multipart_upload_id) { "ibZBv_75gd9r8lH_gqXatLdxMVpAlj6CFTR.OwyF3953YdwbcQnMA2BLGn8Lx12fQNICtMw5KyteFeHw.Sjng--" }
+      let(:test_bucket_prefix) { "test_#{ENV['TEST_ENV_NUMBER'].presence || '0'}" }
 
       before do
         sign_in(user)
         SiteSetting.enable_direct_s3_uploads = true
         setup_s3
-        FileStore::S3Store.any_instance.stubs(:temporary_upload_path).returns(
-          "uploads/default/test_0/temp/28fccf8259bbe75b873a2bd2564b778c/test.png"
-        )
       end
 
       it "errors if the correct params are not provided" do
@@ -829,18 +825,37 @@ describe UploadsController do
         expect(response.body).to include(I18n.t("upload.attachments.too_large_humanized", max_size: "1 MB"))
       end
 
+      it 'returns a sensible error if the file size is 0 bytes' do
+        SiteSetting.authorized_extensions = "*"
+        stub_create_multipart_request
+
+        post "/uploads/create-multipart.json", **{
+          params: {
+            file_name: "test.zip",
+            file_size: 0,
+            upload_type: "composer",
+          }
+        }
+
+        expect(response.status).to eq(422)
+        expect(response.body).to include(I18n.t("upload.size_zero_failure"))
+      end
+
       def stub_create_multipart_request
-        create_multipart_result = <<~BODY
+        FileStore::S3Store.any_instance.stubs(:temporary_upload_path).returns(
+          "uploads/default/#{test_bucket_prefix}/temp/28fccf8259bbe75b873a2bd2564b778c/test.png"
+        )
+        create_multipart_result = <<~XML
         <?xml version=\"1.0\" encoding=\"UTF-8\"?>\n
         <InitiateMultipartUploadResult>
            <Bucket>s3-upload-bucket</Bucket>
-           <Key>uploads/default/test_0/temp/28fccf8259bbe75b873a2bd2564b778c/test.png</Key>
+           <Key>uploads/default/#{test_bucket_prefix}/temp/28fccf8259bbe75b873a2bd2564b778c/test.png</Key>
            <UploadId>#{mock_multipart_upload_id}</UploadId>
         </InitiateMultipartUploadResult>
-        BODY
+        XML
         stub_request(
           :post,
-          "https://s3-upload-bucket.s3.us-west-1.amazonaws.com/uploads/default/test_0/temp/28fccf8259bbe75b873a2bd2564b778c/test.png?uploads"
+          "https://s3-upload-bucket.s3.us-west-1.amazonaws.com/uploads/default/#{test_bucket_prefix}/temp/28fccf8259bbe75b873a2bd2564b778c/test.png?uploads"
         ).to_return({ status: 200, body: create_multipart_result })
       end
 
@@ -899,7 +914,7 @@ describe UploadsController do
         RateLimiter.clear_all!
 
         stub_create_multipart_request
-        stub_const(UploadsController, "CREATE_MULTIPART_RATE_LIMIT_PER_MINUTE", 1) do
+        stub_const(ExternalUploadHelpers, "CREATE_MULTIPART_RATE_LIMIT_PER_MINUTE", 1) do
           post "/uploads/create-multipart.json", params: {
             file_name: "test.png",
             upload_type: "composer",
@@ -947,7 +962,7 @@ describe UploadsController do
       end
 
       def stub_list_multipart_request
-        list_multipart_result = <<~BODY
+        list_multipart_result = <<~XML
         <?xml version=\"1.0\" encoding=\"UTF-8\"?>\n
         <ListPartsResult>
            <Bucket>s3-upload-bucket</Bucket>
@@ -973,8 +988,8 @@ describe UploadsController do
            </Owner>
            <StorageClass>STANDARD</StorageClass>
         </ListPartsResult>
-        BODY
-        stub_request(:get, "https://s3-upload-bucket.s3.us-west-1.amazonaws.com/#{external_upload_stub.key}?uploadId=#{mock_multipart_upload_id}").to_return({ status: 200, body: list_multipart_result })
+        XML
+        stub_request(:get, "https://s3-upload-bucket.s3.us-west-1.amazonaws.com/#{external_upload_stub.key}?max-parts=1&uploadId=#{mock_multipart_upload_id}").to_return({ status: 200, body: list_multipart_result })
       end
 
       it "errors if the correct params are not provided" do
@@ -1041,23 +1056,22 @@ describe UploadsController do
       it "rate limits" do
         RateLimiter.enable
         RateLimiter.clear_all!
+        SiteSetting.max_batch_presign_multipart_per_minute = 1
 
-        stub_const(UploadsController, "BATCH_PRESIGN_RATE_LIMIT_PER_MINUTE", 1) do
-          stub_list_multipart_request
-          post "/uploads/batch-presign-multipart-parts.json", params: {
-            unique_identifier: external_upload_stub.unique_identifier,
-            part_numbers: [1, 2, 3]
-          }
+        stub_list_multipart_request
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [1, 2, 3]
+        }
 
-          expect(response.status).to eq(200)
+        expect(response.status).to eq(200)
 
-          post "/uploads/batch-presign-multipart-parts.json", params: {
-            unique_identifier: external_upload_stub.unique_identifier,
-            part_numbers: [1, 2, 3]
-          }
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [1, 2, 3]
+        }
 
-          expect(response.status).to eq(429)
-        end
+        expect(response.status).to eq(429)
       end
     end
 
@@ -1091,7 +1105,7 @@ describe UploadsController do
       end
 
       def stub_list_multipart_request
-        list_multipart_result = <<~BODY
+        list_multipart_result = <<~XML
         <?xml version=\"1.0\" encoding=\"UTF-8\"?>\n
         <ListPartsResult>
            <Bucket>s3-upload-bucket</Bucket>
@@ -1117,8 +1131,8 @@ describe UploadsController do
            </Owner>
            <StorageClass>STANDARD</StorageClass>
         </ListPartsResult>
-        BODY
-        stub_request(:get, "#{upload_base_url}/#{external_upload_stub.key}?uploadId=#{mock_multipart_upload_id}").to_return({ status: 200, body: list_multipart_result })
+        XML
+        stub_request(:get, "#{upload_base_url}/#{external_upload_stub.key}?max-parts=1&uploadId=#{mock_multipart_upload_id}").to_return({ status: 200, body: list_multipart_result })
       end
 
       it "errors if the correct params are not provided" do
@@ -1215,7 +1229,7 @@ describe UploadsController do
         # all the functionality for ExternalUploadManager is already tested along
         # with stubs to S3 in its own test, we can just stub the response here
         upload = Fabricate(:upload)
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).returns(upload)
+        ExternalUploadManager.any_instance.stubs(:transform!).returns(upload)
 
         post "/uploads/complete-multipart.json", params: {
           unique_identifier: external_upload_stub.unique_identifier,
@@ -1231,7 +1245,7 @@ describe UploadsController do
         RateLimiter.enable
         RateLimiter.clear_all!
 
-        stub_const(UploadsController, "COMPLETE_MULTIPART_RATE_LIMIT_PER_MINUTE", 1) do
+        stub_const(ExternalUploadHelpers, "COMPLETE_MULTIPART_RATE_LIMIT_PER_MINUTE", 1) do
           post "/uploads/complete-multipart.json", params: {
             unique_identifier: "blah",
             parts: [{ part_number: 1, etag: "test1" }, { part_number: 2, etag: "test2" }]
@@ -1383,39 +1397,39 @@ describe UploadsController do
       end
 
       it "handles ChecksumMismatchError" do
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).raises(ExternalUploadManager::ChecksumMismatchError)
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(ExternalUploadManager::ChecksumMismatchError)
         post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
         expect(response.status).to eq(422)
         expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
       end
 
       it "handles SizeMismatchError" do
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).raises(ExternalUploadManager::SizeMismatchError.new("expected: 10, actual: 1000"))
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(ExternalUploadManager::SizeMismatchError.new("expected: 10, actual: 1000"))
         post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
         expect(response.status).to eq(422)
         expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
       end
 
       it "handles CannotPromoteError" do
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).raises(ExternalUploadManager::CannotPromoteError)
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(ExternalUploadManager::CannotPromoteError)
         post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
         expect(response.status).to eq(422)
         expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
       end
 
       it "handles DownloadFailedError and Aws::S3::Errors::NotFound" do
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).raises(ExternalUploadManager::DownloadFailedError)
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(ExternalUploadManager::DownloadFailedError)
         post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
         expect(response.status).to eq(422)
         expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).raises(Aws::S3::Errors::NotFound.new("error", "not found"))
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(Aws::S3::Errors::NotFound.new("error", "not found"))
         post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
         expect(response.status).to eq(422)
         expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
       end
 
       it "handles a generic upload failure" do
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).raises(StandardError)
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(StandardError)
         post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
         expect(response.status).to eq(422)
         expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
@@ -1423,14 +1437,14 @@ describe UploadsController do
 
       it "handles validation errors on the upload" do
         upload.errors.add(:base, "test error")
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).returns(upload)
+        ExternalUploadManager.any_instance.stubs(:transform!).returns(upload)
         post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
         expect(response.status).to eq(422)
         expect(response.parsed_body["errors"]).to eq(["test error"])
       end
 
       it "deletes the stub and returns the serialized upload when complete" do
-        ExternalUploadManager.any_instance.stubs(:promote_to_upload!).returns(upload)
+        ExternalUploadManager.any_instance.stubs(:transform!).returns(upload)
         post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
         expect(ExternalUploadStub.exists?(id: external_upload_stub.id)).to eq(false)
         expect(response.status).to eq(200)
