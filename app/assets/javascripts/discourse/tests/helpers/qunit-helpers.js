@@ -163,7 +163,10 @@ function testCleanup(container, app) {
   resetOneboxCache();
   resetCustomPostMessageCallbacks();
   resetUserSearchCache();
+  <<<<<<< darkmode-readme
   resetHighestReadCache();
+  =======
+ >>>>>>> revamped-notifications-menu
   resetCardClickListenerSelector();
   resetComposerCustomizations();
   resetQuickSearchRandomTips();

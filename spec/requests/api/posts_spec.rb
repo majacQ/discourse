@@ -316,6 +316,7 @@ describe 'posts' do
         end
       end
     end
+  <<<<<<< darkmode-readme
   end
 
   path '/posts/{id}/replies.json' do
@@ -343,6 +344,8 @@ describe 'posts' do
         end
       end
     end
+  =======
+  >>>>>>> revamped-notifications-menu
   end
 
   path '/posts/{id}/locked.json' do

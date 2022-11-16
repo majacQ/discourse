@@ -91,7 +91,11 @@ acceptance("Signing In", function () {
     await fillIn("#login-account-password", "need-second-factor");
     await click(".modal-footer .btn-primary");
 
+  <<<<<<< darkmode-readme
     assert.notOk(
+  =======
+    assert.not(
+  >>>>>>> revamped-notifications-menu
       exists("#credentials:visible"),
       "it hides the username and password prompt"
     );
@@ -123,7 +127,11 @@ acceptance("Signing In", function () {
     await fillIn("#login-account-password", "need-security-key");
     await click(".modal-footer .btn-primary");
 
+  <<<<<<< darkmode-readme
     assert.notOk(
+  =======
+    assert.not(
+  >>>>>>> revamped-notifications-menu
       exists("#credentials:visible"),
       "it hides the username and password prompt"
     );

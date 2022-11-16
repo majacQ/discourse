@@ -1506,7 +1506,11 @@ var bar = 'bar';
     assert.cookedOptions(
       ":grin: @sam",
       { featuresOverride: ["emoji"] },
+  <<<<<<< darkmode-readme
       `<p><img src="/images/emoji/google_classic/grin.png?v=${v}" title=":grin:" class="emoji" alt=":grin:" loading="lazy" width="20" height="20"> @sam</p>`,
+  =======
+      `<p><img src="/images/emoji/google_classic/grin.png?v=${v}" title=":grin:" class="emoji" alt=":grin:"> @sam</p>`,
+  >>>>>>> revamped-notifications-menu
       "cooks emojis when only the emoji markdown engine is enabled"
     );
 

@@ -64,6 +64,7 @@ class TopicConverter
 
   def posters
     @posters ||= @topic.posts.where("post_number > 1").distinct.pluck(:user_id)
+  <<<<<<< darkmode-readme
   end
 
   def increment_users_post_count
@@ -97,6 +98,8 @@ class TopicConverter
     ) X
     WHERE X.user_id = user_stats.user_id
     SQL
+  =======
+  >>>>>>> revamped-notifications-menu
   end
 
   def update_user_stats

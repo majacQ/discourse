@@ -19,6 +19,58 @@
   max-height: 80vh;
 }
 
+.menu-panel.drop-down.revamped-menu {
+  right: 0;
+  padding: 0;
+
+  .panel-body-contents {
+    flex-direction: row;
+  }
+
+  .quick-access-panel {
+    padding: 0.75em 0.75em 0.75em 0.75em;
+  }
+
+  .side-tabs-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border-left: 1px solid var(--primary-low);
+  }
+
+  .top-list, .bottom-list {
+    display: flex;
+    flex-direction: column;
+
+    button {
+      display: flex;
+      flex: 1 1 auto;
+      padding: 0.857em;
+      justify-content: center;
+      position: relative;
+
+      &:hover,
+      &:focus {
+        background-color: var(--tertiary-low);
+        &.active {
+          background-color: var(--tertiary-very-low);
+        }
+      }
+
+      .badge-notification {
+        background-color: var(--tertiary-med-or-tertiary);
+        color: var(--secondary);
+        font-size: var(--font-down-3);
+        position: absolute;
+        right: 6px;
+        top: 6px;
+        display: flex;
+        justify-content: center;
+      }
+    }
+  }
+}
+
 .menu-panel {
   border: 1px solid var(--primary-low);
   box-shadow: shadow("menu-panel");

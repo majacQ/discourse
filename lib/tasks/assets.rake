@@ -38,7 +38,12 @@ task 'assets:precompile:before' do
   if ENV['EMBER_CLI_PROD_ASSETS'] != "0"
     # Remove the assets that Ember CLI will handle for us
     Rails.configuration.assets.precompile.reject! do |asset|
+  <<<<<<< darkmode-readme
       asset.is_a?(String) && is_ember_cli_asset?(asset)
+  =======
+      asset.is_a?(String) &&
+        (%w(application.js admin.js ember_jquery.js pretty-text-bundle.js start-discourse.js vendor.js).include?(asset))
+ >>>>>>> revamped-notifications-menu
     end
   end
 end

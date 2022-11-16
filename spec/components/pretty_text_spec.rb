@@ -2122,7 +2122,11 @@ HTML
 
       cooked = PrettyText.cook(':grin: @mention', features_override: ["emoji"])
 
+  <<<<<<< darkmode-readme
       expect(cooked).to eq("<p><img src=\"/images/emoji/twitter/grin.png?v=#{Emoji::EMOJI_VERSION}\" title=\":grin:\" class=\"emoji\" alt=\":grin:\" loading=\"lazy\" width=\"20\" height=\"20\"> @mention</p>")
+  =======
+      expect(cooked).to eq("<p><img src=\"/images/emoji/twitter/grin.png?v=#{Emoji::EMOJI_VERSION}\" title=\":grin:\" class=\"emoji\" alt=\":grin:\"> @mention</p>")
+  >>>>>>> revamped-notifications-menu
 
       cooked = PrettyText.cook(':grin: @mention', features_override: ["mentions", "text-post-process"])
 

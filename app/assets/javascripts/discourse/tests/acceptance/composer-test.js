@@ -20,7 +20,7 @@ import {
 } from "discourse/tests/helpers/qunit-helpers";
 import selectKit from "discourse/tests/helpers/select-kit-helper";
 import I18n from "I18n";
-import { skip, test } from "qunit";
+import { test } from "qunit";
 import { Promise } from "rsvp";
 import sinon from "sinon";
 
