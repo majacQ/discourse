@@ -27,17 +27,21 @@ export function finderFor(filter, params) {
 }
 
 export default RestAdapter.extend({
-  find(store, type, findArgs) {
-    const filter = findArgs.filter;
-    const params = findArgs.params;
+  async find(store, type, findArgs) {
+    const { filter, params } = findArgs;
 
+  <<<<<<< asyncify-preload-store
+    const result = await PreloadStore.getAndRemove(
+      `topic_list_${filter}`,
+  =======
     return PreloadStore.getAndRemove(
       "topic_list",
+  >>>>>>> chat-quotes
       finderFor(filter, params)
-    ).then(function (result) {
-      result.filter = filter;
-      result.params = params;
-      return result;
-    });
+    );
+
+    result.filter = filter;
+    result.params = params;
+    return result;
   },
 });
