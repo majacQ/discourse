@@ -19,7 +19,7 @@ class PostActionCreator
       ).perform
     end
 
-    [:like, :off_topic, :spam, :inappropriate, :bookmark].each do |action|
+    [:like, :off_topic, :spam, :inappropriate].each do |action|
       define_method(action) do |created_by, post, silent = false|
         create(created_by, post, action, silent: silent)
       end
@@ -152,7 +152,7 @@ private
 
   def cannot_flag_again?(reviewable)
     return false if @post_action_type_id == PostActionType.types[:notify_moderators]
-    flag_type_already_used = reviewable.reviewable_scores.any? { |rs| rs.reviewable_score_type == @post_action_type_id && rs.status != ReviewableScore.statuses[:pending] }
+    flag_type_already_used = reviewable.reviewable_scores.any? { |rs| rs.reviewable_score_type == @post_action_type_id && !rs.pending? }
     not_edited_since_last_review = @post.last_version_at.blank? || reviewable.updated_at > @post.last_version_at
     handled_recently = reviewable.updated_at > SiteSetting.cooldown_hours_until_reflag.to_i.hours.ago
 
@@ -161,7 +161,7 @@ private
 
   def notify_subscribers
     if @post_action_name == :like
-      @post.publish_change_to_clients! :liked, { likes_count: @post.like_count + 1 }
+      @post.publish_change_to_clients! :liked, { likes_count: @post.like_count + 1, user_id: @created_by.id }
     elsif self.class.notify_types.include?(@post_action_name)
       @post.publish_change_to_clients! :acted
     end
@@ -285,7 +285,6 @@ private
     post_action
   rescue ActiveRecord::RecordNotUnique
     # can happen despite being .create
-    # since already bookmarked
     PostAction.where(where_attrs).first
   end
 

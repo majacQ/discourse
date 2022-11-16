@@ -6,6 +6,7 @@ class SiteSerializer < ApplicationSerializer
     :default_archetype,
     :notification_types,
     :post_types,
+    :user_tips,
     :trust_levels,
     :groups,
     :filters,
@@ -32,7 +33,11 @@ class SiteSerializer < ApplicationSerializer
     :custom_emoji_translation,
     :watched_words_replace,
     :watched_words_link,
-    :categories
+    :categories,
+    :markdown_additional_options,
+    :displayed_about_plugin_stat_groups,
+    :show_welcome_topic_banner,
+    :anonymous_default_sidebar_tags
   )
 
   has_many :archetypes, embed: :objects, serializer: ArchetypeSerializer
@@ -97,6 +102,14 @@ class SiteSerializer < ApplicationSerializer
 
   def post_types
     Post.types
+  end
+
+  def user_tips
+    User.user_tips
+  end
+
+  def include_user_tips?
+    SiteSetting.enable_user_tips
   end
 
   def filters
@@ -176,7 +189,7 @@ class SiteSerializer < ApplicationSerializer
   end
 
   def censored_regexp
-    WordWatcher.word_matcher_regexp(:censor)&.source
+    WordWatcher.serializable_word_matcher_regexp(:censor)
   end
 
   def custom_emoji_translation
@@ -201,6 +214,26 @@ class SiteSerializer < ApplicationSerializer
 
   def categories
     object.categories.map { |c| c.to_h }
+  end
+
+  def markdown_additional_options
+    Site.markdown_additional_options
+  end
+
+  def displayed_about_plugin_stat_groups
+    About.displayed_plugin_stat_groups
+  end
+
+  def show_welcome_topic_banner
+    Site.show_welcome_topic_banner?(scope)
+  end
+
+  def anonymous_default_sidebar_tags
+    SiteSetting.default_sidebar_tags.split("|") - DiscourseTagging.hidden_tag_names(scope)
+  end
+
+  def include_anonymous_default_sidebar_tags?
+    scope.anonymous? && SiteSetting.enable_experimental_sidebar_hamburger && SiteSetting.tagging_enabled && SiteSetting.default_sidebar_tags.present?
   end
 
   private

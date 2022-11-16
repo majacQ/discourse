@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe AdminUserListSerializer do
+RSpec.describe AdminUserListSerializer do
   fab!(:user) { Fabricate(:user) }
   fab!(:admin) { Fabricate(:admin) }
   let(:guardian) { Guardian.new(admin) }
@@ -33,7 +31,19 @@ describe AdminUserListSerializer do
     end
   end
 
-  context "emails" do
+  context "when backup codes enabled" do
+    before do
+      Fabricate(:user_second_factor_backup, user: user)
+    end
+
+    it "is true" do
+      json = serializer.as_json
+
+      expect(json[:second_factor_enabled]).to eq(true)
+    end
+  end
+
+  describe "emails" do
     fab!(:admin) { Fabricate(:user, admin: true, email: "admin@email.com") }
     fab!(:moderator) { Fabricate(:user, moderator: true, email: "moderator@email.com") }
     fab!(:user) { Fabricate(:user, email: "user@email.com") }

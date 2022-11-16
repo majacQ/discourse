@@ -3,7 +3,7 @@
 class BootstrapController < ApplicationController
   include ApplicationHelper
 
-  skip_before_action :redirect_to_login_if_required
+  skip_before_action :redirect_to_login_if_required, :check_xhr
 
   # This endpoint allows us to produce the data required to start up Discourse via JSON API,
   # so that you don't have to scrape the HTML for `data-*` payloads
@@ -27,6 +27,7 @@ class BootstrapController < ApplicationController
       add_style(mobile_view? ? :mobile : :desktop)
     end
     add_style(:admin) if staff?
+    add_style(:wizard) if admin?
 
     assets_fake_request = ActionDispatch::Request.new(request.env.dup)
     assets_for_url = params[:for_url]
@@ -51,8 +52,13 @@ class BootstrapController < ApplicationController
     if ExtraLocalesController.client_overrides_exist?
       extra_locales << ExtraLocalesController.url('overrides')
     end
+
     if staff?
       extra_locales << ExtraLocalesController.url('admin')
+    end
+
+    if admin?
+      extra_locales << ExtraLocalesController.url('wizard')
     end
 
     plugin_js = Discourse.find_plugin_js_assets(
@@ -60,6 +66,13 @@ class BootstrapController < ApplicationController
       include_unofficial: allow_third_party_plugins?,
       request: assets_fake_request
     ).map { |f| script_asset_path(f) }
+
+    plugin_test_js =
+      if Rails.env != "production"
+        script_asset_path("plugin-tests")
+      else
+        []
+      end
 
     bootstrap = {
       theme_id: theme_id,
@@ -69,7 +82,7 @@ class BootstrapController < ApplicationController
       locale_script: locale,
       stylesheets: @stylesheets,
       plugin_js: plugin_js,
-      plugin_test_js: [script_asset_path("plugin_tests")],
+      plugin_test_js: plugin_test_js,
       setup_data: client_side_setup_data,
       preloaded: @preloaded,
       html: create_html,
@@ -83,6 +96,23 @@ class BootstrapController < ApplicationController
     bootstrap[:csrf_token] = form_authenticity_token if current_user
 
     render_json_dump(bootstrap: bootstrap)
+  end
+
+  def plugin_css_for_tests
+    urls = Discourse.find_plugin_css_assets(
+      include_disabled: true,
+      desktop_view: true,
+    ).map do |target|
+      details = Stylesheet::Manager.new().stylesheet_details(target, 'all')
+      details[0][:new_href]
+    end
+
+    stylesheet = <<~CSS
+      /* For use in tests only - `@import`s all plugin stylesheets */
+      #{urls.map { |url| "@import \"#{url}\";" }.join("\n") }
+    CSS
+
+    render plain: stylesheet, content_type: 'text/css'
   end
 
 private

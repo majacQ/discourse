@@ -18,6 +18,9 @@ module PrettyText
   ].freeze
   DANGEROUS_BIDI_REGEXP = Regexp.new(DANGEROUS_BIDI_CHARACTERS.join("|")).freeze
 
+  BLOCKED_HOTLINKED_SRC_ATTR = "data-blocked-hotlinked-src"
+  BLOCKED_HOTLINKED_SRCSET_ATTR = "data-blocked-hotlinked-srcset"
+
   @mutex = Mutex.new
   @ctx_init = Mutex.new
 
@@ -60,20 +63,10 @@ module PrettyText
     end
   end
 
-  def self.ctx_load_manifest(ctx, name)
-    manifest = File.read("#{Rails.root}/app/assets/javascripts/#{name}")
+  def self.ctx_load_directory(ctx, path)
     root_path = "#{Rails.root}/app/assets/javascripts/"
-
-    manifest.each_line do |l|
-      l = l.chomp
-      if l =~ /\/\/= require (\.\/)?(.*)$/
-        apply_es6_file(ctx, root_path, Regexp.last_match[2])
-      elsif l =~ /\/\/= require_tree (\.\/)?(.*)$/
-        path = Regexp.last_match[2]
-        Dir["#{root_path}/#{path}/**"].sort.each do |f|
-          apply_es6_file(ctx, root_path, f.sub(root_path, '')[1..-1].sub(/\.js(.es6)?$/, ''))
-        end
-      end
+    Dir["#{root_path}#{path}/**/*"].sort.each do |f|
+      apply_es6_file(ctx, root_path, f.sub(root_path, '').sub(/\.js(.es6)?$/, ''))
     end
   end
 
@@ -82,29 +75,38 @@ module PrettyText
 
     ctx.eval("window = {}; window.devicePixelRatio = 2;") # hack to make code think stuff is retina
 
-    if Rails.env.development? || Rails.env.test?
-      ctx.attach("console.log", proc { |l| p l })
-      ctx.eval('window.console = console;')
-    end
+    ctx.attach("rails.logger.info", proc { |err| Rails.logger.info(err.to_s) })
+    ctx.attach("rails.logger.warn", proc { |err| Rails.logger.warn(err.to_s) })
+    ctx.attach("rails.logger.error", proc { |err| Rails.logger.error(err.to_s) })
+    ctx.eval <<~JS
+      console = {
+        prefix: "[PrettyText] ",
+        log: function(...args){ rails.logger.info(console.prefix + args.join(" ")); },
+        warn: function(...args){ rails.logger.warn(console.prefix + args.join(" ")); },
+        error: function(...args){ rails.logger.error(console.prefix + args.join(" ")); }
+      }
+    JS
+
     ctx.eval("__PRETTY_TEXT = true")
 
     PrettyText::Helpers.instance_methods.each do |method|
       ctx.attach("__helpers.#{method}", PrettyText::Helpers.method(method))
     end
 
-    ctx_load(ctx, "#{Rails.root}/app/assets/javascripts/discourse-loader.js")
-    ctx_load(ctx, "#{Rails.root}/app/assets/javascripts/handlebars-shim.js")
-    ctx_load(ctx, "vendor/assets/javascripts/lodash.js")
-    ctx_load(ctx, "vendor/assets/javascripts/xss.min.js")
-    ctx.load("#{Rails.root}/lib/pretty_text/vendor-shims.js")
-    ctx_load_manifest(ctx, "pretty-text-bundle.js")
-    ctx_load_manifest(ctx, "markdown-it-bundle.js")
     root_path = "#{Rails.root}/app/assets/javascripts/"
+    ctx_load(ctx, "#{root_path}/node_modules/loader.js/dist/loader/loader.js")
+    ctx_load(ctx, "#{root_path}/handlebars-shim.js")
+    ctx_load(ctx, "#{root_path}/node_modules/xss/dist/xss.js")
+    ctx.load("#{Rails.root}/lib/pretty_text/vendor-shims.js")
+    ctx_load_directory(ctx, "pretty-text/addon")
+    ctx_load_directory(ctx, "pretty-text/engines/discourse-markdown")
+    ctx_load(ctx, "#{root_path}/node_modules/markdown-it/dist/markdown-it.js")
 
     apply_es6_file(ctx, root_path, "discourse-common/addon/lib/get-url")
     apply_es6_file(ctx, root_path, "discourse-common/addon/lib/object")
     apply_es6_file(ctx, root_path, "discourse-common/addon/lib/deprecated")
     apply_es6_file(ctx, root_path, "discourse-common/addon/lib/escape")
+    apply_es6_file(ctx, root_path, "discourse-common/addon/utils/watched-words")
     apply_es6_file(ctx, root_path, "discourse/app/lib/to-markdown")
     apply_es6_file(ctx, root_path, "discourse/app/lib/utilities")
 
@@ -156,6 +158,19 @@ module PrettyText
     end
   end
 
+  # Acceptable options:
+  #
+  #  disable_emojis    - Disables the emoji markdown engine.
+  #  features          - A hash where the key is the markdown feature name and the value is a boolean to enable/disable the markdown feature.
+  #                      The hash is merged into the default features set in pretty-text.js which can be used to add new features or disable existing features.
+  #  features_override - An array of markdown feature names to override the default markdown feature set. Currently used by plugins to customize what features should be enabled
+  #                      when rendering markdown.
+  #  markdown_it_rules - An array of markdown rule names which will be applied to the markdown-it engine. Currently used by plugins to customize what markdown-it rules should be
+  #                      enabled when rendering markdown.
+  #  topic_id          - Topic id for the post being cooked.
+  #  user_id           - User id for the post being cooked.
+  #  force_quote_link  - Always create the link to the quoted topic for [quote] bbcode. Normally this only happens
+  #                      if the topic_id provided is different from the [quote topic:X].
   def self.markdown(text, opts = {})
     # we use the exact same markdown converter as the client
     # TODO: use the same extensions on both client and server (in particular the template for mentions)
@@ -168,6 +183,9 @@ module PrettyText
       custom_emoji = {}
       Emoji.custom.map { |e| custom_emoji[e.name] = e.url }
 
+      # note, any additional options added to __optInput here must be
+      # also be added to the buildOptions function in pretty-text.js,
+      # otherwise they will be discarded
       buffer = +<<~JS
         __optInput = {};
         __optInput.siteSettings = #{SiteSetting.client_settings_json};
@@ -175,6 +193,8 @@ module PrettyText
         __paths = #{paths_json};
         __optInput.getURL = __getURL;
         #{"__optInput.features = #{opts[:features].to_json};" if opts[:features]}
+        #{"__optInput.featuresOverride = #{opts[:features_override].to_json};" if opts[:features_override]}
+        #{"__optInput.markdownItRules = #{opts[:markdown_it_rules].to_json};" if opts[:markdown_it_rules]}
         __optInput.getCurrentUser = __getCurrentUser;
         __optInput.lookupAvatar = __lookupAvatar;
         __optInput.lookupPrimaryUserGroup = __lookupPrimaryUserGroup;
@@ -185,13 +205,18 @@ module PrettyText
         __optInput.customEmojiTranslation = #{Plugin::CustomEmoji.translations.to_json};
         __optInput.emojiUnicodeReplacer = __emojiUnicodeReplacer;
         __optInput.lookupUploadUrls = __lookupUploadUrls;
-        __optInput.censoredRegexp = #{WordWatcher.word_matcher_regexp(:censor)&.source.to_json};
+        __optInput.censoredRegexp = #{WordWatcher.serializable_word_matcher_regexp(:censor).to_json };
         __optInput.watchedWordsReplace = #{WordWatcher.word_matcher_regexps(:replace).to_json};
         __optInput.watchedWordsLink = #{WordWatcher.word_matcher_regexps(:link).to_json};
+        __optInput.additionalOptions = #{Site.markdown_additional_options.to_json};
       JS
 
-      if opts[:topicId]
-        buffer << "__optInput.topicId = #{opts[:topicId].to_i};\n"
+      if opts[:topic_id]
+        buffer << "__optInput.topicId = #{opts[:topic_id].to_i};\n"
+      end
+
+      if opts[:force_quote_link]
+        buffer << "__optInput.forceQuoteLink = #{opts[:force_quote_link]};\n"
       end
 
       if opts[:user_id]
@@ -279,10 +304,6 @@ module PrettyText
 
   def self.cook(text, opts = {})
     options = opts.dup
-
-    # we have a minor inconsistency
-    options[:topicId] = opts[:topic_id]
-
     working_text = text.dup
 
     sanitized = markdown(working_text, options)
@@ -292,6 +313,7 @@ module PrettyText
     add_nofollow = !options[:omit_nofollow] && SiteSetting.add_rel_nofollow_to_user_content
     add_rel_attributes_to_user_content(doc, add_nofollow)
     strip_hidden_unicode_bidirectional_characters(doc)
+    sanitize_hotlinked_media(doc)
 
     if SiteSetting.enable_mentions
       add_mentions(doc, user_id: opts[:user_id])
@@ -318,6 +340,25 @@ module PrettyText
           bidi,
           "<span class=\"bidi-warning\" title=\"#{I18n.t("post.hidden_bidi_character")}\">#{formatted}</span>"
         )
+      end
+    end
+  end
+
+  def self.sanitize_hotlinked_media(doc)
+    return if !SiteSetting.block_hotlinked_media
+
+    allowed_pattern = allowed_src_pattern
+
+    doc.css("img[src], source[src], source[srcset], track[src]").each do |el|
+      if el["src"] && !el["src"].match?(allowed_pattern)
+        el[PrettyText::BLOCKED_HOTLINKED_SRC_ATTR] = el.delete("src")
+      end
+
+      if el["srcset"]
+        srcs = el["srcset"].split(',').map { |e| e.split(' ', 2)[0].presence }
+        if srcs.any? { |src| !src.match?(allowed_pattern) }
+          el[PrettyText::BLOCKED_HOTLINKED_SRCSET_ATTR] = el.delete("srcset")
+        end
       end
     end
   end
@@ -361,6 +402,9 @@ module PrettyText
 
     # remove href inside quotes & oneboxes & elided part
     doc.css("aside.quote a, aside.onebox a, .elided a").remove
+
+    # remove hotlinked images
+    doc.css("a.onebox > img").each { |img| img.parent.remove }
 
     # extract all links
     doc.css("a").each do |a|
@@ -435,7 +479,7 @@ module PrettyText
   def self.convert_vimeo_iframes(doc)
     doc.css("iframe[src*='player.vimeo.com']").each do |iframe|
       if iframe["data-original-href"].present?
-        vimeo_url = UrlHelper.escape_uri(iframe["data-original-href"])
+        vimeo_url = UrlHelper.normalized_encode(iframe["data-original-href"])
       else
         vimeo_id = iframe['src'].split('/').last
         vimeo_url = "https://vimeo.com/#{vimeo_id}"
@@ -444,14 +488,14 @@ module PrettyText
     end
   end
 
-  def self.strip_secure_media(doc)
+  def self.strip_secure_uploads(doc)
     # images inside a lightbox or other link
     doc.css('a[href]').each do |a|
-      next if !Upload.secure_media_url?(a['href'])
+      next if !Upload.secure_uploads_url?(a['href'])
 
       non_image_media = %w(video audio).include?(a&.parent&.name)
       target = non_image_media ? a.parent : a
-      next if target.to_s.include?('stripped-secure-view-media')
+      next if target.to_s.include?('stripped-secure-view-media') || target.to_s.include?('stripped-secure-view-upload')
 
       next if a.css('img[src]').empty? && !non_image_media
 
@@ -465,12 +509,12 @@ module PrettyText
         else
           url = img['src']
         end
-        a.add_next_sibling secure_media_placeholder(doc, url, width: img['width'], height: img['height'])
+        a.add_next_sibling secure_uploads_placeholder(doc, url, width: img['width'], height: img['height'])
         a.remove
       else
         width = non_image_media ? nil : a.at_css('img').attr('width')
         height = non_image_media ? nil : a.at_css('img').attr('height')
-        target.add_next_sibling secure_media_placeholder(doc, a['href'], width: width, height: height)
+        target.add_next_sibling secure_uploads_placeholder(doc, a['href'], width: width, height: height)
         target.remove
       end
     end
@@ -507,20 +551,20 @@ module PrettyText
         height = 16
       end
 
-      if Upload.secure_media_url?(url)
-        img.add_next_sibling secure_media_placeholder(doc, url, onebox_type: onebox_type, width: width, height: height)
+      if Upload.secure_uploads_url?(url)
+        img.add_next_sibling secure_uploads_placeholder(doc, url, onebox_type: onebox_type, width: width, height: height)
         img.remove
       end
     end
   end
 
-  def self.secure_media_placeholder(doc, url, onebox_type: false, width: nil, height: nil)
+  def self.secure_uploads_placeholder(doc, url, onebox_type: false, width: nil, height: nil)
     data_width = width ? "data-width=#{width}" : ''
     data_height = height ? "data-height=#{height}" : ''
     data_onebox_type = onebox_type ? "data-onebox-type='#{onebox_type}'" : ''
     <<~HTML
-    <div class="secure-media-notice" data-stripped-secure-media="#{url}" #{data_onebox_type} #{data_width} #{data_height}>
-      #{I18n.t('emails.secure_media_placeholder')} <a class='stripped-secure-view-media' href="#{url}">#{I18n.t("emails.view_redacted_media")}</a>.
+    <div class="secure-upload-notice" data-stripped-secure-upload="#{url}" #{data_onebox_type} #{data_width} #{data_height}>
+      #{I18n.t('emails.secure_uploads_placeholder')} <a class='stripped-secure-view-upload' href="#{url}">#{I18n.t("emails.view_redacted_media")}</a>.
     </div>
     HTML
   end
@@ -528,7 +572,7 @@ module PrettyText
   def self.format_for_email(html, post = nil)
     doc = Nokogiri::HTML5.fragment(html)
     DiscourseEvent.trigger(:reduce_cooked, doc, post)
-    strip_secure_media(doc) if post&.with_secure_media?
+    strip_secure_uploads(doc) if post&.with_secure_uploads?
     strip_image_wrapping(doc)
     convert_vimeo_iframes(doc)
     make_all_links_absolute(doc)
@@ -644,4 +688,25 @@ module PrettyText
     mentions
   end
 
+  def self.allowed_src_pattern
+    allowed_src_prefixes = [
+      Discourse.base_path,
+      Discourse.base_url,
+      GlobalSetting.s3_cdn_url,
+      GlobalSetting.cdn_url,
+      SiteSetting.external_emoji_url.presence,
+      *SiteSetting.block_hotlinked_media_exceptions.split("|")
+    ]
+
+    patterns = allowed_src_prefixes.compact.map do |url|
+      pattern = Regexp.escape(url)
+
+      # If 'https://example.com' is allowed, ensure 'https://example.com.blah.com' is not
+      pattern += '(?:/|\z)' if !pattern.ends_with?("\/")
+
+      pattern
+    end
+
+    /\A(data:|#{patterns.join("|")})/
+  end
 end

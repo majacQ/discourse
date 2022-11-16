@@ -97,7 +97,7 @@ task 'site:export_structure', [:zip_path] => :environment do |task, args|
   if args[:zip_path].blank?
     STDERR.puts "ERROR: rake site:export_structure[<path to ZIP file>]"
     exit 1
-  elsif File.exists?(args[:zip_path])
+  elsif File.exist?(args[:zip_path])
     STDERR.puts "ERROR: File '#{args[:zip_path]}' already exists"
     exit 2
   end
@@ -210,6 +210,7 @@ task 'site:export_structure', [:zip_path] => :environment do |task, args|
       sort_order: c.sort_order,
       sort_ascending: c.sort_ascending,
       uploaded_logo_id: data.set_upload(c.uploaded_logo_id),
+      uploaded_logo_dark_id: data.set_upload(c.uploaded_logo_dark_id),
       uploaded_background_id: data.set_upload(c.uploaded_background_id),
       topic_featured_link_allowed: c.topic_featured_link_allowed,
       all_topics_wiki: c.all_topics_wiki,
@@ -328,7 +329,7 @@ task 'site:import_structure', [:zip_path] => :environment do |task, args|
   if args[:zip_path].blank?
     STDERR.puts "ERROR: rake site:import_structure[<path to ZIP file>]"
     exit 1
-  elsif !File.exists?(args[:zip_path])
+  elsif !File.exist?(args[:zip_path])
     STDERR.puts "ERROR: File '#{args[:zip_path]}' does not exist"
     exit 2
   end

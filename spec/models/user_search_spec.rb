@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-describe UserSearch do
+RSpec.describe UserSearch do
 
   before_all { SearchIndexer.enable } # Enable for prefabrication
   before { SearchIndexer.enable } # Enable for each test
@@ -176,6 +174,12 @@ describe UserSearch do
       expect(results).to eq [mr_blue.username]
     end
 
+    it "does not include deleted posts users" do
+      post4.trash!
+      results = search_for("", topic_id: topic.id)
+      expect(results).to eq [mr_orange, mr_b].map(&:username)
+    end
+
     it "only reveals topic participants to people with permission" do
       pm_topic = Fabricate(:private_message_post).topic
 
@@ -189,6 +193,7 @@ describe UserSearch do
         search_for("", topic_id: pm_topic.id, searching_user: mr_b)
       end.to raise_error(Discourse::InvalidAccess)
 
+      Group.refresh_automatic_groups!
       pm_topic.invite(pm_topic.user, mr_b.username)
 
       results = search_for("", topic_id: pm_topic.id, searching_user: mr_b)

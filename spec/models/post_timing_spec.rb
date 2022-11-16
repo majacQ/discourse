@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe PostTiming do
+RSpec.describe PostTiming do
   fab!(:post) { Fabricate(:post) }
 
   it { is_expected.to validate_presence_of :post_number }
@@ -176,7 +174,7 @@ describe PostTiming do
     end
 
     it '#destroy_last_for decrements the reads count for a post' do
-      PostTiming.destroy_last_for(post.user, post.topic_id)
+      PostTiming.destroy_last_for(post.user, topic_id: post.topic_id)
 
       expect(post.reload.reads).to eq initial_read_count
     end
@@ -193,7 +191,7 @@ describe PostTiming do
       post.topic.update!(updated_at: 10.minutes.ago)
       PostTiming.process_timings(post.user, post.topic_id, 1, [[post.post_number, 100]])
 
-      PostTiming.destroy_last_for(post.user, post.topic_id)
+      PostTiming.destroy_last_for(post.user, topic_id: post.topic_id)
 
       expect(post.user.user_stat.reload.first_unread_at).to eq_time(post.topic.updated_at)
     end
@@ -203,7 +201,7 @@ describe PostTiming do
       post.topic.update!(updated_at: 10.minutes.ago)
       PostTiming.process_timings(post.user, post.topic_id, 1, [[post.post_number, 100]])
 
-      PostTiming.destroy_last_for(post.user, post.topic_id)
+      PostTiming.destroy_last_for(post.user, topic_id: post.topic_id)
 
       expect(post.user.user_stat.reload.first_unread_pm_at).to eq_time(post.topic.updated_at)
     end
@@ -217,7 +215,7 @@ describe PostTiming do
       topic.allowed_groups << group
       PostTiming.process_timings(user, topic.id, 1, [[post.post_number, 100]])
 
-      PostTiming.destroy_last_for(user, topic.id)
+      PostTiming.destroy_last_for(user, topic_id: topic.id)
 
       expect(GroupUser.find_by(user: user, group: group).first_unread_pm_at)
         .to eq_time(post.topic.updated_at)

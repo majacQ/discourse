@@ -3,10 +3,11 @@ import {
   exists,
   queryAll,
 } from "discourse/tests/helpers/qunit-helpers";
-import hbs from "htmlbars-inline-precompile";
+import { hbs } from "ember-cli-htmlbars";
 import { test } from "qunit";
 import { visit } from "@ember/test-helpers";
 import { withPluginApi } from "discourse/lib/plugin-api";
+import Ember from "ember";
 
 const PREFIX = "javascripts/single-test/connectors";
 

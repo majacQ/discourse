@@ -35,11 +35,15 @@ $quote-share-maxwidth: 150px;
 }
 
 .placeholder-text {
-  margin-left: 11px;
+  margin-left: var(--topic-body-width-padding);
   display: inline-block;
-  width: calc(100% - 11px);
+  width: calc(100% - var(--topic-body-width-padding));
   height: 1.5em;
   margin-bottom: 0.6em;
+}
+
+.post-stream .placeholder .row {
+  display: flex;
 }
 
 .names {
@@ -52,7 +56,7 @@ $quote-share-maxwidth: 150px;
   }
 
   span {
-    font-size: $font-0;
+    font-size: var(--font-0);
     margin-right: 8px;
     display: inline-block;
     @include ellipsis;
@@ -62,7 +66,7 @@ $quote-share-maxwidth: 150px;
     }
   }
   .fa {
-    font-size: $font-down-1;
+    font-size: var(--font-down-1);
     color: var(--primary-med-or-secondary-med);
   }
   .svg-icon-title {
@@ -80,7 +84,7 @@ $quote-share-maxwidth: 150px;
 .cooked,
 .d-editor-preview {
   word-wrap: break-word;
-  line-height: $line-height-large;
+  line-height: var(--line-height-large);
 
   > *:first-child {
     margin-top: 0;
@@ -93,7 +97,7 @@ $quote-share-maxwidth: 150px;
   h5,
   h6 {
     margin: 30px 0 10px;
-    line-height: $line-height-medium;
+    line-height: var(--line-height-medium);
     a.anchor {
       opacity: 0;
       transition: opacity 0.25s;
@@ -144,17 +148,17 @@ $quote-share-maxwidth: 150px;
     word-wrap: break-word;
   }
 
-  del,
-  ins,
   mark {
     text-decoration: none;
   }
 
   ins {
     background-color: var(--success-low);
+    text-decoration: underline;
   }
   del {
     background-color: var(--danger-low);
+    text-decoration: line-through;
   }
   mark {
     background-color: var(--highlight);
@@ -192,6 +196,12 @@ $quote-share-maxwidth: 150px;
   img:not(.thumbnail):not(.ytp-thumbnail-image):not(.emoji) {
     max-width: 100%;
     height: auto;
+    display: inline-block; // Ensure dimensions are maintained even after load error
+
+    @supports not (aspect-ratio: 1) {
+      // (see javascripts/discourse/app/initializers/image-aspect-ratio.js)
+      height: var(--calculated-height);
+    }
   }
 }
 
@@ -224,6 +234,141 @@ $quote-share-maxwidth: 150px;
     display: flex;
     flex: 0 0 auto;
     align-items: center;
+  }
+
+  .user-status-message {
+    display: flex;
+    img.emoji {
+      width: 1em;
+      height: 1em;
+    }
+  }
+}
+
+nav.post-controls {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--primary-low-mid);
+
+  .actions {
+    display: inline-flex;
+    text-align: right;
+    margin-left: auto;
+
+    // Some buttons can be doubled up, like likes or flags
+    .double-button {
+      display: inline-flex;
+      flex: 0 1 auto;
+      align-items: center;
+      white-space: nowrap;
+      button {
+        // It looks really confusing when one half a double button has an inner shadow on click.
+        &:active {
+          box-shadow: none;
+        }
+        &.my-likes,
+        &.read-indicator,
+        &.regular-likes {
+          // Like count on posts
+          .d-icon {
+            color: var(--primary-low-mid);
+            padding-left: 0.45em;
+          }
+        }
+        &.has-like {
+          // Like button after I've liked
+          .d-icon {
+            color: var(--love);
+          }
+        }
+        &[disabled] {
+          // Disabled like button
+          cursor: not-allowed;
+        }
+        &.button-count {
+          // Like count button
+          height: 100%; // sometimes the font might be shorter than the icon
+          &:not(.my-likes) {
+            padding-right: 0;
+          }
+          + .toggle-like {
+            // Like button when like count is present
+            padding-left: 0.45em;
+          }
+        }
+      }
+    }
+    a,
+    button {
+      color: var(--primary-low-mid-or-secondary-high);
+      .d-icon {
+        opacity: 1;
+      }
+      display: inline-block;
+    }
+
+    button {
+      flex: 0 1 auto;
+      font-size: var(--font-up-1);
+      padding: 8px 10px;
+      vertical-align: top;
+      background: transparent;
+      border: none;
+      &.d-hover,
+      &:focus,
+      &:active {
+        outline: none;
+        background: var(--primary-low);
+        color: var(--primary);
+      }
+      &.hidden {
+        display: none;
+      }
+      &.admin {
+        position: relative;
+      }
+      &.delete.d-hover,
+      &.delete:hover,
+      &.delete:focus {
+        background: var(--danger);
+        color: var(--secondary);
+        .d-icon {
+          color: var(--secondary);
+        }
+      }
+      &.bookmarked .d-icon {
+        color: var(--tertiary);
+      }
+      &.create {
+        margin-right: 0;
+        color: var(--primary-high-or-secondary-low);
+        .d-icon {
+          color: var(--primary-high-or-secondary-low);
+        }
+      }
+    }
+  }
+
+  .show-replies {
+    font-size: var(--font-up-1);
+    font-size: inherit;
+    padding: 10px;
+    color: var(--primary-medium);
+    &:hover,
+    &:focus {
+      outline: none;
+      color: var(--primary);
+      background: var(--primary-low);
+    }
+    .d-icon {
+      font-size: var(--font-down-1);
+    }
+    .d-button-label + .d-icon {
+      margin-left: 0.45em;
+      margin-right: 0;
+    }
   }
 }
 
@@ -260,6 +405,10 @@ $quote-share-maxwidth: 150px;
         .d-icon {
           color: currentColor;
         }
+      }
+      &[disabled]:hover {
+        background-color: transparent;
+        cursor: not-allowed;
       }
       &.fade-out {
         opacity: 1;
@@ -410,6 +559,10 @@ aside.quote {
   background-color: var(--secondary-high);
   flex-direction: column;
 
+  &.animated {
+    transition: top 0.1s linear, left 0.1s linear;
+  }
+
   &.visible {
     display: flex;
   }
@@ -527,8 +680,8 @@ aside.quote {
       padding: 3px 5px;
       text-align: center;
       font-weight: normal;
-      font-size: $font-down-2;
-      line-height: $line-height-small;
+      font-size: var(--font-down-2);
+      line-height: var(--line-height-small);
     }
   }
 
@@ -549,21 +702,21 @@ aside.quote {
   h3 {
     margin-bottom: 4px;
     color: var(--primary);
-    line-height: $line-height-large;
+    line-height: var(--line-height-large);
     font-weight: normal;
-    font-size: $font-0;
+    font-size: var(--font-0);
   }
 
   h4 {
     margin: 1px 0 2px 0;
     color: var(--primary-med-or-secondary-med);
     font-weight: normal;
-    font-size: $font-down-1;
-    line-height: $line-height-small;
+    font-size: var(--font-down-1);
+    line-height: var(--line-height-small);
   }
 
   span.domain {
-    font-size: $font-down-2;
+    font-size: var(--font-down-2);
     color: var(--primary-med-or-secondary-med);
   }
 
@@ -714,7 +867,7 @@ aside.quote {
     right: -4px;
   }
   .fa {
-    font-size: $font-up-4;
+    font-size: var(--font-up-4);
   }
 }
 .topic-map .poster .avatar-flair {
@@ -733,7 +886,7 @@ aside.quote {
     right: 0;
   }
   .d-icon {
-    font-size: $font-down-2;
+    font-size: var(--font-down-2);
   }
 }
 
@@ -787,7 +940,7 @@ aside.quote {
   &.whisper,
   &.post-locked {
     .d-icon {
-      font-size: $font-0;
+      font-size: var(--font-0);
     }
   }
 
@@ -856,23 +1009,35 @@ pre {
   }
 }
 
-.copy-codeblocks {
+.codeblock-buttons {
   display: block;
   position: relative;
   overflow: visible;
 
-  .copy-cmd {
-    @include unselectable;
+  .codeblock-button-wrapper {
     position: absolute;
-    top: 0;
     right: 0;
+    display: flex;
+
+    .copy-cmd {
+      right: 0;
+    }
+    .copy-fullscreen {
+      right: 28px;
+    }
+  }
+
+  .copy-cmd,
+  .fullscreen-cmd {
+    @include unselectable;
+    top: 0;
     min-height: 0;
-    font-size: $font-down-2;
+    font-size: var(--font-down-2);
     min-height: 0;
-    font-size: $font-down-2;
+    font-size: var(--font-down-2);
     opacity: 0.7;
 
-    &.copied {
+    &.action-complete {
       .d-icon {
         color: var(--tertiary);
       }
@@ -894,9 +1059,9 @@ kbd {
   box-sizing: border-box;
   color: var(--primary);
   display: inline-flex;
-  font-size: $font-down-1;
+  font-size: var(--font-down-1);
   justify-content: center;
-  line-height: $line-height-large;
+  line-height: var(--line-height-large);
   margin: 0 0.15em;
   min-width: 24px;
   padding: 0.15em 0.6em;
@@ -920,12 +1085,13 @@ blockquote > *:last-child {
 }
 
 .gap {
-  padding: 0.25em 0 0.5em 56px; // 45px (topic avatar) + 11px (margin) = 56px
+  padding: 0.25em 0 0.5em
+    calc(var(--topic-avatar-width) + var(--topic-body-width-padding));
   color: var(--primary-med-or-secondary-high);
   cursor: pointer;
   text-transform: uppercase;
   font-weight: bold;
-  font-size: $font-down-1;
+  font-size: var(--font-down-1);
 }
 
 .who-liked,
@@ -956,17 +1122,20 @@ blockquote > *:last-child {
 .small-action {
   display: flex;
   align-items: center;
-  max-width: 758px;
-  border-top: 1px solid var(--primary-low);
+
+  .topic-avatar,
+  .small-action-desc {
+    border-top: 1px solid var(--primary-low);
+  }
+
   .topic-avatar {
     align-self: flex-start;
     padding: 0.7em 0;
-    border-top: none;
-    margin-right: 11px;
     flex: 0 0 auto;
+    width: var(--topic-avatar-width);
     .d-icon {
       font-size: 2em;
-      width: 45px;
+      width: var(--topic-avatar-width);
       text-align: center;
       color: var(--primary-low-mid);
     }
@@ -981,26 +1150,33 @@ blockquote > *:last-child {
   }
 
   .small-action-desc {
+    box-sizing: border-box;
     display: flex;
     flex-wrap: wrap;
-    flex: 1 1 100%;
     align-items: center;
-    padding: 1em 0;
+    padding: 1em 0 1em var(--topic-body-width-padding);
     text-transform: uppercase;
     font-weight: bold;
-    font-size: $font-down-1;
+    font-size: var(--font-down-1);
     color: var(--primary-medium);
+    width: calc(
+      var(--topic-body-width) + (var(--topic-body-width-padding) * 2)
+    );
     min-width: 0; // Allows flex container to shrink
 
     button {
       align-self: flex-start;
+      font-size: var(--font-up-1);
+      .d-icon {
+        font-size: var(--font-down-1);
+      }
     }
 
     .custom-message {
       flex: 1 1 100%;
       text-transform: none;
       font-weight: normal;
-      font-size: $font-up-1;
+      font-size: var(--font-up-1);
       order: 12;
       word-break: break-word;
       min-width: 0; // Allows content like oneboxes to shrink
@@ -1019,7 +1195,7 @@ blockquote > *:last-child {
     > p {
       margin: 0;
       padding-right: 0.5em;
-      line-height: $line-height-medium;
+      line-height: var(--line-height-medium);
       flex: 1 1;
     }
   }
@@ -1046,12 +1222,14 @@ blockquote > *:last-child {
       border-bottom: 1px solid var(--danger-medium);
       line-height: 0.1em;
       margin: 1rem 0px;
-      width: 100%;
-
+      width: calc(
+        var(--topic-body-width) + var(--topic-avatar-width) +
+          (var(--topic-body-width-padding) * 2)
+      );
       .topic-post-visited-message {
         background-color: var(--secondary);
         color: var(--danger-medium);
-        font-size: $font-down-1;
+        font-size: var(--font-down-1);
         padding: 0 8px;
       }
     }
@@ -1087,6 +1265,7 @@ span.mention {
 }
 
 a.mention-group {
+  display: inline-block;
   font-weight: bold;
   font-size: 0.93em;
   color: var(--primary);
@@ -1125,8 +1304,8 @@ a.mention-group {
     > .d-icon {
       color: var(--primary-med-or-secondary-med);
       margin-right: 6px;
-      font-size: $font-0;
-      line-height: $line-height-large;
+      font-size: var(--font-0);
+      line-height: var(--line-height-large);
     }
 
     > span.url {
@@ -1140,9 +1319,9 @@ a.mention-group {
     > span.help {
       display: inline-block;
       color: var(--primary-med-or-secondary-med);
-      font-size: $font-down-1;
+      font-size: var(--font-down-1);
       font-style: italic;
-      line-height: $line-height-large;
+      line-height: var(--line-height-large);
       margin-bottom: 1px;
     }
 
@@ -1152,14 +1331,25 @@ a.mention-group {
   }
 }
 
-.broken-image {
+.broken-image,
+.blocked-hotlinked-placeholder {
+  &:not(a) {
+    color: var(--primary-low-mid-or-secondary-high);
+  }
+
   display: inline-flex;
-  color: var(--primary-low-mid-or-secondary-high);
+  flex-direction: column;
   border: 1px solid var(--primary-low);
-  font-size: $font-up-5;
+  align-items: center;
+  justify-content: center;
 
   .d-icon {
     margin: 16px;
+    font-size: var(--font-up-5);
+  }
+
+  .notice {
+    margin: 0 0.5em 0.5em 0.5em;
   }
 }
 
@@ -1169,6 +1359,8 @@ a.mention-group {
   display: flex;
   align-items: center;
   margin-right: 2em;
+  max-width: 400px;
+  overflow: hidden;
 
   img {
     margin: 0 0.25em;
@@ -1226,8 +1418,9 @@ a.mention-group {
 
 .signup-cta {
   box-sizing: border-box;
-  max-width: calc(#{$topic-body-width} + 4.5em);
-  padding: 3em 5em 2em 56px; // 45px (topic avatar) + 11px (margin) = 56px
+  max-width: calc(var(--topic-body-width) + 4.5em);
+  padding: 3em 5em 2em
+    calc(var(--topic-avatar-width + var(--topic-body-width-padding)));
   @include breakpoint(mobile-extra-large) {
     padding: 1.5em 1.5em 0.25em;
   }
@@ -1269,12 +1462,13 @@ a.mention-group {
   background-color: var(--tertiary-low);
   border-top: 1px solid var(--primary-low);
   display: flex;
+  width: 100%;
   max-width: calc(
-    #{$topic-body-width} + (#{$topic-body-width-padding} * 2) + #{$topic-avatar-width} -
-      (0.8em * 2)
+    var(--topic-body-width) + (var(--topic-body-width-padding) * 2) +
+      var(--topic-avatar-width)
   );
-  padding: 0.8em;
-
+  padding: var(--topic-body-width-padding);
+  padding-left: 0;
   &.old {
     background-color: unset;
     color: var(--primary-medium);
@@ -1290,8 +1484,9 @@ a.mention-group {
 
   .d-icon {
     font-size: 2em;
+    width: var(--topic-avatar-width);
     color: var(--primary-high);
-    margin-right: 0.65em;
+    margin-right: var(--topic-body-width-padding);
   }
 }
 
@@ -1344,7 +1539,7 @@ a.mention-group {
 
       .text {
         margin-left: 0.5em;
-        line-height: $line-height-medium;
+        line-height: var(--line-height-medium);
       }
     }
   }
@@ -1375,8 +1570,8 @@ a.mention-group {
   justify-content: center;
   align-items: center;
   max-width: calc(
-    #{$topic-body-width} + (#{$topic-body-width-padding} * 2) + #{$topic-avatar-width} -
-      (0.8em * 2)
+    var(--topic-body-width) + (var(--topic-body-width-padding) * 2) +
+      var(--topic-avatar-width)
   );
 
   .filtered-avatar {
@@ -1473,7 +1668,8 @@ a.mention-group {
   margin-right: 4px;
 }
 
-.fullscreen-table-modal .modal-inner-container {
+.fullscreen-table-modal .modal-inner-container,
+.fullscreen-code-modal .modal-inner-container {
   width: max-content;
   max-width: 90%;
   margin: 0 auto;
@@ -1496,6 +1692,12 @@ a.mention-group {
 
   td {
     padding: 0.5rem;
+  }
+}
+
+.fullscreen-code-modal {
+  pre code {
+    max-width: none;
   }
 }
 

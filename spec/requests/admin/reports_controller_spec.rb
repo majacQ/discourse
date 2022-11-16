@@ -1,22 +1,15 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
+RSpec.describe Admin::ReportsController do
+  fab!(:admin) { Fabricate(:admin) }
+  fab!(:moderator) { Fabricate(:moderator) }
+  fab!(:user) { Fabricate(:user) }
 
-describe Admin::ReportsController do
-  it "is a subclass of AdminController" do
-    expect(Admin::ReportsController < Admin::AdminController).to eq(true)
-  end
+  describe '#bulk' do
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
 
-  context 'while logged in as an admin' do
-    fab!(:admin) { Fabricate(:admin) }
-    fab!(:user) { Fabricate(:user) }
-
-    before do
-      sign_in(admin)
-    end
-
-    describe '#bulk' do
-      context "valid params" do
+      context "with valid params" do
         it "renders the reports as JSON" do
           Fabricate(:topic)
           get "/admin/reports/bulk.json", params: {
@@ -31,8 +24,8 @@ describe Admin::ReportsController do
         end
       end
 
-      context "invalid params" do
-        context "nonexistent report" do
+      context "with invalid params" do
+        context "with nonexistent report" do
           it "returns not found reports" do
             get "/admin/reports/bulk.json", params: {
               reports: {
@@ -48,7 +41,7 @@ describe Admin::ReportsController do
           end
         end
 
-        context "invalid start or end dates" do
+        context "with invalid start or end dates" do
           it "doesn't return 500 error" do
             get "/admin/reports/bulk.json", params: {
               reports: {
@@ -68,8 +61,46 @@ describe Admin::ReportsController do
       end
     end
 
-    describe '#show' do
-      context "invalid id form" do
+    context "when logged in as a moderator" do
+      before { sign_in(moderator) }
+
+      it "returns report" do
+        Fabricate(:topic)
+
+        get "/admin/reports/bulk.json", params: {
+          reports: {
+            topics: { limit: 10 },
+            likes: { limit: 10 }
+          }
+        }
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["reports"].count).to eq(2)
+      end
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      it "denies access with a 404 response" do
+        get "/admin/reports/bulk.json", params: {
+          reports: {
+            topics: { limit: 10 },
+            not_found: { limit: 10 }
+          }
+        }
+
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+      end
+    end
+  end
+
+  describe '#show' do
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
+
+      context "with invalid id form" do
         let(:invalid_id) { "!!&asdfasdf" }
 
         it "returns 404" do
@@ -78,15 +109,15 @@ describe Admin::ReportsController do
         end
       end
 
-      context "valid type form" do
-        context 'missing report' do
+      context "with valid type form" do
+        context 'with missing report' do
           it "returns a 404 error" do
             get "/admin/reports/nonexistent.json"
             expect(response.status).to eq(404)
           end
         end
 
-        context 'a report is found' do
+        context 'when a report is found' do
           it "renders the report as JSON" do
             Fabricate(:topic)
             get "/admin/reports/topics.json"
@@ -131,6 +162,30 @@ describe Admin::ReportsController do
           expect(report["type"]).to eq('signups')
           expect(report["data"].count).to eq(1)
         end
+      end
+    end
+
+    context "when logged in as a moderator" do
+      before  { sign_in(moderator) }
+
+      it "returns report" do
+        Fabricate(:topic)
+
+        get "/admin/reports/topics.json"
+
+        expect(response.status).to eq(200)
+        expect(response.parsed_body["report"]["total"]).to eq(1)
+      end
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      it "denies access with a 404 response" do
+        get "/admin/reports/topics.json"
+
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
       end
     end
   end

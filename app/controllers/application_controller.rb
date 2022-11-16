@@ -8,7 +8,7 @@ class ApplicationController < ActionController::Base
   include JsonError
   include GlobalPath
   include Hijack
-  include ReadOnlyHeader
+  include ReadOnlyMixin
   include VaryHeader
 
   attr_reader :theme_id
@@ -49,7 +49,8 @@ class ApplicationController < ActionController::Base
   after_action  :conditionally_allow_site_embedding
   after_action  :ensure_vary_header
   after_action  :add_noindex_header, if: -> { is_feed_request? || !SiteSetting.allow_index_in_robots_txt }
-  after_action  :add_noindex_header_to_non_canonical, if: -> { request.get? && !(request.format && request.format.json?) && !request.xhr? }
+  after_action  :add_noindex_header_to_non_canonical, if: :spa_boot_request?
+  around_action :link_preload, if: -> { spa_boot_request? && GlobalSetting.preload_link_header }
 
   HONEYPOT_KEY ||= 'HONEYPOT_KEY'
   CHALLENGE_KEY ||= 'CHALLENGE_KEY'
@@ -68,7 +69,7 @@ class ApplicationController < ActionController::Base
   def use_crawler_layout?
     @use_crawler_layout ||=
       request.user_agent &&
-      (request.content_type.blank? || request.content_type.include?('html')) &&
+      (request.media_type.blank? || request.media_type.include?('html')) &&
       !['json', 'rss'].include?(params[:format]) &&
       (has_escaped_fragment? || params.key?("print") || show_browser_update? ||
       CrawlerDetection.crawler?(request.user_agent, request.headers["HTTP_VIA"])
@@ -90,6 +91,9 @@ class ApplicationController < ActionController::Base
       response.cache_control[:no_cache] = true
       response.cache_control[:extras] = ["no-store"]
     end
+    if SiteSetting.login_required
+      response.headers['Discourse-No-Onebox'] = '1'
+    end
   end
 
   def conditionally_allow_site_embedding
@@ -99,7 +103,7 @@ class ApplicationController < ActionController::Base
   end
 
   def ember_cli_required?
-    Rails.env.development? && ENV['NO_EMBER_CLI'] != '1' && request.headers['X-Discourse-Ember-CLI'] != 'true'
+    Rails.env.development? && ENV["ALLOW_EMBER_CLI_PROXY_BYPASS"] != "1" && request.headers['X-Discourse-Ember-CLI'] != 'true'
   end
 
   def application_layout
@@ -189,7 +193,7 @@ class ApplicationController < ActionController::Base
         e.description,
         type: :rate_limit,
         status: 429,
-        extras: { wait_seconds: retry_time_in_seconds },
+        extras: { wait_seconds: retry_time_in_seconds, time_left: e&.time_left },
         headers: response_headers
       )
     end
@@ -243,11 +247,32 @@ class ApplicationController < ActionController::Base
 
   rescue_from Discourse::ReadOnly do
     unless response_body
-      render_json_error I18n.t('read_only_mode_enabled'), type: :read_only, status: 503
+      respond_to do |format|
+        format.json do
+          render_json_error I18n.t('read_only_mode_enabled'), type: :read_only, status: 503
+        end
+        format.html do
+          render status: 503, layout: 'no_ember', template: 'exceptions/read_only'
+        end
+      end
     end
   end
 
-  def redirect_with_client_support(url, options)
+  rescue_from SecondFactor::AuthManager::SecondFactorRequired do |e|
+    if request.xhr?
+      render json: {
+        second_factor_challenge_nonce: e.nonce
+      }, status: 403
+    else
+      redirect_to session_2fa_path(nonce: e.nonce)
+    end
+  end
+
+  rescue_from SecondFactor::BadChallenge do |e|
+    render json: { error: I18n.t(e.error_translation_key) }, status: e.status_code
+  end
+
+  def redirect_with_client_support(url, options = {})
     if request.xhr?
       response.headers['Discourse-Xhr-Redirect'] = 'true'
       render plain: url
@@ -270,7 +295,7 @@ class ApplicationController < ActionController::Base
       # cause category / topic was deleted
       if permalink.present? && permalink.target_url
         # permalink present, redirect to that URL
-        redirect_with_client_support permalink.target_url, status: :moved_permanently
+        redirect_with_client_support permalink.target_url, status: :moved_permanently, allow_other_host: true
         return
       end
     end
@@ -297,7 +322,11 @@ class ApplicationController < ActionController::Base
       with_resolved_locale(check_current_user: false) do
         # Include error in HTML format for topics#show.
         if (request.params[:controller] == 'topics' && request.params[:action] == 'show') || (request.params[:controller] == 'categories' && request.params[:action] == 'find_by_slug')
-          opts[:extras] = { html: build_not_found_page(error_page_opts), group: error_page_opts[:group] }
+          opts[:extras] = {
+            title: I18n.t('page_not_found.page_title'),
+            html: build_not_found_page(error_page_opts),
+            group: error_page_opts[:group]
+          }
         end
       end
 
@@ -311,7 +340,7 @@ class ApplicationController < ActionController::Base
         return render plain: message, status: status_code
       end
       with_resolved_locale do
-        error_page_opts[:layout] = opts[:include_ember] ? 'application' : 'no_ember'
+        error_page_opts[:layout] = (opts[:include_ember] && @preloaded) ? 'application' : 'no_ember'
         render html: build_not_found_page(error_page_opts)
       end
     end
@@ -372,11 +401,8 @@ class ApplicationController < ActionController::Base
     if check_current_user && (user = current_user rescue nil)
       locale = user.effective_locale
     else
-      if SiteSetting.set_locale_from_accept_language_header
-        locale = locale_from_header
-      else
-        locale = SiteSetting.default_locale
-      end
+      locale = Discourse.anonymous_locale(request)
+      locale ||= SiteSetting.default_locale
     end
 
     if !I18n.locale_available?(locale)
@@ -416,19 +442,23 @@ class ApplicationController < ActionController::Base
     session[:mobile_view] = params[:mobile_view] if params.has_key?(:mobile_view)
   end
 
-  NO_CUSTOM = "no_custom"
+  NO_THEMES = "no_themes"
   NO_PLUGINS = "no_plugins"
-  ONLY_OFFICIAL = "only_official"
+  NO_UNOFFICIAL_PLUGINS = "no_unofficial_plugins"
   SAFE_MODE = "safe_mode"
+
+  LEGACY_NO_THEMES = "no_custom"
+  LEGACY_NO_UNOFFICIAL_PLUGINS = "only_official"
 
   def resolve_safe_mode
     return unless guardian.can_enable_safe_mode?
 
     safe_mode = params[SAFE_MODE]
-    if safe_mode
-      request.env[NO_CUSTOM] = !!safe_mode.include?(NO_CUSTOM)
-      request.env[NO_PLUGINS] = !!safe_mode.include?(NO_PLUGINS)
-      request.env[ONLY_OFFICIAL] = !!safe_mode.include?(ONLY_OFFICIAL)
+    if safe_mode&.is_a?(String)
+      safe_mode = safe_mode.split(",")
+      request.env[NO_THEMES] = safe_mode.include?(NO_THEMES) || safe_mode.include?(LEGACY_NO_THEMES)
+      request.env[NO_PLUGINS] = safe_mode.include?(NO_PLUGINS)
+      request.env[NO_UNOFFICIAL_PLUGINS] = safe_mode.include?(NO_UNOFFICIAL_PLUGINS) || safe_mode.include?(LEGACY_NO_UNOFFICIAL_PLUGINS)
     end
   end
 
@@ -436,7 +466,7 @@ class ApplicationController < ActionController::Base
     return if request.format == "js"
 
     resolve_safe_mode
-    return if request.env[NO_CUSTOM]
+    return if request.env[NO_THEMES]
 
     theme_id = nil
 
@@ -469,6 +499,11 @@ class ApplicationController < ActionController::Base
   end
 
   def guardian
+    # sometimes we log on a user in the middle of a request so we should throw
+    # away the cached guardian instance when we do that
+    if (@guardian&.user).blank? && current_user.present?
+      @guardian = Guardian.new(current_user, request)
+    end
     @guardian ||= Guardian.new(current_user, request)
   end
 
@@ -587,10 +622,6 @@ class ApplicationController < ActionController::Base
 
   private
 
-  def locale_from_header
-    HttpLanguageParser.parse(request.env["HTTP_ACCEPT_LANGUAGE"])
-  end
-
   def preload_anonymous_data
     store_preloaded("site", Site.json_for(guardian))
     store_preloaded("siteSettings", SiteSetting.client_settings_json)
@@ -598,6 +629,7 @@ class ApplicationController < ActionController::Base
     store_preloaded("banner", banner_json)
     store_preloaded("customEmoji", custom_emoji)
     store_preloaded("isReadOnly", @readonly_mode.to_s)
+    store_preloaded("isStaffWritesOnly", @staff_writes_only_mode.to_s)
     store_preloaded("activatedThemes", activated_themes_json)
   end
 
@@ -642,6 +674,7 @@ class ApplicationController < ActionController::Base
 
   def banner_json
     json = ApplicationController.banner_json_cache["json"]
+    return "{}" if !current_user && SiteSetting.login_required?
 
     unless json
       topic = Topic.where(archetype: Archetype.banner).first
@@ -812,7 +845,7 @@ class ApplicationController < ActionController::Base
       end
 
       if UserApiKey.allowed_scopes.superset?(Set.new(["one_time_password"]))
-        redirect_to("#{params[:auth_redirect]}?otp=true")
+        redirect_to("#{params[:auth_redirect]}?otp=true", allow_other_host: true)
         return
       end
     end
@@ -843,11 +876,6 @@ class ApplicationController < ActionController::Base
     !disqualified_from_2fa_enforcement && enforcing_2fa && !current_user.has_any_second_factor_methods_enabled?
   end
 
-  def block_if_readonly_mode
-    return if request.fullpath.start_with?(path "/admin/backups")
-    raise Discourse::ReadOnly.new if !(request.get? || request.head?) && @readonly_mode
-  end
-
   def build_not_found_page(opts = {})
     if SiteSetting.bootstrap_error_pages?
       preload_json
@@ -867,6 +895,7 @@ class ApplicationController < ActionController::Base
     end
 
     @container_class = "wrap not-found-container"
+    @page_title = I18n.t("page_not_found.page_title")
     @title = opts[:title] || I18n.t("page_not_found.title")
     @group = opts[:group]
     @hide_search = true if SiteSetting.login_required
@@ -887,7 +916,7 @@ class ApplicationController < ActionController::Base
   end
 
   def add_noindex_header
-    if request.get?
+    if request.get? && !response.headers['X-Robots-Tag']
       if SiteSetting.allow_index_in_robots_txt
         response.headers['X-Robots-Tag'] = 'noindex'
       else
@@ -963,5 +992,31 @@ class ApplicationController < ActionController::Base
         break
       end
     end
+  end
+
+  def run_second_factor!(action_class, action_data = nil)
+    action = action_class.new(guardian, request, action_data)
+    manager = SecondFactor::AuthManager.new(guardian, action)
+    yield(manager) if block_given?
+    result = manager.run!(request, params, secure_session)
+
+    if !result.no_second_factors_enabled? &&
+      !result.second_factor_auth_completed? &&
+      !result.second_factor_auth_skipped?
+      # should never happen, but I want to know if somehow it does! (osama)
+      raise "2fa process ended up in a bad state!"
+    end
+
+    result
+  end
+
+  def link_preload
+    @links_to_preload = []
+    yield
+    response.headers['Link'] = @links_to_preload.join(', ') if !@links_to_preload.empty?
+  end
+
+  def spa_boot_request?
+    request.get? && !(request.format && request.format.json?) && !request.xhr?
   end
 end

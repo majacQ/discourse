@@ -1,25 +1,15 @@
 import Mixin from "@ember/object/mixin";
 import discourseDebounce from "discourse-common/lib/debounce";
-import { cancel, later } from "@ember/runloop";
+import { cancel } from "@ember/runloop";
+import discourseLater from "discourse-common/lib/later";
+import { bind } from "discourse-common/utils/decorators";
+
+const INITIAL_DELAY_MS = 50;
+const DEBOUNCE_MS = 5;
 
 export default Mixin.create({
-  queueDockCheck: null,
   _initialTimer: null,
   _queuedTimer: null,
-
-  init() {
-    this._super(...arguments);
-    this.queueDockCheck = () => {
-      this._queuedTimer = discourseDebounce(this, this.safeDockCheck, 5);
-    };
-  },
-
-  safeDockCheck() {
-    if (this.isDestroyed || this.isDestroying) {
-      return;
-    }
-    this.dockCheck();
-  },
 
   didInsertElement() {
     this._super(...arguments);
@@ -30,7 +20,11 @@ export default Mixin.create({
     });
 
     // dockCheck might happen too early on full page refresh
-    this._initialTimer = later(this, this.safeDockCheck, 50);
+    this._initialTimer = discourseLater(
+      this,
+      this.safeDockCheck,
+      INITIAL_DELAY_MS
+    );
   },
 
   willDestroyElement() {
@@ -43,5 +37,22 @@ export default Mixin.create({
     cancel(this._initialTimer);
     window.removeEventListener("scroll", this.queueDockCheck);
     document.removeEventListener("touchmove", this.queueDockCheck);
+  },
+
+  @bind
+  queueDockCheck() {
+    this._queuedTimer = discourseDebounce(
+      this,
+      this.safeDockCheck,
+      DEBOUNCE_MS
+    );
+  },
+
+  @bind
+  safeDockCheck() {
+    if (this.isDestroyed || this.isDestroying) {
+      return;
+    }
+    this.dockCheck();
   },
 });

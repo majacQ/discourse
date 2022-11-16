@@ -1,4 +1,6 @@
 import Mixin from "@ember/object/mixin";
+import { run } from "@ember/runloop";
+import ExtendableUploader from "discourse/mixins/extendable-uploader";
 import { or } from "@ember/object/computed";
 import EmberObject from "@ember/object";
 import { ajax } from "discourse/lib/ajax";
@@ -17,13 +19,14 @@ import AwsS3 from "@uppy/aws-s3";
 import UppyChecksum from "discourse/lib/uppy-checksum-plugin";
 import UppyS3Multipart from "discourse/mixins/uppy-s3-multipart";
 import UppyChunkedUploader from "discourse/lib/uppy-chunked-uploader-plugin";
-import { on } from "discourse-common/utils/decorators";
+import { bind, on } from "discourse-common/utils/decorators";
 import { warn } from "@ember/debug";
-import bootbox from "bootbox";
+import { inject as service } from "@ember/service";
 
 export const HUGE_FILE_THRESHOLD_BYTES = 104_857_600; // 100MB
 
-export default Mixin.create(UppyS3Multipart, {
+export default Mixin.create(UppyS3Multipart, ExtendableUploader, {
+  dialog: service(),
   uploading: false,
   uploadProgress: 0,
   _uppyInstance: null,
@@ -54,6 +57,11 @@ export default Mixin.create(UppyS3Multipart, {
       "change",
       this.fileInputEventListener
     );
+    this.appEvents.off(`upload-mixin:${this.id}:add-files`, this._addFiles);
+    this.appEvents.off(
+      `upload-mixin:${this.id}:cancel-upload`,
+      this._cancelSingleUpload
+    );
     this._uppyInstance?.close();
     this._uppyInstance = null;
   },
@@ -65,6 +73,7 @@ export default Mixin.create(UppyS3Multipart, {
     });
     this.set("allowMultipleFiles", this.fileInputEl.multiple);
     this.set("inProgressUploads", []);
+    this._triggerInProgressUploadsEvent();
 
     this._bindFileInputChange();
 
@@ -104,6 +113,7 @@ export default Mixin.create(UppyS3Multipart, {
           uploadProgress: 0,
           uploading: isValid && this.autoStartUploads,
           filesAwaitingUpload: !this.autoStartUploads,
+          cancellable: isValid && this.autoStartUploads,
         });
         return isValid;
       },
@@ -111,10 +121,8 @@ export default Mixin.create(UppyS3Multipart, {
       onBeforeUpload: (files) => {
         let tooMany = false;
         const fileCount = Object.keys(files).length;
-        const maxFiles = this.getWithDefault(
-          "maxFiles",
-          this.siteSettings.simultaneous_uploads
-        );
+        const maxFiles =
+          this.maxFiles || this.siteSettings.simultaneous_uploads;
 
         if (this.allowMultipleFiles) {
           tooMany = maxFiles > 0 && fileCount > maxFiles;
@@ -123,7 +131,7 @@ export default Mixin.create(UppyS3Multipart, {
         }
 
         if (tooMany) {
-          bootbox.alert(
+          this.dialog.alert(
             I18n.t("post.errors.too_many_dragged_and_dropped_files", {
               count: this.allowMultipleFiles ? maxFiles : 1,
             })
@@ -132,17 +140,16 @@ export default Mixin.create(UppyS3Multipart, {
           return false;
         }
 
-        // for a single file, we want to override file meta with the
-        // data property (which may be computed), to override any keys
-        // specified by this.data (such as name)
-        if (fileCount === 1) {
-          deepMerge(Object.values(files)[0].meta, this.data);
+        if (this._perFileData) {
+          Object.values(files).forEach((file) => {
+            deepMerge(file.meta, this._perFileData());
+          });
         }
       },
     });
 
+    // DropTarget is a UI plugin, only preprocessors must call _useUploadPlugin
     this._uppyInstance.use(DropTarget, this._uploadDropTargetOptions());
-    this._uppyInstance.use(UppyChecksum, { capabilities: this.capabilities });
 
     this._uppyInstance.on("progress", (progress) => {
       if (this.isDestroying || this.isDestroyed) {
@@ -153,47 +160,88 @@ export default Mixin.create(UppyS3Multipart, {
     });
 
     this._uppyInstance.on("upload", (data) => {
+      if (this.isDestroying || this.isDestroyed) {
+        return;
+      }
+
+      this._addNeedProcessing(data.fileIDs.length);
       const files = data.fileIDs.map((fileId) =>
         this._uppyInstance.getFile(fileId)
       );
+      this.setProperties({
+        processing: true,
+        cancellable: false,
+      });
       files.forEach((file) => {
-        this.inProgressUploads.push(
+        // The inProgressUploads is meant to be used to display these uploads
+        // in a UI, and Ember will only update the array in the UI if pushObject
+        // is used to notify it.
+        this.inProgressUploads.pushObject(
           EmberObject.create({
             fileName: file.name,
             id: file.id,
             progress: 0,
+            extension: file.extension,
+            processing: false,
           })
         );
+        this._triggerInProgressUploadsEvent();
+      });
+    });
+
+    this._uppyInstance.on("upload-progress", (file, progress) => {
+      run(() => {
+        if (this.isDestroying || this.isDestroyed) {
+          return;
+        }
+
+        const upload = this.inProgressUploads.find((upl) => upl.id === file.id);
+        if (upload) {
+          const percentage = Math.round(
+            (progress.bytesUploaded / progress.bytesTotal) * 100
+          );
+          upload.set("progress", percentage);
+        }
       });
     });
 
     this._uppyInstance.on("upload-success", (file, response) => {
-      this._removeInProgressUpload(file.id);
-
       if (this.usingS3Uploads) {
         this.setProperties({ uploading: false, processing: true });
         this._completeExternalUpload(file)
           .then((completeResponse) => {
+            this._removeInProgressUpload(file.id);
+            this.appEvents.trigger(
+              `upload-mixin:${this.id}:upload-success`,
+              file.name,
+              completeResponse
+            );
             this.uploadDone(
               deepMerge(completeResponse, { file_name: file.name })
             );
 
+            this._triggerInProgressUploadsEvent();
             if (this.inProgressUploads.length === 0) {
-              this._reset();
+              this._allUploadsComplete();
             }
           })
           .catch((errResponse) => {
             displayErrorForUpload(errResponse, this.siteSettings, file.name);
-            if (this.inProgressUploads.length === 0) {
-              this._reset();
-            }
+            this._triggerInProgressUploadsEvent();
           });
       } else {
-        this.uploadDone(
-          deepMerge(response?.body || {}, { file_name: file.name })
+        this._removeInProgressUpload(file.id);
+        const upload = response?.body || {};
+        this.appEvents.trigger(
+          `upload-mixin:${this.id}:upload-success`,
+          file.name,
+          upload
         );
+        this.uploadDone(deepMerge(upload, { file_name: file.name }));
+
+        this._triggerInProgressUploadsEvent();
         if (this.inProgressUploads.length === 0) {
-          this._reset();
+          this._allUploadsComplete();
         }
       }
     });
@@ -202,6 +250,21 @@ export default Mixin.create(UppyS3Multipart, {
       this._removeInProgressUpload(file.id);
       displayErrorForUpload(response || error, this.siteSettings, file.name);
       this._reset();
+    });
+
+    this._uppyInstance.on("file-removed", (file, reason) => {
+      run(() => {
+        // we handle the cancel-all event specifically, so no need
+        // to do anything here. this event is also fired when some files
+        // are handled by an upload handler
+        if (reason === "cancel-all") {
+          return;
+        }
+        this.appEvents.trigger(
+          `upload-mixin:${this.id}:upload-cancelled`,
+          file.id
+        );
+      });
     });
 
     // TODO (martin) preventDirectS3Uploads is necessary because some of
@@ -228,7 +291,33 @@ export default Mixin.create(UppyS3Multipart, {
       }
     }
 
+    this._uppyInstance.on("cancel-all", () => {
+      this.appEvents.trigger(`upload-mixin:${this.id}:uploads-cancelled`);
+      if (!this.isDestroyed && !this.isDestroying) {
+        this.set("inProgressUploads", []);
+        this._triggerInProgressUploadsEvent();
+      }
+    });
+
+    this.appEvents.on(`upload-mixin:${this.id}:add-files`, this._addFiles);
+    this.appEvents.on(
+      `upload-mixin:${this.id}:cancel-upload`,
+      this._cancelSingleUpload
+    );
     this._uppyReady();
+
+    // It is important that the UppyChecksum preprocessor is the last one to
+    // be added; the preprocessors are run in order and since other preprocessors
+    // may modify the file (e.g. the UppyMediaOptimization one), we need to
+    // checksum once we are sure the file data has "settled".
+    this._useUploadPlugin(UppyChecksum, { capabilities: this.capabilities });
+  },
+
+  _triggerInProgressUploadsEvent() {
+    this.appEvents.trigger(
+      `upload-mixin:${this.id}:in-progress-uploads`,
+      this.inProgressUploads
+    );
   },
 
   // This should be overridden in a child component if you need to
@@ -310,31 +399,43 @@ export default Mixin.create(UppyS3Multipart, {
   },
 
   _xhrUploadUrl() {
-    return (
-      getUrl(this.getWithDefault("uploadUrl", this.uploadRootPath)) +
-      ".json?client_id=" +
-      this.messageBus?.clientId
-    );
+    const uploadUrl = this.uploadUrl || this.uploadRootPath;
+    return getUrl(uploadUrl) + ".json?client_id=" + this.messageBus?.clientId;
   },
 
   _bindFileInputChange() {
     this.fileInputEventListener = bindFileInputChangeListener(
       this.fileInputEl,
-      (file) => {
-        try {
-          this._uppyInstance.addFile({
-            source: `${this.id} file input`,
+      this._addFiles
+    );
+  },
+
+  @bind
+  _cancelSingleUpload(data) {
+    this._uppyInstance.removeFile(data.fileId);
+    this._removeInProgressUpload(data.fileId);
+  },
+
+  @bind
+  _addFiles(files, opts = {}) {
+    files = Array.isArray(files) ? files : [files];
+    try {
+      this._uppyInstance.addFiles(
+        files.map((file) => {
+          return {
+            source: this.id,
             name: file.name,
             type: file.type,
             data: file,
-          });
-        } catch (err) {
-          warn(`error adding files to uppy: ${err}`, {
-            id: "discourse.upload.uppy-add-files-error",
-          });
-        }
-      }
-    );
+            meta: { pasted: opts.pasted },
+          };
+        })
+      );
+    } catch (err) {
+      warn(`error adding files to uppy: ${err}`, {
+        id: "discourse.upload.uppy-add-files-error",
+      });
+    }
   },
 
   _completeExternalUpload(file) {
@@ -352,6 +453,7 @@ export default Mixin.create(UppyS3Multipart, {
     this.setProperties({
       uploading: false,
       processing: false,
+      cancellable: false,
       uploadProgress: 0,
       filesAwaitingUpload: false,
     });
@@ -359,10 +461,15 @@ export default Mixin.create(UppyS3Multipart, {
   },
 
   _removeInProgressUpload(fileId) {
+    if (this.isDestroyed || this.isDestroying) {
+      return;
+    }
+
     this.set(
       "inProgressUploads",
       this.inProgressUploads.filter((upl) => upl.id !== fileId)
     );
+    this._triggerInProgressUploadsEvent();
   },
 
   // target must be provided as a DOM element, however the
@@ -373,5 +480,14 @@ export default Mixin.create(UppyS3Multipart, {
   // default onDragOver and removes it onDragLeave
   _uploadDropTargetOptions() {
     return { target: this.element };
+  },
+
+  _allUploadsComplete() {
+    if (this.isDestroying || this.isDestroyed) {
+      return;
+    }
+
+    this.appEvents.trigger(`upload-mixin:${this.id}:all-uploads-complete`);
+    this._reset();
   },
 });

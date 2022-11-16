@@ -83,19 +83,15 @@
 .composer-popup {
   box-sizing: border-box;
   position: absolute;
-  width: calc(50% - 8px);
-  top: 8px; // .reply-to margin-top + .reply-area padding-top
+  width: calc(50% - 16px);
+  top: 19px; // grippie (11px) + .reply-area padding (8px)
   bottom: 8px;
   right: 8px;
   overflow-y: auto;
-  z-index: z("composer", "popover");
+  z-index: z("composer", "dropdown") + 1;
   padding: 1.5em;
   box-shadow: shadow("dropdown");
   background: var(--highlight-medium);
-
-  .hide-preview & {
-    z-index: z("composer", "dropdown") + 1;
-  }
 
   &.urgent {
     background: var(--danger-low);
@@ -130,16 +126,14 @@
     top: 10px;
     color: var(--primary);
     opacity: 0.5;
-    font-size: $font-up-1;
-    &:before {
-      content: "esc";
-      font-size: $font-down-1;
-      margin-right: 0.5em;
+    font-size: var(--font-0);
+    .d-icon {
+      font-size: var(--font-up-1);
+      margin-left: 0.25em;
     }
-  }
-
-  a.close:hover {
-    opacity: 1;
+    &:hover {
+      opacity: 1;
+    }
   }
 
   ul {
@@ -213,7 +207,7 @@
         align-items: center;
 
         .discourse-tags {
-          font-size: $font-down-1;
+          font-size: var(--font-down-1);
         }
       }
     }
@@ -291,4 +285,25 @@ a.toggle-preview {
       }
     }
   }
+}
+
+.composer-fullscreen-prompt {
+  animation: fadeIn 1s ease-in-out;
+  animation-delay: 1.5s;
+  animation-direction: reverse;
+  animation-fill-mode: forwards;
+  position: fixed;
+  left: 50%;
+  top: 10%;
+  transform: translate(-50%, 0);
+  .rtl & {
+    // R2 is not smart enough to support this swap
+    transform: translate(50%, 0);
+  }
+  z-index: z("header") + 1;
+  background: var(--primary-very-high);
+  color: var(--secondary);
+  padding: 0.5em 0.75em;
+  pointer-events: none;
+  border-radius: 2px;
 }

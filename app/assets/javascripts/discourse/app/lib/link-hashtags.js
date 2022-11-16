@@ -2,13 +2,13 @@ import deprecated from "discourse-common/lib/deprecated";
 import { TAG_HASHTAG_POSTFIX } from "discourse/lib/tag-hashtags";
 import { ajax } from "discourse/lib/ajax";
 import { replaceSpan } from "discourse/lib/category-hashtags";
+import jQuery from "jquery";
 
 const categoryHashtags = {};
 const tagHashtags = {};
 const checkedHashtags = new Set();
 
 export function linkSeenHashtags(elem) {
-  // eslint-disable-next-line no-undef
   if (elem instanceof jQuery) {
     elem = elem[0];
 
@@ -22,13 +22,13 @@ export function linkSeenHashtags(elem) {
   if (hashtags.length === 0) {
     return [];
   }
-  const slugs = [...hashtags.map((hashtag) => hashtag.innerText.substr(1))];
+  const slugs = [...hashtags.map((hashtag) => hashtag.innerText.slice(1))];
 
   hashtags.forEach((hashtag, index) => {
     let slug = slugs[index];
     const hasTagSuffix = slug.endsWith(TAG_HASHTAG_POSTFIX);
     if (hasTagSuffix) {
-      slug = slug.substr(0, slug.length - TAG_HASHTAG_POSTFIX.length);
+      slug = slug.slice(0, slug.length - TAG_HASHTAG_POSTFIX.length);
     }
 
     const lowerSlug = slug.toLowerCase();

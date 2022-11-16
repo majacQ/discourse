@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-require 'single_sign_on'
+require 'discourse_connect_base'
 
 RSpec.describe Users::OmniauthCallbacksController do
   fab!(:user) { Fabricate(:user) }
@@ -80,7 +79,7 @@ RSpec.describe Users::OmniauthCallbacksController do
     end
   end
 
-  context 'Google Oauth2' do
+  describe 'Google Oauth2' do
     before do
       SiteSetting.enable_google_oauth2_logins = true
     end
@@ -155,6 +154,44 @@ RSpec.describe Users::OmniauthCallbacksController do
           get "/auth/google_oauth2"
           expect(response.status).to eq(302)
         end
+      end
+    end
+
+    context "when in readonly mode" do
+      use_redis_snapshotting
+
+      it "should return a 503" do
+        Discourse.enable_readonly_mode
+
+        get "/auth/google_oauth2/callback"
+        expect(response.code).to eq("503")
+      end
+    end
+
+    context "when in staff writes only mode" do
+      use_redis_snapshotting
+
+      before do
+        Discourse.enable_readonly_mode(Discourse::STAFF_WRITES_ONLY_MODE_KEY)
+      end
+
+      it "returns a 503 for non-staff" do
+        mock_auth(user.email, user.username, user.name)
+        get "/auth/google_oauth2/callback.json"
+        expect(response.status).to eq(503)
+        logged_on_user = Discourse.current_user_provider.new(request.env).current_user
+
+        expect(logged_on_user).to eq(nil)
+      end
+
+      it "completes for staff" do
+        user.update!(admin: true)
+        mock_auth(user.email, user.username, user.name)
+        get "/auth/google_oauth2/callback.json"
+        expect(response.status).to eq(302)
+        logged_on_user = Discourse.current_user_provider.new(request.env).current_user
+
+        expect(logged_on_user).not_to eq(nil)
       end
     end
 
@@ -239,6 +276,45 @@ RSpec.describe Users::OmniauthCallbacksController do
         get "/auth/google_oauth2/callback.json"
         data = JSON.parse(cookies[:authentication_data])
         expect(data["associate_url"]).to eq(nil)
+      end
+
+      it 'does not use email for username suggestions if disabled in settings' do
+        SiteSetting.use_email_for_username_and_name_suggestions = false
+        username = ""
+        name = ""
+        email = "billmailbox@test.com"
+        mock_auth(email, username, name)
+
+        get "/auth/google_oauth2/callback.json"
+        data = JSON.parse(cookies[:authentication_data])
+
+        expect(data["username"]).to eq("user1") # not "billmailbox" that can be extracted from email
+      end
+
+      it 'uses email for username suggestions if enabled in settings' do
+        SiteSetting.use_email_for_username_and_name_suggestions = true
+        username = ""
+        name = ""
+        email = "billmailbox@test.com"
+        mock_auth(email, username, name)
+
+        get "/auth/google_oauth2/callback.json"
+        data = JSON.parse(cookies[:authentication_data])
+
+        expect(data["username"]).to eq("billmailbox")
+      end
+
+      it 'stops using name for username suggestions if disabled in settings' do
+        SiteSetting.use_name_for_username_suggestions = false
+        username = ""
+        name = "John Smith"
+        email = "billmailbox@test.com"
+        mock_auth(email, username, name)
+
+        get "/auth/google_oauth2/callback.json"
+        data = JSON.parse(cookies[:authentication_data])
+
+        expect(data["username"]).to eq("user1")
       end
 
       describe 'when site is invite_only' do
@@ -411,6 +487,20 @@ RSpec.describe Users::OmniauthCallbacksController do
         expect(user.confirm_password?("securepassword")).to eq(false)
       end
 
+      it "should work if the user has no email_tokens, and an invite" do
+        # Confirming existing email_tokens has a side effect of redeeming invites.
+        # Pretend we don't have any email_tokens
+        user.email_tokens.destroy_all
+
+        invite = Fabricate(:invite, invited_by: Fabricate(:admin))
+        invite.update_column(:email, user.email) # (avoid validation)
+
+        get "/auth/google_oauth2/callback.json"
+        expect(response.status).to eq(302)
+
+        expect(invite.reload.invalidated_at).not_to eq(nil)
+      end
+
       it "should update name/username/email when SiteSetting.auth_overrides_* are enabled" do
         SiteSetting.email_editable = false
         SiteSetting.auth_overrides_email = true
@@ -543,7 +633,7 @@ RSpec.describe Users::OmniauthCallbacksController do
           SiteSetting.enable_discourse_connect_provider = true
           SiteSetting.discourse_connect_secret = "topsecret"
 
-          @sso = SingleSignOn.new
+          @sso = DiscourseConnectBase.new
           @sso.nonce = "mynonce"
           @sso.sso_secret = SiteSetting.discourse_connect_secret
           @sso.return_sso_url = "http://somewhere.over.rainbow/sso"
@@ -695,10 +785,8 @@ RSpec.describe Users::OmniauthCallbacksController do
         expect(data["username"]).to eq(fixed_username)
       end
 
-      context "groups are enabled" do
-        let(:strategy_class) { Auth::OmniAuthStrategies::DiscourseGoogleOauth2 }
-        let(:groups_url) { "#{strategy_class::GROUPS_DOMAIN}#{strategy_class::GROUPS_PATH}" }
-        let(:groups_scope) { strategy_class::DEFAULT_SCOPE + strategy_class::GROUPS_SCOPE }
+      context "when groups are enabled" do
+        let(:private_key) { OpenSSL::PKey::RSA.generate(2048) }
         let(:group1) { { id: "12345", name: "group1" } }
         let(:group2) { { id: "67890", name: "group2" } }
         let(:uid) { "12345" }
@@ -706,22 +794,50 @@ RSpec.describe Users::OmniauthCallbacksController do
         let(:domain) { "mydomain.com" }
 
         def mock_omniauth_for_groups(groups)
-          raw_groups = groups.map { |group| OmniAuth::AuthHash.new(group) }
           mock_auth = OmniAuth.config.mock_auth[:google_oauth2]
-          mock_auth[:extra][:raw_groups] = raw_groups
           OmniAuth.config.mock_auth[:google_oauth2] = mock_auth
           Rails.application.env_config["omniauth.auth"] = mock_auth
+
+          SiteSetting.google_oauth2_hd_groups_service_account_admin_email = "admin@example.com"
+          SiteSetting.google_oauth2_hd_groups_service_account_json = {
+            "private_key" => private_key.to_s,
+            "client_email": "discourse-group-sync@example.iam.gserviceaccount.com",
+          }.to_json
+          SiteSetting.google_oauth2_hd_groups = true
+
+          stub_request(:post, "https://oauth2.googleapis.com/token").to_return do |request|
+            jwt = Rack::Utils.parse_query(request.body)["assertion"]
+            decoded_token = JWT.decode(jwt, private_key.public_key, true, { algorithm: 'RS256' })
+            {
+              status: 200,
+              body: { "access_token" => token, "type" => "bearer" }.to_json,
+              headers: { "Content-Type" => "application/json" }
+            }
+          end
+
+          stub_request(:get, "https://admin.googleapis.com/admin/directory/v1/groups?userKey=#{mock_auth.uid}").
+            with(headers: { "Authorization" => "Bearer #{token}" }).
+            to_return do
+              {
+                status: 200,
+                body: { groups: groups }.to_json,
+                headers: {
+                  "Content-Type" => "application/json"
+                }
+              }
+            end
         end
 
         before do
           SiteSetting.google_oauth2_hd = domain
+          SiteSetting.google_oauth2_hd_groups_service_account_admin_email = "test@example.com"
+          SiteSetting.google_oauth2_hd_groups_service_account_json = "{}"
           SiteSetting.google_oauth2_hd_groups = true
         end
 
         it "updates associated groups" do
           mock_omniauth_for_groups([group1, group2])
           get "/auth/google_oauth2/callback.json", params: {
-            scope: groups_scope.split(' '),
             code: 'abcde',
             hd: domain
           }
@@ -739,7 +855,6 @@ RSpec.describe Users::OmniauthCallbacksController do
 
           mock_omniauth_for_groups([group1])
           get "/auth/google_oauth2/callback.json", params: {
-            scope: groups_scope.split(' '),
             code: 'abcde',
             hd: domain
           }
@@ -752,7 +867,6 @@ RSpec.describe Users::OmniauthCallbacksController do
 
           mock_omniauth_for_groups([])
           get "/auth/google_oauth2/callback.json", params: {
-            scope: groups_scope.split(' '),
             code: 'abcde',
             hd: domain
           }
@@ -768,7 +882,6 @@ RSpec.describe Users::OmniauthCallbacksController do
           mock_omniauth_for_groups([])
 
           get "/auth/google_oauth2/callback.json", params: {
-            scope: groups_scope.split(' '),
             code: 'abcde',
             hd: domain
           }

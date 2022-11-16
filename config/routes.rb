@@ -17,14 +17,25 @@ Discourse::Application.routes.draw do
     get "/404-body" => "exceptions#not_found_body"
 
     get "/bootstrap" => "bootstrap#index"
+    if Rails.env.test? || Rails.env.development?
+      get "/bootstrap/plugin-css-for-tests.css" => "bootstrap#plugin_css_for_tests"
+    end
 
     post "webhooks/aws" => "webhooks#aws"
     post "webhooks/mailgun"  => "webhooks#mailgun"
     post "webhooks/mailjet"  => "webhooks#mailjet"
     post "webhooks/mandrill" => "webhooks#mandrill"
+    get "webhooks/mandrill" => "webhooks#mandrill_head"
     post "webhooks/postmark" => "webhooks#postmark"
     post "webhooks/sendgrid" => "webhooks#sendgrid"
     post "webhooks/sparkpost" => "webhooks#sparkpost"
+
+    scope path: nil, format: true, constraints: { format: :xml } do
+      resources :sitemap, only: [:index]
+      get "/sitemap_:page" => "sitemap#page", page: /[1-9][0-9]*/
+      get "/sitemap_recent" => "sitemap#recent"
+      get "/news" => "sitemap#news"
+    end
 
     scope path: nil, constraints: { format: /.*/ } do
       if Rails.env.development?
@@ -146,7 +157,7 @@ Discourse::Application.routes.draw do
         delete "sso_record"
       end
       get "users/:id.json" => 'users#show', defaults: { format: 'json' }
-      get 'users/:id/:username' => 'users#show', constraints: { username: RouteFormat.username }
+      get 'users/:id/:username' => 'users#show', constraints: { username: RouteFormat.username }, as: :user_show
       get 'users/:id/:username/badges' => 'users#show'
       get 'users/:id/:username/tl3_requirements' => 'users#show'
 
@@ -178,11 +189,7 @@ Discourse::Application.routes.draw do
         resources :staff_action_logs,     only: [:index]
         get 'staff_action_logs/:id/diff' => 'staff_action_logs#diff'
         resources :screened_emails,       only: [:index, :destroy]
-        resources :screened_ip_addresses, only: [:index, :create, :update, :destroy] do
-          collection do
-            post "roll_up"
-          end
-        end
+        resources :screened_ip_addresses, only: [:index, :create, :update, :destroy]
         resources :screened_urls,         only: [:index]
         resources :search_logs,           only: [:index]
         get 'search_logs/term/' => 'search_logs#term'
@@ -202,13 +209,17 @@ Discourse::Application.routes.draw do
       get "customize/embedding" => "embedding#show", constraints: AdminConstraint.new
       put "customize/embedding" => "embedding#update", constraints: AdminConstraint.new
 
-      resources :themes, constraints: AdminConstraint.new
-
-      post "themes/import" => "themes#import"
-      post "themes/upload_asset" => "themes#upload_asset"
-      post "themes/generate_key_pair" => "themes#generate_key_pair"
-      get "themes/:id/preview" => "themes#preview"
-      put "themes/:id/setting" => "themes#update_single_setting"
+      resources :themes, constraints: AdminConstraint.new do
+        member do
+          get "preview" => "themes#preview"
+          put "setting" => "themes#update_single_setting"
+        end
+        collection do
+          post "import" => "themes#import"
+          post "upload_asset" => "themes#upload_asset"
+          post "generate_key_pair" => "themes#generate_key_pair"
+        end
+      end
 
       scope "/customize", constraints: AdminConstraint.new do
         resources :user_fields, constraints: AdminConstraint.new
@@ -355,6 +366,7 @@ Discourse::Application.routes.draw do
     get "review/count" => "reviewables#count"
     get "review/topics" => "reviewables#topics"
     get "review/settings" => "reviewables#settings"
+    get "review/user-menu-list" => "reviewables#user_menu_list", format: :json
     put "review/settings" => "reviewables#settings"
     put "review/:reviewable_id/perform/:action_id" => "reviewables#perform", constraints: {
       reviewable_id: /\d+/,
@@ -375,7 +387,14 @@ Discourse::Application.routes.draw do
     post "session/email-login/:token" => "session#email_login"
     get "session/otp/:token" => "session#one_time_password", constraints: { token: /[0-9a-f]+/ }
     post "session/otp/:token" => "session#one_time_password", constraints: { token: /[0-9a-f]+/ }
+    get "session/2fa" => "session#second_factor_auth_show"
+    post "session/2fa" => "session#second_factor_auth_perform"
+    if Rails.env.test?
+      post "session/2fa/test-action" => "session#test_second_factor_restricted_route"
+    end
+    get "session/scopes" => "session#scopes"
     get "composer_messages" => "composer_messages#index"
+    get "composer_messages/user_not_seen_in_a_while" => "composer_messages#user_not_seen_in_a_while"
 
     resources :static
     post "login" => "static#enter"
@@ -459,7 +478,7 @@ Discourse::Application.routes.draw do
       get "#{root_path}/:username/messages/:filter" => "user_actions#private_messages", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/messages/group/:group_name" => "user_actions#private_messages", constraints: { username: RouteFormat.username, group_name: RouteFormat.username }
       get "#{root_path}/:username/messages/group/:group_name/:filter" => "user_actions#private_messages", constraints: { username: RouteFormat.username, group_name: RouteFormat.username }
-      get "#{root_path}/:username/messages/tags/:tag_id" => "user_actions#private_messages", constraints: StaffConstraint.new
+      get "#{root_path}/:username/messages/tags/:tag_id" => "list#private_messages_tag", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username.json" => "users#show", constraints: { username: RouteFormat.username }, defaults: { format: :json }
       get({ "#{root_path}/:username" => "users#show", constraints: { username: RouteFormat.username } }.merge(index == 1 ? { as: 'user' } : {}))
       put "#{root_path}/:username" => "users#update", constraints: { username: RouteFormat.username }, defaults: { format: :json }
@@ -479,6 +498,7 @@ Discourse::Application.routes.draw do
       get "#{root_path}/:username/preferences/users" => "users#preferences", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/preferences/tags" => "users#preferences", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/preferences/interface" => "users#preferences", constraints: { username: RouteFormat.username }
+      get "#{root_path}/:username/preferences/sidebar" => "users#preferences", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/preferences/apps" => "users#preferences", constraints: { username: RouteFormat.username }
       post "#{root_path}/:username/preferences/email" => "users_email#create", constraints: { username: RouteFormat.username }
       put "#{root_path}/:username/preferences/email" => "users_email#update", constraints: { username: RouteFormat.username }
@@ -507,6 +527,8 @@ Discourse::Application.routes.draw do
       get "#{root_path}/:username/activity/:filter" => "users#show", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/badges" => "users#badges", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/bookmarks" => "users#bookmarks", constraints: { username: RouteFormat.username, format: /(json|ics)/ }
+      get "#{root_path}/:username/user-menu-bookmarks" => "users#user_menu_bookmarks", constraints: { username: RouteFormat.username, format: :json }
+      get "#{root_path}/:username/user-menu-private-messages" => "users#user_menu_messages", constraints: { username: RouteFormat.username, format: :json }
       get "#{root_path}/:username/notifications" => "users#show", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/notifications/:filter" => "users#show", constraints: { username: RouteFormat.username }
       delete "#{root_path}/:username" => "users#destroy", constraints: { username: RouteFormat.username }
@@ -542,6 +564,7 @@ Discourse::Application.routes.draw do
     get "stylesheets/:name.css" => "stylesheets#show", constraints: { name: /[-a-z0-9_]+/ }
     get "color-scheme-stylesheet/:id(/:theme_id)" => "stylesheets#color_scheme", constraints: { format: :json }
     get "theme-javascripts/:digest.js" => "theme_javascripts#show", constraints: { digest: /\h{40}/ }
+    get "theme-javascripts/:digest.map" => "theme_javascripts#show_map", constraints: { digest: /\h{40}/ }
     get "theme-javascripts/tests/:theme_id-:digest.js" => "theme_javascripts#show_tests"
 
     post "uploads/lookup-metadata" => "uploads#metadata"
@@ -568,7 +591,12 @@ Discourse::Application.routes.draw do
     end
     # used to download attachments (old route)
     get "uploads/:site/:id/:sha" => "uploads#show", constraints: { site: /\w+/, id: /\d+/, sha: /\h{16}/, format: /.*/ }
-    get "secure-media-uploads/*path(.:extension)" => "uploads#show_secure", constraints: { extension: /[a-z0-9\._]+/i }
+
+    # NOTE: secure-media-uploads is the old form, all new URLs generated for
+    # secure uploads will be secure-uploads, this is left in for backwards
+    # compat without needing to rebake all posts for each site.
+    get "secure-media-uploads/*path(.:extension)" => "uploads#_show_secure_deprecated", constraints: { extension: /[a-z0-9\._]+/i }
+    get "secure-uploads/*path(.:extension)" => "uploads#show_secure", constraints: { extension: /[a-z0-9\._]+/i }
 
     get "posts" => "posts#latest", id: "latest_posts", constraints: { format: /(json|rss)/ }
     get "private-posts" => "posts#latest", id: "private_posts", constraints: { format: /(json|rss)/ }
@@ -721,6 +749,7 @@ Discourse::Application.routes.draw do
     get "categories_and_top" => "categories#categories_and_top"
 
     get "c/:id/show" => "categories#show"
+    get "c/:id/visible_groups" => "categories#visible_groups"
 
     get "c/*category_slug/find_by_slug" => "categories#find_by_slug"
     get "c/*category_slug/edit(/:tab)" => "categories#find_by_slug", constraints: { format: 'html' }
@@ -745,6 +774,7 @@ Discourse::Application.routes.draw do
     end
 
     get "hashtags" => "hashtags#show"
+    get "hashtags/search" => "hashtags#search"
 
     TopTopic.periods.each do |period|
       get "top/#{period}.rss", to: redirect("top.rss?period=#{period}", status: 301)
@@ -766,7 +796,7 @@ Discourse::Application.routes.draw do
 
     # Topics resource
     get "t/:id" => "topics#show"
-    put "t/:id" => "topics#update"
+    put "t/:topic_id" => "topics#update", constraints: { topic_id: /\d+/ }
     delete "t/:id" => "topics#destroy"
     put "t/:id/archive-message" => "topics#archive_message"
     put "t/:id/move-to-inbox" => "topics#move_to_inbox"
@@ -808,12 +838,13 @@ Discourse::Application.routes.draw do
     get 'embed/count' => 'embed#count'
     get 'embed/info' => 'embed#info'
 
-    get "new-topic" => "list#latest"
-    get "new-message" => "list#latest"
+    get "new-topic" => "new_topic#index"
+    get "new-message" => "new_topic#index"
 
     # Topic routes
     get "t/id_for/:slug" => "topics#id_for_slug"
-    get "t/:slug/:topic_id/print" => "topics#show", format: :html, print: true, constraints: { topic_id: /\d+/ }
+    get "t/external_id/:external_id" => "topics#show_by_external_id", format: :json, constraints: { external_id: /[\w-]+/ }
+    get "t/:slug/:topic_id/print" => "topics#show", format: :html, print: 'true', constraints: { topic_id: /\d+/ }
     get "t/:slug/:topic_id/wordpress" => "topics#wordpress", constraints: { topic_id: /\d+/ }
     get "t/:topic_id/wordpress" => "topics#wordpress", constraints: { topic_id: /\d+/ }
     get "t/:slug/:topic_id/moderator-liked" => "topics#moderator_liked", constraints: { topic_id: /\d+/ }
@@ -846,7 +877,6 @@ Discourse::Application.routes.draw do
     post "t/:topic_id/timings" => "topics#timings", constraints: { topic_id: /\d+/ }
     post "t/:topic_id/invite" => "topics#invite", constraints: { topic_id: /\d+/ }
     post "t/:topic_id/invite-group" => "topics#invite_group", constraints: { topic_id: /\d+/ }
-    post "t/:topic_id/invite-notify" => "topics#invite_notify", constraints: { topic_id: /\d+/ }
     post "t/:topic_id/move-posts" => "topics#move_posts", constraints: { topic_id: /\d+/ }
     post "t/:topic_id/merge-topic" => "topics#merge_topic", constraints: { topic_id: /\d+/ }
     post "t/:topic_id/change-owner" => "topics#change_post_owners", constraints: { topic_id: /\d+/ }
@@ -893,16 +923,14 @@ Discourse::Application.routes.draw do
 
     resources :drafts, only: [:index, :create, :show, :destroy]
 
+    get "/service-worker.js" => "static#service_worker_asset", format: :js
     if service_worker_asset = Rails.application.assets_manifest.assets['service-worker.js']
       # https://developers.google.com/web/fundamentals/codelabs/debugging-service-workers/
       # Normally the browser will wait until a user closes all tabs that contain the
       # current site before updating to a new Service Worker.
       # Support the old Service Worker path to avoid routing error filling up the
       # logs.
-      get "/service-worker.js" => "static#service_worker_asset", format: :js
       get service_worker_asset => "static#service_worker_asset", format: :js
-    elsif Rails.env.development?
-      get "/service-worker.js" => "static#service_worker_asset", format: :js
     end
 
     get "cdn_asset/:site/*path" => "static#cdn_asset", format: false, constraints: { format: /.*/ }
@@ -953,9 +981,11 @@ Discourse::Application.routes.draw do
         scope path: '/c/*category_slug_path_with_id' do
           Discourse.filters.each do |filter|
             get "/none/:tag_id/l/#{filter}" => "tags#show_#{filter}", as: "tag_category_none_show_#{filter}", defaults: { no_subcategories: true }
+            get "/all/:tag_id/l/#{filter}" => "tags#show_#{filter}", as: "tag_category_all_show_#{filter}", defaults: { no_subcategories: false }
           end
 
           get '/none/:tag_id' => 'tags#show', as: 'tag_category_none_show', defaults: { no_subcategories: true }
+          get '/all/:tag_id' => 'tags#show', as: 'tag_category_all_show', defaults: { no_subcategories: false }
 
           Discourse.filters.each do |filter|
             get "/:tag_id/l/#{filter}" => "tags#show_#{filter}", as: "tag_category_show_#{filter}"
@@ -991,10 +1021,6 @@ Discourse::Application.routes.draw do
     get "/safe-mode" => "safe_mode#index"
     post "/safe-mode" => "safe_mode#enter", as: "safe_mode_enter"
 
-    unless Rails.env.production?
-      get "/qunit" => "qunit#index"
-      get "/wizard/qunit" => "wizard#qunit"
-    end
     get "/theme-qunit" => "qunit#theme"
 
     post "/push_notifications/subscribe" => "push_notification#subscribe"
@@ -1009,6 +1035,9 @@ Discourse::Application.routes.draw do
 
     post "/presence/update" => "presence#update"
     get "/presence/get" => "presence#get"
+
+    put "user-status" => "user_status#set"
+    delete "user-status" => "user_status#clear"
 
     get "*url", to: 'permalinks#show', constraints: PermalinkConstraint.new
   end

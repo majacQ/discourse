@@ -124,7 +124,21 @@ class AdminDashboardData
   end
 
   def self.register_default_scheduled_problem_checks
-    # TODO (martin) Add group SMTP check here
+    add_scheduled_problem_check(:group_smtp_credentials) do
+      problems = GroupEmailCredentialsCheck.run
+      problems.map do |p|
+        problem_message = I18n.t(
+          "dashboard.group_email_credentials_warning",
+          {
+            base_path: Discourse.base_path,
+            group_name: p[:group_name],
+            group_full_name: p[:group_full_name],
+            error: p[:message]
+          }
+        )
+        Problem.new(problem_message, priority: "high", identifier: "group_#{p[:group_id]}_email_credentials")
+      end
+    end
   end
 
   def self.execute_scheduled_checks
@@ -346,7 +360,7 @@ class AdminDashboardData
   def watched_words_check
     WatchedWord.actions.keys.each do |action|
       begin
-        WordWatcher.word_matcher_regexp(action, raise_errors: true)
+        WordWatcher.word_matcher_regexp_list(action, raise_errors: true)
       rescue RegexpError => e
         translated_action = I18n.t("admin_js.admin.watched_words.actions.#{action}")
         I18n.t('dashboard.watched_word_regexp_error', base_path: Discourse.base_path, action: translated_action)

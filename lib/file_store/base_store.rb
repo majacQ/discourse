@@ -116,6 +116,8 @@ module FileStore
             follow_redirect: true
           )
 
+          return nil if file.nil?
+
           cache_file(file, filename)
           file = get_from_cache(filename)
         end
@@ -173,7 +175,7 @@ module FileStore
 
     def get_from_cache(filename)
       path = get_cache_path_for(filename)
-      File.open(path) if File.exists?(path)
+      File.open(path) if File.exist?(path)
     end
 
     def cache_file(file, filename)

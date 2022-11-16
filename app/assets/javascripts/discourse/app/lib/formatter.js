@@ -1,6 +1,7 @@
 import { helperContext, makeArray } from "discourse-common/lib/helpers";
 import deprecated from "discourse-common/lib/deprecated";
 import I18n from "I18n";
+import jQuery from "jquery";
 
 export function shortDate(date) {
   return moment(date).format(I18n.t("dates.medium.date_year"));
@@ -25,7 +26,7 @@ export function tinyDateYear(date) {
 // TODO: locale support ?
 export function toTitleCase(str) {
   return str.replace(/\w\S*/g, function (txt) {
-    return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+    return txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase();
   });
 }
 
@@ -50,7 +51,6 @@ export function longDateNoYear(dt) {
 }
 
 export function updateRelativeAge(elems) {
-  // eslint-disable-next-line no-undef
   if (elems instanceof jQuery) {
     elems = elems.toArray();
     deprecated("updateRelativeAge now expects a DOM NodeList", {
@@ -114,6 +114,21 @@ export function autoUpdatingRelativeAge(date, options) {
   );
 }
 
+export function until(untilDate, timezone, locale) {
+  const untilMoment = moment.tz(untilDate, timezone);
+  const now = moment.tz(timezone);
+
+  let untilFormatted;
+  if (now.isSame(untilMoment, "day")) {
+    const localeData = moment.localeData(locale);
+    untilFormatted = untilMoment.format(localeData.longDateFormat("LT"));
+  } else {
+    untilFormatted = untilMoment.format(I18n.t("dates.long_no_year_no_time"));
+  }
+
+  return `${I18n.t("until")} ${untilFormatted}`;
+}
+
 function wrapAgo(dateStr) {
   return I18n.t("dates.wrap_ago", { date: dateStr });
 }
@@ -122,7 +137,7 @@ function wrapOn(dateStr) {
   return I18n.t("dates.wrap_on", { date: dateStr });
 }
 
-export function durationTiny(distance, ageOpts) {
+export function duration(distance, ageOpts) {
   if (typeof distance !== "number") {
     return "&mdash;";
   }
@@ -131,7 +146,8 @@ export function durationTiny(distance, ageOpts) {
   const distanceInMinutes = dividedDistance < 1 ? 1 : dividedDistance;
 
   const t = function (key, opts) {
-    const result = I18n.t("dates.tiny." + key, opts);
+    const format = (ageOpts && ageOpts.format) || "tiny";
+    const result = I18n.t("dates." + format + "." + key, opts);
     return ageOpts && ageOpts.addAgo ? wrapAgo(result) : result;
   };
 
@@ -180,6 +196,10 @@ export function durationTiny(distance, ageOpts) {
   }
 
   return formatted;
+}
+
+export function durationTiny(distance, ageOpts) {
+  return duration(distance, Object.assign({ format: "tiny" }, ageOpts));
 }
 
 function relativeAgeTiny(date, ageOpts) {

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 require 'swagger_helper'
 
-describe 'private messages' do
+RSpec.describe 'private messages' do
 
   let(:admin) { Fabricate(:admin) }
 
@@ -34,8 +34,7 @@ describe 'private messages' do
           },
           primary_groups: {
             type: :array,
-            items: {
-            },
+            items: {},
           },
           topic_list: {
             type: :object,
@@ -144,8 +143,7 @@ describe 'private messages' do
           },
           primary_groups: {
             type: :array,
-            items: {
-            },
+            items: {},
           },
           topic_list: {
             type: :object,
@@ -206,8 +204,7 @@ describe 'private messages' do
                     },
                     participants: {
                       type: :array,
-                      items: {
-                      },
+                      items: {},
                     },
                   }
                 },

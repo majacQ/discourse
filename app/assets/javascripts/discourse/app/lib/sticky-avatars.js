@@ -1,19 +1,19 @@
 import { addWidgetCleanCallback } from "discourse/components/mount-widget";
 import Site from "discourse/models/site";
 import { bind } from "discourse-common/utils/decorators";
-import { headerOffset } from "discourse/components/site-header";
+import { headerOffset } from "discourse/lib/offset-calculator";
 import { schedule } from "@ember/runloop";
 
 export default class StickyAvatars {
+  static init(container) {
+    return new this(container).init();
+  }
+
   stickyClass = "sticky-avatar";
   topicPostSelector = "#topic .post-stream .topic-post";
   intersectionObserver = null;
   direction = "⬇️";
   prevOffset = -1;
-
-  static init(container) {
-    return new this(container).init();
-  }
 
   constructor(container) {
     this.container = container;
@@ -79,6 +79,9 @@ export default class StickyAvatars {
   @bind
   _initIntersectionObserver() {
     schedule("afterRender", () => {
+      const headerOffsetInPx =
+        headerOffset() <= 0 ? "0px" : `-${headerOffset()}px`;
+
       this.intersectionObserver = new IntersectionObserver(
         (entries) => {
           entries.forEach((entry) => {
@@ -87,8 +90,8 @@ export default class StickyAvatars {
               return;
             }
 
-            const postContentHeight = entry.target.querySelector(".contents")
-              ?.clientHeight;
+            const postContentHeight =
+              entry.target.querySelector(".contents")?.clientHeight;
             if (
               this.direction === "⬆️" ||
               postContentHeight > window.innerHeight - headerOffset()
@@ -99,7 +102,7 @@ export default class StickyAvatars {
         },
         {
           threshold: [0.0, 1.0],
-          rootMargin: `-${headerOffset()}px 0px 0px 0px`,
+          rootMargin: `${headerOffsetInPx} 0px 0px 0px`,
         }
       );
     });

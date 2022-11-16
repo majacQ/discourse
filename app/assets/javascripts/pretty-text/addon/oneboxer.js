@@ -8,7 +8,7 @@ import {
   setFailedCache,
   setLocalCache,
 } from "pretty-text/oneboxer-cache";
-import { later } from "@ember/runloop";
+import discourseLater from "discourse-common/lib/later";
 
 let timeout;
 const loadingQueue = [];
@@ -76,7 +76,7 @@ function loadNext(ajax) {
   })
     .then(
       (template) => {
-        const node = domFromString(template);
+        const node = domFromString(template)[0];
         setLocalCache(normalize(url), node);
         elem.replaceWith(node);
         applySquareGenericOnebox(node);
@@ -92,7 +92,7 @@ function loadNext(ajax) {
       }
     )
     .finally(() => {
-      timeout = later(() => loadNext(ajax), timeoutMs);
+      timeout = discourseLater(() => loadNext(ajax), timeoutMs);
       if (removeLoading) {
         elem.classList.remove(LOADING_ONEBOX_CSS_CLASS);
         elem.dataset.oneboxLoaded = "";
@@ -152,6 +152,6 @@ export function load({
   if (synchronous) {
     return loadNext(ajax);
   } else {
-    timeout = timeout || later(() => loadNext(ajax), 150);
+    timeout = timeout || discourseLater(() => loadNext(ajax), 150);
   }
 }

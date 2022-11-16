@@ -1,8 +1,4 @@
-import {
-  authorizedExtensions,
-  authorizesAllExtensions,
-  authorizesOneOrMoreImageExtensions,
-} from "discourse/lib/uploads";
+import { authorizesOneOrMoreImageExtensions } from "discourse/lib/uploads";
 import { alias } from "@ember/object/computed";
 import { BasePlugin } from "@uppy/core";
 import { resolveAllShortUrls } from "pretty-text/upload-short-url";
@@ -22,10 +18,12 @@ import {
   linkSeenHashtags,
 } from "discourse/lib/link-hashtags";
 import {
+  cannotSee,
   fetchUnseenMentions,
   linkSeenMentions,
 } from "discourse/lib/link-mentions";
-import { later, next, schedule, throttle } from "@ember/runloop";
+import { next, schedule, throttle } from "@ember/runloop";
+import discourseLater from "discourse-common/lib/later";
 import Component from "@ember/component";
 import Composer from "discourse/models/composer";
 import ComposerUploadUppy from "discourse/mixins/composer-upload-uppy";
@@ -51,7 +49,8 @@ import userSearch from "discourse/lib/user-search";
 // Group 3 is optional. group 4 can match images with or without a markdown title.
 // All matches are whitespace tolerant as long it's still valid markdown.
 // If the image is inside a code block, we'll ignore it `(?!(.*`))`.
-const IMAGE_MARKDOWN_REGEX = /!\[(.*?)\|(\d{1,4}x\d{1,4})(,\s*\d{1,3}%)?(.*?)\]\((upload:\/\/.*?)\)(?!(.*`))/g;
+const IMAGE_MARKDOWN_REGEX =
+  /!\[(.*?)\|(\d{1,4}x\d{1,4})(,\s*\d{1,3}%)?(.*?)\]\((upload:\/\/.*?)\)(?!(.*`))/g;
 
 let uploadHandlers = [];
 export function addComposerUploadHandler(extensions, method) {
@@ -99,9 +98,13 @@ export function cleanUpComposerUploadMarkdownResolver() {
 export default Component.extend(ComposerUploadUppy, {
   classNameBindings: ["showToolbar:toolbar-visible", ":wmd-controls"],
 
+  editorClass: ".d-editor",
   fileUploadElementId: "file-uploader",
   mobileFileUploaderId: "mobile-file-upload",
+
+  // TODO (martin) Remove this once the chat plugin is using the new composerEventPrefix
   eventPrefix: "composer",
+  composerEventPrefix: "composer",
   uploadType: "composer",
   uppyId: "composer-editor-uppy",
   composerModel: alias("composer"),
@@ -194,21 +197,6 @@ export default Component.extend(ComposerUploadUppy, {
       categoryId,
       includeGroups: true,
     });
-  },
-
-  @discourseComputed()
-  acceptsAllFormats() {
-    return authorizesAllExtensions(this.currentUser.staff, this.siteSettings);
-  },
-
-  @discourseComputed()
-  acceptedFormats() {
-    const extensions = authorizedExtensions(
-      this.currentUser.staff,
-      this.siteSettings
-    );
-
-    return extensions.map((ext) => `.${ext}`).join();
   },
 
   @bind
@@ -500,7 +488,7 @@ export default Component.extend(ComposerUploadUppy, {
         }
 
         let name = mention.dataset.name;
-        if (found.indexOf(name) === -1) {
+        if (!found.includes(name)) {
           this.groupsMentioned([
             {
               name,
@@ -529,10 +517,10 @@ export default Component.extend(ComposerUploadUppy, {
       preview?.querySelectorAll(".mention.cannot-see")?.forEach((mention) => {
         let name = mention.dataset.name;
 
-        if (found.indexOf(name) === -1) {
+        if (!found.includes(name)) {
           // add a delay to allow for typing, so you don't open the warning right away
           // previously we would warn after @bob even if you were about to mention @bob2
-          later(
+          discourseLater(
             this,
             () => {
               if (
@@ -540,7 +528,7 @@ export default Component.extend(ComposerUploadUppy, {
                   `.mention.cannot-see[data-name="${name}"]`
                 )?.length > 0
               ) {
-                this.cannotSeeMention([{ name }]);
+                this.cannotSeeMention([{ name, reason: cannotSee[name] }]);
                 found.push(name);
               }
             },
@@ -558,7 +546,7 @@ export default Component.extend(ComposerUploadUppy, {
       return;
     }
 
-    later(
+    discourseLater(
       this,
       () => {
         this.hereMention(hereCount);
@@ -579,9 +567,8 @@ export default Component.extend(ComposerUploadUppy, {
     );
 
     const scale = event.target.dataset.scale;
-    const matchingPlaceholder = this.get("composer.reply").match(
-      IMAGE_MARKDOWN_REGEX
-    );
+    const matchingPlaceholder =
+      this.get("composer.reply").match(IMAGE_MARKDOWN_REGEX);
 
     if (matchingPlaceholder) {
       const match = matchingPlaceholder[index];
@@ -607,6 +594,8 @@ export default Component.extend(ComposerUploadUppy, {
 
   resetImageControls(buttonWrapper) {
     const imageResize = buttonWrapper.querySelector(".scale-btn-container");
+    const imageDelete = buttonWrapper.querySelector(".delete-image-button");
+
     const readonlyContainer = buttonWrapper.querySelector(
       ".alt-text-readonly-container"
     );
@@ -615,6 +604,8 @@ export default Component.extend(ComposerUploadUppy, {
     );
 
     imageResize.removeAttribute("hidden");
+    imageDelete.removeAttribute("hidden");
+
     readonlyContainer.removeAttribute("hidden");
     buttonWrapper.removeAttribute("editing");
     editContainer.setAttribute("hidden", "true");
@@ -622,9 +613,8 @@ export default Component.extend(ComposerUploadUppy, {
 
   commitAltText(buttonWrapper) {
     const index = parseInt(buttonWrapper.getAttribute("data-image-index"), 10);
-    const matchingPlaceholder = this.get("composer.reply").match(
-      IMAGE_MARKDOWN_REGEX
-    );
+    const matchingPlaceholder =
+      this.get("composer.reply").match(IMAGE_MARKDOWN_REGEX);
     const match = matchingPlaceholder[index];
     const input = buttonWrapper.querySelector("input.alt-text-input");
     const replacement = match.replace(
@@ -661,6 +651,7 @@ export default Component.extend(ComposerUploadUppy, {
 
     const buttonWrapper = event.target.closest(".button-wrapper");
     const imageResize = buttonWrapper.querySelector(".scale-btn-container");
+    const imageDelete = buttonWrapper.querySelector(".delete-image-button");
 
     const readonlyContainer = buttonWrapper.querySelector(
       ".alt-text-readonly-container"
@@ -674,6 +665,7 @@ export default Component.extend(ComposerUploadUppy, {
 
     buttonWrapper.setAttribute("editing", "true");
     imageResize.setAttribute("hidden", "true");
+    imageDelete.setAttribute("hidden", "true");
     readonlyContainer.setAttribute("hidden", "true");
     editContainerInput.value = altText.textContent;
     editContainer.removeAttribute("hidden");
@@ -701,10 +693,30 @@ export default Component.extend(ComposerUploadUppy, {
     this.resetImageControls(buttonWrapper);
   },
 
+  @bind
+  _handleImageDeleteButtonClick(event) {
+    if (!event.target.classList.contains("delete-image-button")) {
+      return;
+    }
+    const index = parseInt(
+      event.target.closest(".button-wrapper").dataset.imageIndex,
+      10
+    );
+    const matchingPlaceholder =
+      this.get("composer.reply").match(IMAGE_MARKDOWN_REGEX);
+    this.appEvents.trigger(
+      "composer:replace-text",
+      matchingPlaceholder[index],
+      "",
+      { regex: IMAGE_MARKDOWN_REGEX, index }
+    );
+  },
+
   _registerImageAltTextButtonClick(preview) {
     preview.addEventListener("click", this._handleAltTextEditButtonClick);
     preview.addEventListener("click", this._handleAltTextOkButtonClick);
     preview.addEventListener("click", this._handleAltTextCancelButtonClick);
+    preview.addEventListener("click", this._handleImageDeleteButtonClick);
     preview.addEventListener("keypress", this._handleAltTextInputKeypress);
   },
 
@@ -714,7 +726,7 @@ export default Component.extend(ComposerUploadUppy, {
     this.appEvents.trigger("composer:will-close");
     next(() => {
       // need to wait a bit for the "slide down" transition of the composer
-      later(
+      discourseLater(
         () => this.appEvents.trigger("composer:closed"),
         isTesting() ? 0 : 400
       );
@@ -804,7 +816,6 @@ export default Component.extend(ComposerUploadUppy, {
 
     extraButtons(toolbar) {
       toolbar.addButton({
-        tabindex: "0",
         id: "quote",
         group: "fontStyles",
         icon: "far-comment",

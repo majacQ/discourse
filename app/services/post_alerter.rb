@@ -110,6 +110,8 @@ class PostAlerter
   def after_save_post(post, new_record = false)
     notified = [post.user, post.last_editor].uniq
 
+    DiscourseEvent.trigger(:post_alerter_before_mentions, post, new_record, notified)
+
     # mentions (users/groups)
     mentioned_groups, mentioned_users, mentioned_here = extract_mentions(post)
 
@@ -139,38 +141,58 @@ class PostAlerter
       end
     end
 
+    DiscourseEvent.trigger(:post_alerter_before_replies, post, new_record, notified)
+
     # replies
     reply_to_user = post.reply_notification_target
 
-    if new_record && reply_to_user && !notified.include?(reply_to_user) && notify_about_reply?(post)
-      notified += notify_non_pm_users(reply_to_user, :replied, post)
+    if new_record && notify_about_reply?(post)
+      if reply_to_user && !notified.include?(reply_to_user)
+        notified += notify_non_pm_users(reply_to_user, :replied, post)
+      end
+
+      topic_author = post.topic.user
+      if topic_author && !notified.include?(topic_author) && user_watching_topic?(topic_author, post.topic)
+        notified += notify_non_pm_users(topic_author, :replied, post)
+      end
     end
+
+    DiscourseEvent.trigger(:post_alerter_before_quotes, post, new_record, notified)
 
     # quotes
     quoted_users = extract_quoted_users(post)
     notified += notify_non_pm_users(quoted_users - notified, :quoted, post)
 
+    DiscourseEvent.trigger(:post_alerter_before_linked, post, new_record, notified)
+
     # linked
     linked_users = extract_linked_users(post)
     notified += notify_non_pm_users(linked_users - notified, :linked, post)
 
-    # private messages
+    DiscourseEvent.trigger(:post_alerter_before_post, post, new_record, notified)
+
     if new_record
       if post.topic.private_message?
-        notify_pm_users(post, reply_to_user, quoted_users, notified)
+        # private messages
+        notified += notify_pm_users(post, reply_to_user, quoted_users, notified)
       elsif notify_about_reply?(post)
-        notify_post_users(post, notified, new_record: new_record)
+        # posts
+        notified += notify_post_users(post, notified, new_record: new_record)
       end
     end
 
     sync_group_mentions(post, mentioned_groups)
+
+    DiscourseEvent.trigger(:post_alerter_before_first_post, post, new_record, notified)
 
     if new_record && post.post_number == 1
       topic = post.topic
 
       if topic.present?
         watchers = category_watchers(topic) + tag_watchers(topic) + group_watchers(topic)
-        notify_first_post_watchers(post, watchers)
+        # Notify only users who can see the topic
+        watchers &= topic.all_allowed_users.pluck(:id) if post.topic.private_message?
+        notified += notify_first_post_watchers(post, watchers, notified)
       end
     end
 
@@ -197,20 +219,23 @@ class PostAlerter
       .pluck(:user_id)
   end
 
-  def notify_first_post_watchers(post, user_ids)
-    return if user_ids.blank?
+  def notify_first_post_watchers(post, user_ids, notified = nil)
+    return [] if user_ids.blank?
     user_ids.uniq!
 
     warn_if_not_sidekiq
 
-    # Don't notify the OP
-    user_ids -= [post.user_id]
+    # Don't notify the OP and last editor
+    user_ids -= [post.user_id, post.last_editor_id]
     users = User.where(id: user_ids).includes(:do_not_disturb_timings)
+    users = users.where.not(id: notified.map(&:id)) if notified.present?
 
     DiscourseEvent.trigger(:before_create_notifications_for_users, users, post)
     each_user_in_batches(users) do |user|
       create_notification(user, Notification.types[:watching_first_post], post)
     end
+
+    users
   end
 
   def sync_group_mentions(post, mentioned_groups)
@@ -315,30 +340,37 @@ class PostAlerter
     end
   end
 
-  def notify_group_summary(user, post)
+  def notify_group_summary(user, topic, acting_user_id: nil)
     @group_stats ||= {}
-    stats = (@group_stats[post.topic_id] ||= group_stats(post.topic))
+    stats = (@group_stats[topic.id] ||= group_stats(topic))
     return unless stats
 
-    group_id = post.topic
+    group_id = topic
       .topic_allowed_groups
       .where(group_id: user.groups.pluck(:id))
       .pluck_first(:group_id)
 
     stat = stats.find { |s| s[:group_id] == group_id }
-    return unless stat && stat[:inbox_count] > 0
+    return unless stat
 
     DistributedMutex.synchronize("group_message_notify_#{user.id}") do
-      Notification.consolidate_or_create!(
-        notification_type: Notification.types[:group_message_summary],
-        user_id: user.id,
-        data: {
-          group_id: stat[:group_id],
-          group_name: stat[:group_name],
-          inbox_count: stat[:inbox_count],
-          username: user.username_lower
-        }.to_json
-      )
+      if stat[:inbox_count] > 0
+        Notification.consolidate_or_create!(
+          notification_type: Notification.types[:group_message_summary],
+          user_id: user.id,
+          read: user.id === acting_user_id ? true : false,
+          data: {
+            group_id: stat[:group_id],
+            group_name: stat[:group_name],
+            inbox_count: stat[:inbox_count],
+            username: user.username_lower
+          }.to_json
+        )
+      else
+        Notification.where(user_id: user.id, notification_type: Notification.types[:group_message_summary])
+          .where("data::json ->> 'group_id' = ?", stat[:group_id].to_s)
+          .delete_all
+      end
     end
 
     # TODO decide if it makes sense to also publish a desktop notification
@@ -386,18 +418,9 @@ class PostAlerter
     return if user.staged? && topic.category&.mailinglist_mirror?
 
     notifier_id = opts[:user_id] || post.user_id # xxxxx look at revision history
-
-    # apply muting here
-    return if notifier_id && MutedUser.where(user_id: user.id, muted_user_id: notifier_id)
-      .joins(:muted_user)
-      .where('NOT admin AND NOT moderator')
-      .exists?
-
-    # apply ignored here
-    return if notifier_id && IgnoredUser.where(user_id: user.id, ignored_user_id: notifier_id)
-      .joins(:ignored_user)
-      .where('NOT admin AND NOT moderator')
-      .exists?
+    return if notifier_id && UserCommScreener.new(
+      acting_user_id: notifier_id, target_user_ids: user.id
+    ).ignoring_or_muting_actor?(user.id)
 
     # skip if muted on the topic
     return if TopicUser.where(
@@ -429,8 +452,13 @@ class PostAlerter
       return
     end
 
-    # linked, quoted, mentioned may be suppressed if you already have a reply notification
-    if type == Notification.types[:quoted] || type == Notification.types[:linked] || type == Notification.types[:mentioned]
+    # linked, quoted, mentioned, chat_quoted may be suppressed if you already have a reply notification
+    if [
+      Notification.types[:quoted],
+      Notification.types[:linked],
+      Notification.types[:mentioned],
+      Notification.types[:chat_quoted]
+    ].include?(type)
       return if existing_notifications.find { |n| n.notification_type == Notification.types[:replied] }
     end
 
@@ -571,8 +599,11 @@ class PostAlerter
   # TODO: Move to post-analyzer?
   # Returns a list of users who were quoted in the post
   def extract_quoted_users(post)
-    usernames = post.raw.scan(/\[quote=\"([^,]+),.+\"\]/).uniq.map { |q| q.first.strip.downcase }
-
+    usernames = if SiteSetting.display_name_on_posts && !SiteSetting.prioritize_username_in_ux
+      post.raw.scan(/username:([[:alnum:]]*)"(?=\])/)
+    else
+      post.raw.scan(/\[quote=\"([^,]+),.+\"\]/)
+    end.uniq.map { |q| q.first.strip.downcase }
     User.where.not(id: post.user_id).where(username_lower: usernames)
   end
 
@@ -612,7 +643,7 @@ class PostAlerter
   end
 
   def notify_pm_users(post, reply_to_user, quoted_users, notified)
-    return unless post.topic
+    return [] unless post.topic
 
     warn_if_not_sidekiq
 
@@ -647,7 +678,7 @@ class PostAlerter
         if is_replying?(user, reply_to_user, quoted_users)
           create_pm_notification(user, post, emails_to_skip_send)
         else
-          notify_group_summary(user, post)
+          notify_group_summary(user, post.topic)
         end
       when TopicUser.notification_levels[:regular]
         if is_replying?(user, reply_to_user, quoted_users)
@@ -707,6 +738,13 @@ class PostAlerter
       # email to the user who was just added by CC. In this case the OP probably
       # replied and CC'd some people, and they are the only other topic users.
       return if post.incoming_email.cc_addresses_split.include?(to_address)
+
+      # We don't want to create an email storm if someone emails the group and
+      # CC's 50 support addresses from various places, which all then respond
+      # with auto-responders saying they have received our email. Any auto-generated
+      # emails should not propagate notifications to anyone else, not even
+      # the regular topic user notifications.
+      return email_addresses.dup.uniq if post.incoming_email.is_auto_generated?
     end
 
     # Send a single email using group SMTP settings to cut down on the
@@ -734,7 +772,7 @@ class PostAlerter
   end
 
   def notify_post_users(post, notified, group_ids: nil, include_topic_watchers: true, include_category_watchers: true, include_tag_watchers: true, new_record: false)
-    return unless post.topic
+    return [] unless post.topic
 
     warn_if_not_sidekiq
 
@@ -783,7 +821,12 @@ class PostAlerter
      LEFT JOIN tag_group_memberships tgm ON tag_users.tag_id = tgm.tag_id
      LEFT JOIN tag_group_permissions tgp ON tgm.tag_group_id = tgp.tag_group_id
      LEFT JOIN group_users gu ON gu.user_id = tag_users.user_id
-         WHERE (tgp.group_id IS NULL OR tgp.group_id = gu.group_id OR gu.group_id = :staff_group_id)
+         WHERE (
+            tgp.group_id IS NULL OR
+            tgp.group_id = gu.group_id OR
+            tgp.group_id = :everyone_group_id OR
+            gu.group_id = :staff_group_id
+          )
                AND (tag_users.notification_level = :watching
                     AND tag_users.tag_id IN (:tag_ids)
                     AND (tu.user_id IS NULL OR tu.notification_level = :watching))
@@ -795,7 +838,8 @@ class PostAlerter
       topic_id: post.topic_id,
       category_id: post.topic.category_id,
       tag_ids: tag_ids,
-      staff_group_id: Group::AUTO_GROUPS[:staff]
+      staff_group_id: Group::AUTO_GROUPS[:staff],
+      everyone_group_id: Group::AUTO_GROUPS[:everyone]
     )
 
     if group_ids.present?
@@ -824,6 +868,8 @@ class PostAlerter
       opts[:display_username] = post.last_editor.username if notification_type == Notification.types[:edited]
       create_notification(user, notification_type, post, opts)
     end
+
+    notify
   end
 
   def warn_if_not_sidekiq
@@ -845,5 +891,13 @@ class PostAlerter
 
   def is_replying?(user, reply_to_user, quoted_users)
     reply_to_user == user || quoted_users.include?(user)
+  end
+
+  def user_watching_topic?(user, topic)
+    TopicUser.exists?(
+      user_id: user.id,
+      topic_id: topic.id,
+      notification_level: TopicUser.notification_levels[:watching]
+    )
   end
 end

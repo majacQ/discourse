@@ -2,8 +2,8 @@
 
 require 'digest/sha1'
 require 'fileutils'
-require_dependency 'plugin/metadata'
-require_dependency 'auth'
+require 'plugin/metadata'
+require 'auth'
 
 class Plugin::CustomEmoji
   CACHE_KEY ||= "plugin-emoji"
@@ -65,13 +65,6 @@ class Plugin::Instance
         @#{att} ||= []
       end
     }
-  end
-
-  # If plugins provide `transpile_js: true` in their metadata we will
-  # transpile regular JS files in the assets folders. Going forward,
-  # all plugins should do this.
-  def transpile_js
-    metadata.try(:transpile_js) == "true"
   end
 
   def seed_data
@@ -252,6 +245,14 @@ class Plugin::Instance
     Site.add_categories_callbacks(&block)
   end
 
+  def register_upload_unused(&block)
+    Upload.add_unused_callback(&block)
+  end
+
+  def register_upload_in_use(&block)
+    Upload.add_in_use_callback(&block)
+  end
+
   def custom_avatar_column(column)
     reloadable_patch do |plugin|
       UserLookup.lookup_columns << column
@@ -424,7 +425,7 @@ class Plugin::Instance
   end
 
   def delete_extra_automatic_assets(good_paths)
-    return unless Dir.exists? auto_generated_path
+    return unless Dir.exist? auto_generated_path
 
     filenames = good_paths.map { |f| File.basename(f) }
     # nuke old files
@@ -648,24 +649,22 @@ class Plugin::Instance
 
       # Automatically include all ES6 JS and hbs files
       root_path = "#{root_dir_name}/assets/javascripts"
-      DiscoursePluginRegistry.register_glob(root_path, 'js') if transpile_js
+      DiscoursePluginRegistry.register_glob(root_path, 'js')
       DiscoursePluginRegistry.register_glob(root_path, 'js.es6')
       DiscoursePluginRegistry.register_glob(root_path, 'hbs')
       DiscoursePluginRegistry.register_glob(root_path, 'hbr')
 
       admin_path = "#{root_dir_name}/admin/assets/javascripts"
-      DiscoursePluginRegistry.register_glob(admin_path, 'js', admin: true) if transpile_js
+      DiscoursePluginRegistry.register_glob(admin_path, 'js', admin: true)
       DiscoursePluginRegistry.register_glob(admin_path, 'js.es6', admin: true)
       DiscoursePluginRegistry.register_glob(admin_path, 'hbs', admin: true)
       DiscoursePluginRegistry.register_glob(admin_path, 'hbr', admin: true)
 
-      if transpile_js
-        DiscourseJsProcessor.plugin_transpile_paths << root_path.sub(Rails.root.to_s, '').sub(/^\/*/, '')
-        DiscourseJsProcessor.plugin_transpile_paths << admin_path.sub(Rails.root.to_s, '').sub(/^\/*/, '')
+      DiscourseJsProcessor.plugin_transpile_paths << root_path.sub(Rails.root.to_s, '').sub(/^\/*/, '')
+      DiscourseJsProcessor.plugin_transpile_paths << admin_path.sub(Rails.root.to_s, '').sub(/^\/*/, '')
 
-        test_path = "#{root_dir_name}/test/javascripts"
-        DiscourseJsProcessor.plugin_transpile_paths << test_path.sub(Rails.root.to_s, '').sub(/^\/*/, '')
-      end
+      test_path = "#{root_dir_name}/test/javascripts"
+      DiscourseJsProcessor.plugin_transpile_paths << test_path.sub(Rails.root.to_s, '').sub(/^\/*/, '')
     end
 
     self.instance_eval File.read(path), path
@@ -701,7 +700,7 @@ class Plugin::Instance
     end
 
     public_data = File.dirname(path) + "/public"
-    if Dir.exists?(public_data)
+    if Dir.exist?(public_data)
       target = Rails.root.to_s + "/public/plugins/"
 
       Discourse::Utils.execute_command('mkdir', '-p', target)
@@ -716,19 +715,22 @@ class Plugin::Instance
     handlebars_includes.each { |hb| contents << "require_asset('#{hb}')" }
     javascript_includes.each { |js| contents << "require_asset('#{js}')" }
 
-    each_globbed_asset do |f, is_dir|
-      contents << (is_dir ? "depend_on('#{f}')" : "require_asset('#{f}')")
-    end
-
-    if contents.present?
-      contents.insert(0, "<%")
-      contents << "%>"
-      Discourse::Utils.atomic_write_file(js_file_path, contents.join("\n"))
-    else
-      begin
-        File.delete(js_file_path)
+    if !contents.present?
+      [js_file_path, extra_js_file_path].each do |f|
+        File.delete(f)
       rescue Errno::ENOENT
       end
+      return
+    end
+
+    contents.insert(0, "<%")
+    contents << "%>"
+
+    Discourse::Utils.atomic_write_file(extra_js_file_path, contents.join("\n"))
+
+    begin
+      File.delete(js_file_path)
+    rescue Errno::ENOENT
     end
   end
 
@@ -810,7 +812,7 @@ class Plugin::Instance
           yield [f, true]
         elsif f_str.end_with?(".js.es6") || f_str.end_with?(".hbs") || f_str.end_with?(".hbr")
           yield [f, false]
-        elsif transpile_js && f_str.end_with?(".js")
+        elsif f_str.end_with?(".js")
           yield [f, false]
         end
       end
@@ -839,7 +841,17 @@ class Plugin::Instance
   end
 
   def js_asset_exists?
-    File.exists?(js_file_path)
+    # If assets/javascripts exists, ember-cli will output a .js file
+    File.exist?("#{File.dirname(@path)}/assets/javascripts")
+  end
+
+  def extra_js_asset_exists?
+    File.exist?(extra_js_file_path)
+  end
+
+  def admin_js_asset_exists?
+    # If this directory exists, ember-cli will output a .js file
+    File.exist?("#{File.dirname(@path)}/admin/assets/javascripts")
   end
 
   # Receives an array with two elements:
@@ -1010,6 +1022,80 @@ class Plugin::Instance
     StaticController::CUSTOM_PAGES[page] = blk ? { topic_id: blk } : options
   end
 
+  # Let plugin define custom unsubscribe keys,
+  # set custom instance variables on the `EmailController#unsubscribe` action,
+  # and describe what unsubscribing for that key does.
+  #
+  # The method receives a class that inherits from `Email::BaseEmailUnsubscriber`.
+  # Take a look at it to know how to implement your child class.
+  #
+  # In conjunction with this, you'll have to:
+  #
+  #  - Register a new connector under app/views/connectors/unsubscribe_options.
+  #  We'll include the HTML inside the unsubscribe form, so you can add your fields using the
+  #  instance variables you set in the controller previously. When the form is submitted,
+  #  it sends the updated preferences to `EmailController#perform_unsubscribe`.
+  #
+  #  - Your code is responsible for creating the custom key by calling `UnsubscribeKey#create_key_for`.
+  def register_email_unsubscriber(type, unsubscriber)
+    core_types = [UnsubscribeKey::ALL_TYPE, UnsubscribeKey::DIGEST_TYPE, UnsubscribeKey::TOPIC_TYPE]
+    raise ArgumentError.new('Type already exists') if core_types.include?(type)
+    raise ArgumentError.new('Not an email unsubscriber') if !unsubscriber.ancestors.include?(EmailControllerHelper::BaseEmailUnsubscriber)
+
+    DiscoursePluginRegistry.register_email_unsubscriber({ type => unsubscriber }, self)
+  end
+
+  # Allows the plugin to export additional site stats via the About class
+  # which will be shown on the /about route. The stats returned by the block
+  # should be in the following format (these four keys are _required_):
+  #
+  # {
+  #   last_day: 1,
+  #   7_days: 10,
+  #   30_days: 100,
+  #   count: 1000
+  # }
+  #
+  # Only keys above will be shown on the /about page in the UI,
+  # but all stats will be shown on the /about.json route. For example take
+  # this usage:
+  #
+  # register_about_stat_group("chat_messages") do
+  #   { last_day: 1, "7_days" => 10, "30_days" => 100, count: 1000, previous_30_days: 150 }
+  # end
+  #
+  # In the UI we will show a table like this:
+  #
+  #               | 24h | 7 days | 30 days | all time|
+  # Chat Messages | 1   | 10     | 100     | 1000    |
+  #
+  # But the JSON will be like this:
+  #
+  # {
+  #   "chat_messages_last_day": 1,
+  #   "chat_messages_7_days": 10,
+  #   "chat_messages_30_days": 100,
+  #   "chat_messages_count": 1000,
+  # }
+  #
+  # The show_in_ui option (default false) is used to determine whether the
+  # group of stats is shown on the site About page in the Site Statistics
+  # table. Some stats may be needed purely for reporting purposes and thus
+  # do not need to be shown in the UI to admins/users.
+  def register_about_stat_group(plugin_stat_group_name, show_in_ui: false, &block)
+    About.add_plugin_stat_group(plugin_stat_group_name, show_in_ui: show_in_ui, &block)
+  end
+
+  # Registers a new record type to be searched via the HashtagAutocompleteService and the
+  # /hashtags/search endpoint. The data returned by the block must be an array
+  # with each item an instance of HashtagAutocompleteService::HashtagItem.
+  #
+  # See also registerHashtagSearchParam in the plugin JS API, otherwise the
+  # clientside hashtag search code will use the new type registered here.
+  def register_hashtag_data_source(type, &block)
+    HashtagAutocompleteService.register_data_source(type, &block)
+  end
+
   protected
 
   def self.js_path
@@ -1017,7 +1103,11 @@ class Plugin::Instance
   end
 
   def js_file_path
-    @file_path ||= "#{Plugin::Instance.js_path}/#{directory_name}.js.erb"
+    "#{Plugin::Instance.js_path}/#{directory_name}.js.erb"
+  end
+
+  def extra_js_file_path
+    @extra_js_file_path ||= "#{Plugin::Instance.js_path}/#{directory_name}_extra.js.erb"
   end
 
   def register_assets!
@@ -1085,7 +1175,7 @@ class Plugin::Instance
   end
 
   def write_asset(path, contents)
-    unless File.exists?(path)
+    unless File.exist?(path)
       ensure_directory(path)
       File.open(path, "w") { |f| f.write(contents) }
     end
