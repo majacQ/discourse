@@ -1906,7 +1906,7 @@ en:
     max_mentions_per_post: "Maximum number of @name notifications anyone can use in a post."
     max_users_notified_per_group_mention: "Maximum number of users that may receive a notification if a group is mentioned (if threshold is met no notifications will be raised)"
     enable_mentions: "Allow users to mention other users."
-    here_mention: "Name used for @here mention. Must not be an existent username."
+    here_mention: "Name used for a @mention to allow privileged users to notify up to 'max_here_mentioned' people participating in the topic. Must not be an existing username."
     max_here_mentioned: "Maximum number of mentioned people by @here."
     min_trust_level_for_here_mention: "The minimum trust level allowed to mention @here."
 
@@ -2188,7 +2188,7 @@ en:
     display_name_on_posts: "Show a user's full name on their posts in addition to their @username."
     show_time_gap_days: "If two posts are made this many days apart, display the time gap in the topic."
     short_progress_text_threshold: "After the number of posts in a topic goes above this number, the progress bar will only show the current post number. If you change the progress bar's width, you may need to change this value."
-    default_code_lang: "Default programming language syntax highlighting applied to GitHub code blocks (auto, nohighlight, ruby, python etc.)"
+    default_code_lang: "Default programming language syntax highlighting applied to code blocks (auto, nohighlight, ruby, python etc.)"
     warn_reviving_old_topic_age: "When someone starts replying to a topic where the last reply is older than this many days, a warning will be displayed. Disable by setting to 0."
     autohighlight_all_code: "Force apply code highlighting to all preformatted code blocks even when they didn't explicitly specify the language."
     highlighted_languages: "Included syntax highlighting rules. (Warning: including too many languages may impact performance) see: <a href='https://highlightjs.org/static/demo/' target='_blank'>https://highlightjs.org/static/demo</a> for a demo"

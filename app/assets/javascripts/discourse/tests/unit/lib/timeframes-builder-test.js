@@ -108,7 +108,7 @@ module("Unit | Lib | timeframes-builder", function (hooks) {
     this.clock = fakeTime("2100-04-19 18:00:00", timezone, true); // Monday evening
     const timeframes = buildTimeframes(buildOptions(moment())).mapBy("id");
 
-    assert.not(timeframes.includes("later_today"));
+    assert.notOk(timeframes.includes("later_today"));
     assert.ok(timeframes.includes("later_this_week"));
   });
 
@@ -117,7 +117,11 @@ module("Unit | Lib | timeframes-builder", function (hooks) {
     this.clock = fakeTime("2100-04-22 18:00:00", timezone, true); // Tuesday evening
     const timeframes = buildTimeframes(buildOptions(moment())).mapBy("id");
 
+  <<<<<<< darkmode-readme
+    assert.notOk(timeframes.includes("later_this_week"));
+  =======
     assert.not(timeframes.includes("later_this_week"));
+  >>>>>>> revamped-notifications-menu
   });
 
   test("doesn't output 'Later This Week' on Sundays", function (assert) {
@@ -138,7 +142,11 @@ module("Unit | Lib | timeframes-builder", function (hooks) {
     this.clock = fakeTime("2100-04-25 18:00:00", timezone, true); // Sunday evening
     const timeframes = buildTimeframes(buildOptions(moment())).mapBy("id");
 
+  <<<<<<< darkmode-readme
+    assert.notOk(timeframes.includes("later_this_week"));
+  =======
     assert.not(timeframes.includes("later_this_week"));
+  >>>>>>> revamped-notifications-menu
   });
 
   test("doesn't output 'Next Month' on the last day of the month", function (assert) {
@@ -146,6 +154,10 @@ module("Unit | Lib | timeframes-builder", function (hooks) {
     this.clock = fakeTime("2100-04-30 18:00:00", timezone, true); // The last day of April
     const timeframes = buildTimeframes(buildOptions(moment())).mapBy("id");
 
+  <<<<<<< darkmode-readme
+    assert.notOk(timeframes.includes("next_month"));
+  =======
     assert.not(timeframes.includes("next_month"));
+  >>>>>>> revamped-notifications-menu
   });
 });
