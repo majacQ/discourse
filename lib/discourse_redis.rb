@@ -53,7 +53,8 @@ class DiscourseRedis
    :msetnx, :persist, :pexpire, :pexpireat, :psetex, :pttl, :rename, :renamenx, :rpop, :rpoplpush, :rpush, :rpushx, :sadd, :scard,
    :sdiff, :set, :setbit, :setex, :setnx, :setrange, :sinter, :sismember, :smembers, :sort, :spop, :srandmember, :srem, :strlen,
    :sunion, :ttl, :type, :watch, :zadd, :zcard, :zcount, :zincrby, :zrange, :zrangebyscore, :zrank, :zrem, :zremrangebyrank,
-   :zremrangebyscore, :zrevrange, :zrevrangebyscore, :zrevrank, :zrangebyscore ].each do |m|
+   :zremrangebyscore, :zrevrange, :zrevrangebyscore, :zrevrank, :zrangebyscore,
+   :dump, :restore].each do |m|
     define_method m do |*args, **kwargs|
       args[0] = "#{namespace}:#{args[0]}" if @namespace
       DiscourseRedis.ignore_readonly { @redis.public_send(m, *args, **kwargs) }
@@ -75,10 +76,11 @@ class DiscourseRedis
     DiscourseRedis.ignore_readonly { @redis.mget(*args) }
   end
 
-  def del(k)
+  def del(*keys)
     DiscourseRedis.ignore_readonly do
-      k = "#{namespace}:#{k}"  if @namespace
-      @redis.del k
+      keys = keys.flatten(1)
+      keys.map! { |k| "#{namespace}:#{k}" } if @namespace
+      @redis.del(*keys)
     end
   end
 

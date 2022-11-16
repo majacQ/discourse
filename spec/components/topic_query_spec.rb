@@ -5,11 +5,15 @@ require 'topic_view'
 
 describe TopicQuery do
 
-  # TODO: this let! here has impact on all tests
-  #  it indeed happens first, but is not obvious later in the tests we depend on the user being
-  #  created so early otherwise finding new topics does not work
-  #  we should remove the let! here and use freeze time to communicate how the clock moves
-  let!(:user) { Fabricate(:user) }
+  # TODO:
+  #   This fab! here has impact on all tests.
+  #
+  #   It happens first, but is not obvious later in the tests that we depend on
+  #   the user being created so early otherwise finding new topics does not
+  #   work.
+  #
+  #   We should use be more explicit in communicating how the clock moves
+  fab!(:user) { Fabricate(:user) }
 
   fab!(:creator) { Fabricate(:user) }
   let(:topic_query) { TopicQuery.new(user) }
@@ -242,6 +246,19 @@ describe TopicQuery do
       expect(TopicQuery.new(user).list_latest.topics).to contain_exactly(topic)
       expect(TopicQuery.new(admin).list_latest.topics).to contain_exactly(topic)
       expect(TopicQuery.new(user, include_pms: true).list_latest.topics).to contain_exactly(topic, own_pm)
+    end
+  end
+
+  describe 'include_all_pms option' do
+    it "includes all pms in regular topic lists for admins" do
+      topic = Fabricate(:topic)
+      own_pm = Fabricate(:private_message_topic, user: user)
+      other_pm = Fabricate(:private_message_topic, user: Fabricate(:user))
+
+      expect(TopicQuery.new(user).list_latest.topics).to contain_exactly(topic)
+      expect(TopicQuery.new(admin).list_latest.topics).to contain_exactly(topic)
+      expect(TopicQuery.new(user, include_all_pms: true).list_latest.topics).to contain_exactly(topic, own_pm)
+      expect(TopicQuery.new(admin, include_all_pms: true).list_latest.topics).to contain_exactly(topic, own_pm, other_pm)
     end
   end
 

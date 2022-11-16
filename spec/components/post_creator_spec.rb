@@ -7,11 +7,14 @@ require 'topic_subtype'
 describe PostCreator do
 
   fab!(:user) { Fabricate(:user) }
+  fab!(:admin) { Fabricate(:admin) }
+  fab!(:coding_horror) { Fabricate(:coding_horror) }
+  fab!(:evil_trout) { Fabricate(:evil_trout) }
   let(:topic) { Fabricate(:topic, user: user) }
 
   context "new topic" do
     fab!(:category) { Fabricate(:category, user: user) }
-    let(:basic_topic_params) { { title: "hello world topic", raw: "my name is fred", archetype_id: 1 } }
+    let(:basic_topic_params) { { title: "hello world topic", raw: "my name is fred", archetype_id: 1, advance_draft: true } }
     let(:image_sizes) { { 'http://an.image.host/image.jpg' => { "width" => 111, "height" => 222 } } }
 
     let(:creator) { PostCreator.new(user, basic_topic_params) }
@@ -47,6 +50,8 @@ describe PostCreator do
       expect(post.hidden_at).to be_present
       expect(post.hidden_reason_id).to eq(hri)
       expect(post.topic.visible).to eq(false)
+      expect(post.user.topic_count).to eq(0)
+      expect(post.user.post_count).to eq(0)
     end
 
     it "ensures the user can create the topic" do
@@ -117,7 +122,6 @@ describe PostCreator do
       end
 
       it "does not notify on system messages" do
-        admin = Fabricate(:admin)
         messages = MessageBus.track_publish do
           p = PostCreator.create(admin, basic_topic_params.merge(post_type: Post.types[:moderator_action]))
           PostCreator.create(admin, basic_topic_params.merge(topic_id: p.topic_id, post_type: Post.types[:moderator_action]))
@@ -148,7 +152,7 @@ describe PostCreator do
 
         messages = MessageBus.track_publish do
           created_post = PostCreator.new(admin, basic_topic_params.merge(category: cat.id)).create
-          _reply = PostCreator.new(admin, raw: "this is my test reply 123 testing", topic_id: created_post.topic_id).create
+          _reply = PostCreator.new(admin, raw: "this is my test reply 123 testing", topic_id: created_post.topic_id, advance_draft: true).create
         end
 
         messages.filter! { |m| m.channel != "/distributed_hash" }
@@ -299,6 +303,20 @@ describe PostCreator do
         ensure
           PostCreator.track_post_stats = false
         end
+      end
+
+      it 'clears the draft if advanced_draft is true' do
+        creator = PostCreator.new(user, basic_topic_params.merge(advance_draft: true))
+        Draft.set(user, Draft::NEW_TOPIC, 0, 'test')
+        expect(Draft.where(user: user).size).to eq(1)
+        expect { creator.create }.to change { Draft.count }.by(-1)
+      end
+
+      it 'does not clear the draft if advanced_draft is false' do
+        creator = PostCreator.new(user, basic_topic_params.merge(advance_draft: false))
+        Draft.set(user, Draft::NEW_TOPIC, 0, 'test')
+        expect(Draft.where(user: user).size).to eq(1)
+        expect { creator.create }.to change { Draft.count }.by(0)
       end
 
       it "updates topic stats" do
@@ -810,7 +828,7 @@ describe PostCreator do
     context "topic stats" do
       before do
         PostCreator.new(
-          Fabricate(:coding_horror),
+          coding_horror,
           raw: 'first post in topic',
           topic_id: topic.id,
           created_at: Time.zone.now - 24.hours
@@ -864,7 +882,6 @@ describe PostCreator do
       end
 
       it 'creates the topic if the user is a staff member' do
-        admin = Fabricate(:admin)
         post_creator = PostCreator.new(admin, raw: 'test reply', topic_id: topic.id, reply_to_post_number: 4)
         TopicUser.create!(user: admin, topic: topic, last_posted_at: 10.minutes.ago)
 
@@ -916,7 +933,7 @@ describe PostCreator do
 
   # integration test ... minimise db work
   context 'private message' do
-    let(:target_user1) { Fabricate(:coding_horror) }
+    let(:target_user1) { coding_horror }
     fab!(:target_user2) { Fabricate(:moderator) }
     fab!(:unrelated_user) { Fabricate(:user) }
     let(:post) do
@@ -959,7 +976,6 @@ describe PostCreator do
       UserArchivedMessage.create(user_id: target_user2.id, topic_id: post.topic_id)
 
       # if an admin replies they should be added to the allowed user list
-      admin = Fabricate(:admin)
       PostCreator.create!(admin,
         raw: 'hi there welcome topic, I am a mod',
         topic_id: post.topic_id
@@ -1021,7 +1037,7 @@ describe PostCreator do
   end
 
   context "warnings" do
-    let(:target_user1) { Fabricate(:coding_horror) }
+    let(:target_user1) { coding_horror }
     fab!(:target_user2) { Fabricate(:moderator) }
     let(:base_args) do
       { title: 'you need a warning buddy!',
@@ -1062,8 +1078,6 @@ describe PostCreator do
     it 'closes private messages that have more than N posts' do
       SiteSetting.auto_close_messages_post_count = 2
 
-      admin = Fabricate(:admin)
-
       post1 = create_post(archetype: Archetype.private_message,
                           target_usernames: [admin.username])
 
@@ -1102,7 +1116,7 @@ describe PostCreator do
   end
 
   context 'private message to group' do
-    let(:target_user1) { Fabricate(:coding_horror) }
+    let(:target_user1) { coding_horror }
     fab!(:target_user2) { Fabricate(:moderator) }
     let(:group) do
       g = Fabricate.build(:group, messageable_level: Group::ALIAS_LEVELS[:everyone])
@@ -1323,7 +1337,6 @@ describe PostCreator do
     it "automatically watches topic based on preference" do
       user.user_option.notification_level_when_replying = 3
 
-      admin = Fabricate(:admin)
       topic = PostCreator.create(admin,
                                  title: "this is the title of a topic created by an admin for watching notification",
                                  raw: "this is the content of a topic created by an admin for keeping a watching notification state on a topic ;)"
@@ -1340,7 +1353,6 @@ describe PostCreator do
     it "topic notification level remains tracking based on preference" do
       user.user_option.notification_level_when_replying = 2
 
-      admin = Fabricate(:admin)
       topic = PostCreator.create(admin,
                                  title: "this is the title of a topic created by an admin for tracking notification",
                                  raw: "this is the content of a topic created by an admin for keeping a tracking notification state on a topic ;)"
@@ -1357,7 +1369,6 @@ describe PostCreator do
     it "topic notification level is normal based on preference" do
       user.user_option.notification_level_when_replying = 1
 
-      admin = Fabricate(:admin)
       topic = PostCreator.create(admin,
                                  title: "this is the title of a topic created by an admin for tracking notification",
                                  raw: "this is the content of a topic created by an admin for keeping a tracking notification state on a topic ;)"
@@ -1374,7 +1385,6 @@ describe PostCreator do
     it "user preferences for notification level when replying doesn't affect PMs" do
       user.user_option.update!(notification_level_when_replying: 1)
 
-      admin = Fabricate(:admin)
       pm = Fabricate(:private_message_topic, user: admin)
 
       pm.invite(admin, user.username)
@@ -1482,7 +1492,7 @@ describe PostCreator do
   end
 
   context "private message to a muted user" do
-    fab!(:muted_me) { Fabricate(:evil_trout) }
+    fab!(:muted_me) { evil_trout }
     fab!(:another_user) { Fabricate(:user) }
 
     it 'should fail' do
@@ -1523,7 +1533,7 @@ describe PostCreator do
   end
 
   context "private message to an ignored user" do
-    fab!(:ignorer) { Fabricate(:evil_trout) }
+    fab!(:ignorer) { evil_trout }
     fab!(:another_user) { Fabricate(:user) }
 
     context "when post author is ignored" do
@@ -1565,7 +1575,7 @@ describe PostCreator do
   end
 
   context "private message to user in allow list" do
-    fab!(:sender) { Fabricate(:evil_trout) }
+    fab!(:sender) { evil_trout }
     fab!(:allowed_user) { Fabricate(:user) }
 
     context "when post author is allowed" do
@@ -1611,7 +1621,7 @@ describe PostCreator do
   end
 
   context "private message to user not in allow list" do
-    fab!(:sender) { Fabricate(:evil_trout) }
+    fab!(:sender) { evil_trout }
     fab!(:allowed_user) { Fabricate(:user) }
     fab!(:not_allowed_user) { Fabricate(:user) }
 
@@ -1672,7 +1682,7 @@ describe PostCreator do
   end
 
   context "private message to multiple users and one is not allowed" do
-    fab!(:sender) { Fabricate(:evil_trout) }
+    fab!(:sender) { evil_trout }
     fab!(:allowed_user) { Fabricate(:user) }
     fab!(:not_allowed_user) { Fabricate(:user) }
 
@@ -1700,8 +1710,8 @@ describe PostCreator do
   end
 
   context "private message recipients limit (max_allowed_message_recipients) reached" do
-    fab!(:target_user1) { Fabricate(:coding_horror) }
-    fab!(:target_user2) { Fabricate(:evil_trout) }
+    fab!(:target_user1) { coding_horror }
+    fab!(:target_user2) { evil_trout }
     fab!(:target_user3) { Fabricate(:walter_white) }
 
     before do
