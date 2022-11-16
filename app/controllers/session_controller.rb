@@ -434,7 +434,7 @@ class SessionController < ApplicationController
     RateLimiter.new(nil, "forgot-password-hr-#{request.remote_ip}", 6, 1.hour).performed!
     RateLimiter.new(nil, "forgot-password-min-#{request.remote_ip}", 3, 1.minute).performed!
 
-    user = if SiteSetting.hide_email_address_taken
+    user = if SiteSetting.hide_email_address_taken && !current_user&.staff?
       raise Discourse::InvalidParameters.new(:login) if EmailValidator.email_regex !~ normalized_login_param
       User.real.where(staged: false).find_by_email(Email.downcase(normalized_login_param))
     else
@@ -444,7 +444,7 @@ class SessionController < ApplicationController
     if user
       RateLimiter.new(nil, "forgot-password-login-day-#{user.username}", 6, 1.day).performed!
       email_token = user.email_tokens.create!(email: user.email, scope: EmailToken.scopes[:password_reset])
-      Jobs.enqueue(:critical_user_email, type: :forgot_password, user_id: user.id, email_token: email_token.token)
+      Jobs.enqueue(:critical_user_email, type: "forgot_password", user_id: user.id, email_token: email_token.token)
     else
       RateLimiter.new(nil, "forgot-password-login-hour-#{normalized_login_param}", 5, 1.hour).performed!
     end

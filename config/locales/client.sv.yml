@@ -3074,7 +3074,7 @@ sv:
       default_list_filter: "Standardlistfilter:"
       allow_badges_label: "Tillåt utmärkelser i den här kategorin"
       edit_permissions: "Redigera behörigheter"
-      reviewable_by_group: "Förutom av personal kan innehåll i denna kategori också granskas av:"
+      reviewable_by_group: "Förutom personal kan innehåll i denna kategori också granskas av:"
       review_group_name: "gruppnamn"
       require_topic_approval: "Kräv att en moderator godkänner alla nya ämnen"
       require_reply_approval: "Kräv att en moderator godkänner alla nya svar"
@@ -5121,7 +5121,9 @@ sv:
           grant_existing_holders: Utfärda ytterligare utmärkelser till befintliga utmärkelseinnehavare
       emoji:
         title: "Emoji"
+        help: "Lägg till ny emoji som kommer att vara tillgänglig för alla. Dra och släpp flera filer samtidigt utan att ange ett namn för att skapa emojis med deras filnamn. Den valda gruppen kommer att användas för alla filer som läggs till samtidigt. Du kan också klicka på \"Lägg till ny emoji\" för att öppna filväljaren."
         add: "Lägg till ny emoji"
+        choose_files: "Välj filer"
         uploading: "Laddar upp..."
         name: "Namn"
         group: "Grupp"
