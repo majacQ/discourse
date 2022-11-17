@@ -1,3 +1,39 @@
+  <<<<<<< invite_share
+{{#d-modal-body title=(if invite.id "user.invited.invite.edit_title" "user.invited.invite.new_title")}}
+  <form>
+    <div class="input-group invite-link">
+      {{#if isShare}}
+        <label for="invite-link">Share a direct link to this topic:</label>
+      {{else}}
+        <label for="invite-link">{{i18n "user.invited.invite.instructions"}}</label>
+      {{/if}}
+      <div class="invite-input-with-button">
+        {{input
+          name="invite-link"
+          class="invite-link"
+          value=(if isShare topicUrl invite.link)
+          readonly=true
+        }}
+        {{copy-button selector="input.invite-link" copied=(action "copied")}}
+      </div>
+    </div>
+
+    {{#unless isShare}}
+      <div class="input-group">{{expiresAtLabel}}</div>
+    {{/unless}}
+
+    <div class="input-group invite-type">
+      {{#if topic}}
+        <div class="radio-group">
+          {{radio-button id="invite-type-share" name="invite-type" value="share" selection=type}}
+          <label for="invite-type-share">{{i18n "user.invited.invite.type_share"}}</label>
+        </div>
+      {{/if}}
+
+      <div class="radio-group">
+        {{radio-button id="invite-type-link" name="invite-type" value="link" selection=type}}
+        <label for="invite-type-link">{{i18n "user.invited.invite.type_link"}}</label>
+  =======
 {{#if this.flashText}}
   <div id="modal-alert" role="alert" class="alert alert-{{this.flashClass}}">
     {{#if this.flashLink}}
@@ -23,6 +59,7 @@
           <Input name="invite-link" class="invite-link" @value={{this.invite.link}} readonly={{true}} />
           <CopyButton @selector="input.invite-link" @copied={{action "copied"}} />
         </div>
+  >>>>>>> header-dock-fix
       </div>
     {{/if}}
 
@@ -45,7 +82,27 @@
       </div>
     </div>
 
+  <<<<<<< invite_share
+    {{#if isShare}}
+      <div class="input-group invite-users">
+        <label for="invite-users">Notify following users of this topic:</label>
+        <div class="invite-input-with-button">
+          {{user-chooser
+            value=users
+            onChange=(action "onChangeUsers")
+          }}
+          {{d-button
+            icon="check"
+            class="btn-primary"
+          }}
+        </div>
+      </div>
+    {{/if}}
+
+    {{#if isLink}}
+  =======
     {{#if this.isLink}}
+  >>>>>>> header-dock-fix
       <div class="input-group invite-max-redemptions">
         <label for="invite-max-redemptions">{{d-icon "users"}}{{i18n "user.invited.invite.max_redemptions_allowed"}}</label>
         <Input id="invite-max-redemptions" @type="number" @value={{this.buffered.max_redemptions_allowed}} min="1" max={{this.maxRedemptionsAllowedLimit}} />
@@ -59,6 +116,40 @@
       </div>
     {{/if}}
 
+  <<<<<<< invite_share
+    {{#if currentUser.staff}}
+      {{#if showAdvanced}}
+        {{#unless isShare}}
+          <div class="input-group invite-to-groups">
+            <label>{{i18n "user.invited.invite.add_to_groups"}}</label>
+            {{group-chooser
+              content=allGroups
+              value=buffered.groupIds
+              labelProperty="name"
+              onChange=(action (mut buffered.groupIds))
+            }}
+          </div>
+
+          <div class="input-group invite-to-topic">
+            {{choose-topic
+              selectedTopicId=buffered.topicId
+              topicTitle=buffered.topicTitle
+              additionalFilters="status:public"
+              label="user.invited.invite.invite_to_topic"
+            }}
+          </div>
+
+          <div class="input-group invite-expires-at">
+            {{future-date-input
+              displayLabel=(i18n "user.invited.invite.expires_at")
+              includeDateTime=true
+              includeMidFuture=true
+              clearable=true
+              onChangeInput=(action (mut buffered.expires_at))
+            }}
+          </div>
+        {{/unless}}
+  =======
     {{#if this.canArriveAtTopic}}
       <div class="input-group invite-to-topic">
         <label for="invite-topic">{{d-icon "hand-point-right"}}{{i18n "user.invited.invite.invite_to_topic"}}</label>
@@ -79,6 +170,7 @@
         <GroupChooser @content={{this.allGroups}} @value={{this.buffered.groupIds}} @labelProperty="name" @onChange={{action (mut this.buffered.groupIds)}} />
       </div>
     {{/if}}
+  >>>>>>> header-dock-fix
 
     {{#if this.currentUser.staff}}
       <div class="input-group invite-expires-at">
@@ -93,7 +185,45 @@
 </DModalBody>
 
 <div class="modal-footer">
+  <<<<<<< invite_share
+  {{#if isShare}}
+    <div class="sources">
+      {{#each sources as |s|}}
+        {{share-source source=s title=model.title action=(action "share")}}
+      {{/each}}
+    </div>
+  {{/if}}
+
+  {{#unless isShare}}
+    {{d-button
+      icon="link"
+      label="user.invited.invite.save_invite"
+      class="btn-primary save-invite"
+      action=(action "saveInvite")
+      disabled=disabled
+    }}
+  {{/unless}}
+
+  {{#if isEmail}}
+    {{d-button
+      icon="envelope"
+      label=(if invite.emailed "user.invited.reinvite" "user.invited.invite.send_invite_email")
+      class="btn-primary send-invite"
+      action=(action "saveInvite" true)
+      disabled=disabled
+    }}
+  {{/if}}
+
+  {{#unless isShare}}
+    {{d-button
+      action=(action "toggleAdvanced")
+      class="show-advanced"
+      icon="cog"
+      title=(if showAdvanced "user.invited.invite.hide_advanced" "user.invited.invite.show_advanced")}}
+  {{/unless}}
+  =======
   <DButton @icon="link" @label="user.invited.invite.save_invite" @class="btn-primary save-invite" @action={{action "saveInvite"}} />
 
   <DButton @icon="envelope" @label={{if this.invite.emailed "user.invited.reinvite" "user.invited.invite.send_invite_email"}} @class="btn-primary send-invite" @action={{action "saveInvite" true}} @title={{unless this.isEmail "user.invited.invite.send_invite_email_instructions"}} @disabled={{not this.isEmail}} />
+  >>>>>>> header-dock-fix
 </div>

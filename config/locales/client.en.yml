@@ -1685,7 +1685,7 @@ en:
           error: "There was an error generating Invite link"
 
         invite:
-          new_title: "Create Invite"
+          new_title: "Invite"
           edit_title: "Edit Invite"
 
           instructions: "Share this link to instantly grant access to this site:"
@@ -1696,10 +1696,16 @@ en:
           show_advanced: "Show Advanced Options"
           hide_advanced: "Hide Advanced Options"
 
+  <<<<<<< invite_share
+          type_share: "Share the topic via link or notify existing users"
+          type_link: "Invite one or more persons via link to join the community"
+          type_email: "Invite just one person via email to join the community"
+  =======
           restrict: "Restrict to"
           restrict_email: "Restrict to email"
           restrict_domain: "Restrict to domain"
           email_or_domain_placeholder: "name@example.com or example.com"
+  >>>>>>> header-dock-fix
 
           max_redemptions_allowed: "Max uses"
 

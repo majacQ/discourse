@@ -705,10 +705,86 @@
     &:last-child {
       margin-bottom: 0;
     }
+  <<<<<<< invite_share
+
+    input[type="text"] {
+      width: 100%;
+    }
+  }
+
+  .radio-group {
+    input[type="radio"] {
+      display: inline;
+      vertical-align: middle;
+      margin-top: -1px;
+    }
+
+    label {
+      display: inline-block;
+    }
+  }
+
+  .user-chooser,
+  .group-chooser,
+  .future-date-input-selector {
+    width: 100%;
+  }
+
+  .input-group input[type="text"],
+  .input-group .btn,
+  .user-chooser .select-kit-header,
+  .future-date-input .select-kit-header {
+    height: 34px;
+  }
+
+  .input-group .btn {
+    vertical-align: top;
+  }
+
+  .invite-input-with-button {
+    display: flex;
+
+    .btn {
+      margin-left: 3px;
+    }
+  }
+
+  .sources {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    flex-direction: row;
+
+    .social-link {
+      font-size: $font-up-6;
+      margin-right: 8px;
+    }
+  }
+
+  .future-date-input {
+    .date-picker-wrapper {
+      input {
+        margin: 0;
+      }
+    }
+
+    .control-group:nth-child(2),
+    .control-group:nth-child(3) {
+      display: inline-block;
+      margin-bottom: 0;
+      width: 49%;
+
+      input {
+        margin-bottom: 0;
+        width: 150px;
+      }
+    }
+  =======
   }
 
   .user-chooser {
     width: calc(100%);
+  >>>>>>> header-dock-fix
   }
 }
 
@@ -717,5 +793,10 @@
 
   button {
     top: 21px;
+  }
+
+  .show-advanced {
+    margin-left: auto;
+    margin-right: 0;
   }
 }
