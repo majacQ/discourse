@@ -3,15 +3,13 @@ import {
   linkSeenMentions,
 } from "discourse/lib/link-mentions";
 import { module, test } from "qunit";
-import { Promise } from "rsvp";
-import pretender from "discourse/tests/helpers/create-pretender";
+import pretender, { response } from "discourse/tests/helpers/create-pretender";
+import domFromString from "discourse-common/lib/dom-from-string";
 
 module("Unit | Utility | link-mentions", function () {
   test("linkSeenMentions replaces users and groups", async function (assert) {
-    pretender.get("/u/is_local_username", () => [
-      200,
-      { "Content-Type": "application/json" },
-      {
+    pretender.get("/u/is_local_username", () =>
+      response({
         valid: ["valid_user"],
         valid_groups: ["valid_group"],
         mentionable_groups: [
@@ -22,8 +20,8 @@ module("Unit | Utility | link-mentions", function () {
         ],
         cannot_see: [],
         max_users_notified_per_group_mention: 100,
-      },
-    ]);
+      })
+    );
 
     await fetchUnseenMentions([
       "valid_user",
@@ -32,31 +30,25 @@ module("Unit | Utility | link-mentions", function () {
       "invalid",
     ]);
 
-    let $root = $(`
+    const root = domFromString(`
       <div>
-          <span class="mention">@invalid</span>
-          <span class="mention">@valid_user</span>
-          <span class="mention">@valid_group</span>
-          <span class="mention">@mentionable_group</span>
+        <span class="mention">@invalid</span>
+        <span class="mention">@valid_user</span>
+        <span class="mention">@valid_group</span>
+        <span class="mention">@mentionable_group</span>
       </div>
-    `);
+    `)[0];
+    await linkSeenMentions(root);
 
-    await linkSeenMentions($root);
-
-    // Ember.Test.registerWaiter is not available here, so we are implementing
-    // our own
-    await new Promise((resolve) => {
-      const interval = setInterval(() => {
-        if ($("a", $root).length > 0) {
-          clearInterval(interval);
-          resolve();
-        }
-      }, 500);
-    });
-
-    assert.equal($("a", $root)[0].text, "@valid_user");
-    assert.equal($("a", $root)[1].text, "@valid_group");
-    assert.equal($("a.notify", $root).text(), "@mentionable_group");
-    assert.equal($("span.mention", $root)[0].innerHTML, "@invalid");
+    assert.strictEqual(root.querySelector("a").innerText, "@valid_user");
+    assert.strictEqual(root.querySelectorAll("a")[1].innerText, "@valid_group");
+    assert.strictEqual(
+      root.querySelector("a.notify").innerText,
+      "@mentionable_group"
+    );
+    assert.strictEqual(
+      root.querySelector("span.mention").innerHTML,
+      "@invalid"
+    );
   });
 });

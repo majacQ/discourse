@@ -8,9 +8,6 @@ import { test } from "qunit";
 
 acceptance("Redirect to Top", function (needs) {
   needs.pretender((server, helper) => {
-    server.get("/top.json?period=weekly", () => {
-      return helper.response(DiscoveryFixtures["/latest.json"]);
-    });
     server.get("/top/monthly.json", () => {
       return helper.response(DiscoveryFixtures["/latest.json"]);
     });
@@ -30,7 +27,11 @@ acceptance("Redirect to Top", function (needs) {
     });
 
     await visit("/categories");
-    assert.equal(currentURL(), "/top?period=weekly", "it works for categories");
+    assert.strictEqual(
+      currentURL(),
+      "/top?period=weekly",
+      "it works for categories"
+    );
   });
 
   test("redirects latest to monthly top", async function (assert) {
@@ -43,7 +44,11 @@ acceptance("Redirect to Top", function (needs) {
     });
 
     await visit("/latest");
-    assert.equal(currentURL(), "/top?period=monthly", "it works for latest");
+    assert.strictEqual(
+      currentURL(),
+      "/top?period=monthly",
+      "it works for latest"
+    );
   });
 
   test("redirects root to All top", async function (assert) {
@@ -56,6 +61,6 @@ acceptance("Redirect to Top", function (needs) {
     });
 
     await visit("/");
-    assert.equal(currentURL(), "/top?period=all", "it works for root");
+    assert.strictEqual(currentURL(), "/top?period=all", "it works for root");
   });
 });

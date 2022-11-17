@@ -50,10 +50,7 @@ module PostGuardian
         (!SiteSetting.allow_flagging_staff?) &&
         post&.user&.staff?
 
-      if action_key == :notify_user &&
-         (!SiteSetting.enable_personal_messages? ||
-         !@user.has_trust_level?(SiteSetting.min_trust_to_send_messages))
-
+      if action_key == :notify_user && !@user.in_any_groups?(SiteSetting.personal_message_enabled_groups_map)
         return false
       end
 
@@ -100,8 +97,9 @@ module PostGuardian
     is_staff? &&
     user &&
     !user.admin? &&
-    (user.first_post_created_at.nil? || user.first_post_created_at >= SiteSetting.delete_user_max_post_age.days.ago) &&
-    user.post_count <= SiteSetting.delete_all_posts_max.to_i
+    (is_admin? ||
+      ((user.first_post_created_at.nil? || user.first_post_created_at >= SiteSetting.delete_user_max_post_age.days.ago) &&
+      user.post_count <= SiteSetting.delete_all_posts_max.to_i))
   end
 
   def can_create_post?(parent)
@@ -158,13 +156,7 @@ module PostGuardian
 
       return false if @user.silenced?
 
-      if post.hidden?
-        return false if post.hidden_at.present? &&
-                        post.hidden_at >= SiteSetting.cooldown_minutes_after_hiding_posts.minutes.ago
-
-        # If it's your own post and it's hidden, you can still edit it
-        return true
-      end
+      return can_edit_hidden_post?(post) if post.hidden?
 
       if post.is_first_post? && post.topic.category_allows_unlimited_owner_edits_on_first_post?
         return true
@@ -178,6 +170,11 @@ module PostGuardian
     end
 
     false
+  end
+
+  def can_edit_hidden_post?(post)
+    return false if post.nil?
+    post.hidden_at.nil? || post.hidden_at < SiteSetting.cooldown_minutes_after_hiding_posts.minutes.ago
   end
 
   def can_delete_post_or_topic?(post)
@@ -204,6 +201,16 @@ module PostGuardian
     false
   end
 
+  def can_permanently_delete_post?(post)
+    return false if !SiteSetting.can_permanently_delete
+    return false if !post
+    return false if post.is_first_post?
+    return false if !is_admin? || !can_edit_post?(post)
+    return false if !post.deleted_at
+    return false if post.deleted_by_id == @user.id && post.deleted_at >= Post::PERMANENT_DELETE_TIMER.ago
+    true
+  end
+
   def can_recover_post?(post)
     return false unless post
 
@@ -222,10 +229,7 @@ module PostGuardian
   def can_delete_post_action?(post_action)
     return false unless is_my_own?(post_action) && !post_action.is_private_message?
 
-    # Bookmarks do not have a time constraint
-    return true if post_action.is_bookmark?
-
-    post_action.created_at > SiteSetting.post_undo_action_window_mins.minutes.ago
+    post_action.created_at > SiteSetting.post_undo_action_window_mins.minutes.ago && !post_action.post&.topic&.archived?
   end
 
   def can_see_post?(post)
@@ -289,7 +293,7 @@ module PostGuardian
   end
 
   def can_view_raw_email?(post)
-    post && (is_staff? || post.user_id == @user.id)
+    post && is_staff?
   end
 
   def can_unhide?(post)

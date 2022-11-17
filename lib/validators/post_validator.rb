@@ -20,11 +20,11 @@ class PostValidator < ActiveModel::Validator
 
   def presence(post)
     unless options[:skip_topic]
-      post.errors.add(:topic_id, :blank, options) if post.topic_id.blank?
+      post.errors.add(:topic_id, :blank, **options) if post.topic_id.blank?
     end
 
     if post.new_record? && post.user_id.nil?
-      post.errors.add(:user_id, :blank, options)
+      post.errors.add(:user_id, :blank, **options)
     end
   end
 
@@ -140,6 +140,9 @@ class PostValidator < ActiveModel::Validator
     topic = post.topic
     return if topic&.ordered_posts&.first&.user == post.user
 
+    guardian = Guardian.new(post.acting_user)
+    return if guardian.is_category_group_moderator?(post.topic&.category)
+
     last_posts_count = DB.query_single(<<~SQL, topic_id: post.topic_id, user_id: post.acting_user.id, max_replies: SiteSetting.max_consecutive_replies).first
       SELECT COUNT(*)
       FROM (
@@ -155,7 +158,6 @@ class PostValidator < ActiveModel::Validator
     SQL
     return if last_posts_count < SiteSetting.max_consecutive_replies
 
-    guardian = Guardian.new(post.acting_user)
     if guardian.can_edit?(topic.ordered_posts.last)
       post.errors.add(:base, I18n.t(:max_consecutive_replies, count: SiteSetting.max_consecutive_replies))
     end

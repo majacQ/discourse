@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe ListController do
   fab!(:user) { Fabricate(:user) }
   fab!(:topic) { Fabricate(:topic, user: user) }
@@ -54,6 +52,12 @@ RSpec.describe ListController do
       expect(response.status).to eq(200)
 
       get "/latest?search="
+      expect(response.status).to eq(200)
+
+      get "/latest.json?topic_ids%5B%5D=14583&topic_ids%5B%5D=14584"
+      expect(response.status).to eq(200)
+
+      get "/latest.json?topic_ids=14583%2C14584"
       expect(response.status).to eq(200)
     end
 
@@ -136,15 +140,15 @@ RSpec.describe ListController do
   end
 
   describe "filter private messages by tag" do
-    let(:user) { Fabricate(:user) }
-    let(:moderator) { Fabricate(:moderator) }
-    let(:admin) { Fabricate(:admin) }
+    fab!(:user) { Fabricate(:user) }
+    fab!(:moderator) { Fabricate(:moderator) }
+    fab!(:admin) { Fabricate(:admin) }
     let(:tag) { Fabricate(:tag) }
     let(:private_message) { Fabricate(:private_message_topic, user: admin) }
 
     before do
       SiteSetting.tagging_enabled = true
-      SiteSetting.allow_staff_to_tag_pms = true
+      SiteSetting.pm_tags_allowed_for_groups = "1|2|3"
       Fabricate(:topic_tag, tag: tag, topic: private_message)
     end
 
@@ -154,8 +158,8 @@ RSpec.describe ListController do
       expect(response.status).to eq(404)
     end
 
-    it 'should fail for staff users if disabled' do
-      SiteSetting.allow_staff_to_tag_pms = false
+    it 'should fail for staff users if empty' do
+      SiteSetting.pm_tags_allowed_for_groups = ""
 
       [moderator, admin].each do |user|
         sign_in(user)
@@ -182,17 +186,28 @@ RSpec.describe ListController do
       expect(response.parsed_body["topic_list"]["topics"].first["id"])
         .to eq(private_message.id)
     end
+
+    it 'should work for users who are allowed and direct links' do
+      SiteSetting.pm_tags_allowed_for_groups = group.name
+      group.add(user)
+      sign_in(user)
+
+      get "/u/#{user.username}/messages/tags/#{tag.name}"
+
+      expect(response.status).to eq(200)
+    end
   end
 
   describe '#private_messages_group' do
-    let(:user) { Fabricate(:user) }
+    fab!(:user) { Fabricate(:user) }
 
-    describe 'with personal_messages disabled' do
+    describe 'when user not in personal_message_enabled_groups group' do
       let!(:topic) { Fabricate(:private_message_topic, allowed_groups: [group]) }
 
       before do
         group.add(user)
-        SiteSetting.enable_personal_messages = false
+        SiteSetting.personal_message_enabled_groups = Group::AUTO_GROUPS[:staff]
+        Group.refresh_automatic_groups!
       end
 
       it 'should display group private messages for an admin' do
@@ -233,6 +248,7 @@ RSpec.describe ListController do
         group.add(user)
         sign_in(user)
         SiteSetting.unicode_usernames = false
+        Group.refresh_automatic_groups!
       end
 
       it 'should return the right response when user does not belong to group' do
@@ -260,6 +276,7 @@ RSpec.describe ListController do
       before do
         sign_in(user)
         SiteSetting.unicode_usernames = true
+        Group.refresh_automatic_groups!
       end
 
       it 'Returns a 200 with unicode group name' do
@@ -410,6 +427,11 @@ RSpec.describe ListController do
       expect(response.media_type).to eq('application/rss+xml')
     end
 
+    it 'errors for invalid periods on top RSS' do
+      get "/top.rss?period=decadely"
+      expect(response.status).to eq(400)
+    end
+
     TopTopic.periods.each do |period|
       it "renders #{period} top RSS" do
         get "/top.rss?period=#{period}"
@@ -419,8 +441,25 @@ RSpec.describe ListController do
     end
   end
 
+  describe 'Top' do
+    it 'renders top' do
+      get "/top"
+      expect(response.status).to eq(200)
+    end
+
+    it 'renders top with a period' do
+      get "/top?period=weekly"
+      expect(response.status).to eq(200)
+    end
+
+    it 'errors for invalid periods on top' do
+      get "/top?period=decadely"
+      expect(response.status).to eq(400)
+    end
+  end
+
   describe 'category' do
-    context 'in a category' do
+    context 'when in a category' do
       let(:category) { Fabricate(:category_with_definition) }
       let(:group) { Fabricate(:group) }
       let(:private_category) { Fabricate(:private_category, group: group) }
@@ -470,7 +509,7 @@ RSpec.describe ListController do
         end
       end
 
-      context 'another category exists with a number at the beginning of its name' do
+      context 'when another category exists with a number at the beginning of its name' do
         # One category has another category's id at the beginning of its name
         let!(:other_category) {
           # Our validations don't allow this to happen now, but did historically
@@ -488,7 +527,7 @@ RSpec.describe ListController do
         end
       end
 
-      context 'a child category' do
+      context 'with a child category' do
         let(:sub_category) { Fabricate(:category_with_definition, parent_category_id: category.id) }
 
         context 'when parent and child are requested' do
@@ -570,16 +609,20 @@ RSpec.describe ListController do
         end
       end
 
-      context "renders correct title" do
+      context "for category default view" do
         let!(:amazing_category) { Fabricate(:category_with_definition, name: "Amazing Category") }
 
-        it 'for category default view' do
+        it "renders correct title" do
           get "/c/#{amazing_category.slug}/#{amazing_category.id}"
 
           expect(response.body).to have_tag "title", text: "Amazing Category - Discourse"
         end
+      end
 
-        it 'for category latest view' do
+      context "for category latest view" do
+        let!(:amazing_category) { Fabricate(:category_with_definition, name: "Amazing Category") }
+
+        it 'renders correct title' do
           SiteSetting.short_site_description = "Best community"
           get "/c/#{amazing_category.slug}/#{amazing_category.id}/l/latest"
 
@@ -610,6 +653,26 @@ RSpec.describe ListController do
       expect(response.status).to eq(200)
       json = response.parsed_body
       expect(json["topic_list"]["topics"].size).to eq(2)
+    end
+
+    context "with unicode usernames" do
+      before do
+        SiteSetting.unicode_usernames = true
+      end
+
+      it "should return the more_topics_url in the encoded form" do
+        stub_const(TopicQuery, "DEFAULT_PER_PAGE_COUNT", 1) do
+          user.update!(username: "快快快")
+
+          get "/topics/created-by/#{UrlHelper.encode(user.username)}.json"
+
+          expect(response.status).to eq(200)
+
+          json = response.parsed_body
+
+          expect(json["topic_list"]["more_topics_url"]).to eq("/topics/created-by/%E5%BF%AB%E5%BF%AB%E5%BF%AB?page=1")
+        end
+      end
     end
 
     context 'when `hide_profile_and_presence` is true' do
@@ -681,10 +744,10 @@ RSpec.describe ListController do
       end
     end
 
-    it "returns 403 error when the user can't see private message" do
+    it "returns 404 when the user can't see private message" do
       sign_in(Fabricate(:user))
       get "/topics/private-messages-unread/#{pm_user.username}.json"
-      expect(response.status).to eq(403)
+      expect(response.status).to eq(404)
     end
 
     it "succeeds when the user can see private messages" do
@@ -704,10 +767,10 @@ RSpec.describe ListController do
   end
 
   describe "#private_messages_warnings" do
-    let(:target_user) { Fabricate(:user) }
-    let(:admin) { Fabricate(:admin) }
-    let(:moderator1) { Fabricate(:moderator) }
-    let(:moderator2) { Fabricate(:moderator) }
+    fab!(:target_user) { Fabricate(:user) }
+    fab!(:admin) { Fabricate(:admin) }
+    fab!(:moderator1) { Fabricate(:moderator) }
+    fab!(:moderator2) { Fabricate(:moderator) }
 
     let(:create_args) do
       { title: 'you need a warning buddy!',
@@ -826,16 +889,18 @@ RSpec.describe ListController do
       expect(response.status).to eq(200)
     end
 
-    context "does not create a redirect loop" do
-      it "with encoded slugs" do
+    context "with encoded slugs" do
+      it "does not create a redirect loop" do
         category = Fabricate(:category)
         category.update_columns(slug: CGI.escape("systèmes"))
 
         get "/c/syst%C3%A8mes/#{category.id}"
         expect(response.status).to eq(200)
       end
+    end
 
-      it "with lowercase encoded slugs" do
+    context "with lowercase encoded slugs" do
+      it "does not create a redirect loop" do
         category = Fabricate(:category)
         category.update_columns(slug: CGI.escape("systèmes").downcase)
 
@@ -893,6 +958,69 @@ RSpec.describe ListController do
       get "/c/#{category2.slug}/#{category2.id}.json"
       expect(response.parsed_body['topic_list']['shared_drafts'].map { |t| t['id'] }).to contain_exactly(shared_draft_topic.id)
       expect(response.parsed_body['topic_list']['topics'].map { |t| t['id'] }).to contain_exactly(topic2.id)
+    end
+  end
+
+  describe "body class" do
+    it "pre-renders the correct body class for categories" do
+      c = Fabricate(:category, slug: 'myparentslug')
+      sub_c = Fabricate(:category, parent_category: c, slug: 'mychildslug')
+
+      get "/c/#{c.slug}/#{sub_c.slug}/#{sub_c.id}"
+
+      expect(response.body).to have_tag "body", with: { class: "category-myparentslug-mychildslug" }
+    end
+  end
+
+  describe "welcome topic" do
+    fab!(:welcome_topic) { Fabricate(:topic) }
+    fab!(:post) { Fabricate(:post, topic: welcome_topic) }
+
+    before do
+      SiteSetting.welcome_topic_id = welcome_topic.id
+      SiteSetting.editing_grace_period = 1.minute.to_i
+      SiteSetting.bootstrap_mode_enabled = true
+    end
+
+    it "is hidden for non-admins" do
+
+      get "/latest.json"
+      expect(response.status).to eq(200)
+      parsed = response.parsed_body
+      expect(parsed["topic_list"]["topics"].length).to eq(1)
+      expect(parsed["topic_list"]["topics"].first["id"]).not_to eq(welcome_topic.id)
+    end
+
+    it "is shown to non-admins when there is an edit" do
+      post.revise(post.user, { raw: "#{post.raw}2" }, revised_at: post.updated_at + 2.minutes)
+      post.reload
+      expect(post.version).to eq(2)
+
+      get "/latest.json"
+      expect(response.status).to eq(200)
+      parsed = response.parsed_body
+      expect(parsed["topic_list"]["topics"].length).to eq(2)
+      expect(parsed["topic_list"]["topics"].first["id"]).to eq(welcome_topic.id)
+    end
+
+    it "is hidden to admins" do
+      sign_in(admin)
+
+      get "/latest.json"
+      expect(response.status).to eq(200)
+      parsed = response.parsed_body
+      expect(parsed["topic_list"]["topics"].length).to eq(1)
+      expect(parsed["topic_list"]["topics"].first["id"]).not_to eq(welcome_topic.id)
+    end
+
+    it "is shown to users when bootstrap mode is disabled" do
+      SiteSetting.bootstrap_mode_enabled = false
+
+      get "/latest.json"
+      expect(response.status).to eq(200)
+      parsed = response.parsed_body
+      expect(parsed["topic_list"]["topics"].length).to eq(2)
+      expect(parsed["topic_list"]["topics"].first["id"]).to eq(welcome_topic.id)
     end
   end
 end

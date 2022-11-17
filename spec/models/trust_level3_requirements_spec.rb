@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
+RSpec.describe TrustLevel3Requirements do
 
-describe TrustLevel3Requirements do
-
-  let(:user) { Fabricate.build(:user) }
+  fab!(:user) { Fabricate(:user) }
   subject(:tl3_requirements) { described_class.new(user) }
   fab!(:moderator) { Fabricate(:moderator) }
 
@@ -426,6 +424,7 @@ describe TrustLevel3Requirements do
     let(:recent_post1) { create_post(topic: topic, user: user, created_at: 1.hour.ago) }
     let(:recent_post2) { create_post(topic: topic, user: user, created_at: 10.days.ago) }
     let(:private_post) do
+      Group.refresh_automatic_groups!
       create_post(
         user: user,
         archetype: Archetype.private_message,
@@ -450,8 +449,7 @@ describe TrustLevel3Requirements do
     end
   end
 
-  context "requirements with defaults" do
-
+  describe "requirements with defaults" do
     before do
       tl3_requirements.stubs(:min_days_visited).returns(50)
       tl3_requirements.stubs(:min_topics_replied_to).returns(10)

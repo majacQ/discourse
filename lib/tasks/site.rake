@@ -8,6 +8,7 @@ class ZippedSiteStructure
 
   def initialize(path, create: false)
     @zip = Zip::File.open(path, create)
+    @uploads = {}
   end
 
   def close
@@ -41,17 +42,28 @@ class ZippedSiteStructure
       return nil
     end
 
+    if @uploads[upload.id].present?
+      puts "  - Already exported upload #{upload_or_id_or_url} to #{@uploads[upload.id][:path]}"
+      return @uploads[upload.id]
+    end
+
     local_path = upload.local? ? Discourse.store.path_for(upload) : Discourse.store.download(upload).path
     zip_path = File.join('uploads', File.basename(local_path))
+    zip_path = get_unique_path(zip_path)
 
     puts "  - Exporting upload #{upload_or_id_or_url} to #{zip_path}"
     @zip.add(zip_path, local_path)
 
-    { filename: upload.original_filename, path: file_zip_path }
+    @uploads[upload.id] ||= { filename: upload.original_filename, path: zip_path }
   end
 
   def get_upload(upload, opts = {})
     return nil if upload.blank?
+
+    if @uploads[upload['path']].present?
+      puts "  - Already imported upload #{upload['filename']} from #{upload['path']}"
+      return @uploads[upload['path']]
+    end
 
     puts "  - Importing upload #{upload['filename']} from #{upload['path']}"
 
@@ -59,8 +71,24 @@ class ZippedSiteStructure
     tempfile.write(@zip.get_input_stream(upload['path']).read)
     tempfile.rewind
 
-    UploadCreator.new(tempfile, upload['filename'], opts)
-      .create_for(Discourse::SYSTEM_USER_ID)
+    @uploads[upload['path']] ||= UploadCreator.new(tempfile, upload['filename'], opts).create_for(Discourse::SYSTEM_USER_ID)
+  end
+
+  private
+
+  def get_unique_path(path)
+    return path if @zip.find_entry(path).blank?
+
+    extname = File.extname(path)
+    basename = File.basename(path, extname)
+    dirname = File.dirname(path)
+
+    i = 0
+    loop do
+      i += 1
+      path = File.join(dirname, "#{basename}_#{i}#{extname}")
+      return path if @zip.find_entry(path).blank?
+    end
   end
 end
 
@@ -69,7 +97,7 @@ task 'site:export_structure', [:zip_path] => :environment do |task, args|
   if args[:zip_path].blank?
     STDERR.puts "ERROR: rake site:export_structure[<path to ZIP file>]"
     exit 1
-  elsif File.exists?(args[:zip_path])
+  elsif File.exist?(args[:zip_path])
     STDERR.puts "ERROR: File '#{args[:zip_path]}' already exists"
     exit 2
   end
@@ -182,6 +210,7 @@ task 'site:export_structure', [:zip_path] => :environment do |task, args|
       sort_order: c.sort_order,
       sort_ascending: c.sort_ascending,
       uploaded_logo_id: data.set_upload(c.uploaded_logo_id),
+      uploaded_logo_dark_id: data.set_upload(c.uploaded_logo_dark_id),
       uploaded_background_id: data.set_upload(c.uploaded_background_id),
       topic_featured_link_allowed: c.topic_featured_link_allowed,
       all_topics_wiki: c.all_topics_wiki,
@@ -300,7 +329,7 @@ task 'site:import_structure', [:zip_path] => :environment do |task, args|
   if args[:zip_path].blank?
     STDERR.puts "ERROR: rake site:import_structure[<path to ZIP file>]"
     exit 1
-  elsif !File.exists?(args[:zip_path])
+  elsif !File.exist?(args[:zip_path])
     STDERR.puts "ERROR: File '#{args[:zip_path]}' does not exist"
     exit 2
   end

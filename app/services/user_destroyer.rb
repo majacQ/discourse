@@ -40,20 +40,17 @@ class UserDestroyer
         delete_posts(user, category_topic_ids, opts)
       end
 
-      user.post_actions.each do |post_action|
+      user.post_actions.find_each do |post_action|
         post_action.remove_act!(Discourse.system_user)
       end
 
       # Add info about the user to staff action logs
       UserHistory.staff_action_records(
         Discourse.system_user, acting_user: user.username
-      ).each do |log|
-        log.details ||= ''
-        log.details = (log.details.split("\n") +
-            ["user_id: #{user.id}", "username: #{user.username}"]
-          ).join("\n")
-        log.save!
-      end
+      ).update_all([
+        "details = CONCAT(details, ?)",
+        "\nuser_id: #{user.id}\nusername: #{user.username}"
+      ])
 
       # keep track of emails used
       user_emails = user.user_emails.pluck(:email)
@@ -125,7 +122,7 @@ class UserDestroyer
 
   def agree_with_flags(user)
     ReviewableFlaggedPost.where(target_created_by: user).find_each do |reviewable|
-      reviewable.perform(@actor, :agree_and_keep)
+      reviewable.perform(@actor, :agree_and_keep) if reviewable.actions_for(@guardian).has?(:agree_and_keep)
     end
   end
 

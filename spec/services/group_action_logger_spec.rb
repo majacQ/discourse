@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe GroupActionLogger do
   fab!(:group_owner) { Fabricate(:user) }
   fab!(:group) { Fabricate(:group) }
@@ -38,7 +36,7 @@ RSpec.describe GroupActionLogger do
   end
 
   describe '#log_add_user_to_group' do
-    describe 'as a group owner' do
+    context 'as a group owner' do
       it 'should create the right record' do
         subject.log_add_user_to_group(user)
 
@@ -53,33 +51,24 @@ RSpec.describe GroupActionLogger do
     context 'as a normal user' do
       subject { described_class.new(user, group) }
 
-      describe 'user cannot freely exit group' do
-        it 'should not be allowed to log the action' do
-          expect { subject.log_add_user_to_group(user) }
-            .to raise_error(Discourse::InvalidParameters)
-        end
+      before do
+        group.update!(public_admission: true)
       end
 
-      describe 'user can freely exit group' do
-        before do
-          group.update!(public_admission: true)
-        end
+      it 'should create the right record' do
+        subject.log_add_user_to_group(user)
 
-        it 'should create the right record' do
-          subject.log_add_user_to_group(user)
+        group_history = GroupHistory.last
 
-          group_history = GroupHistory.last
-
-          expect(group_history.action).to eq(GroupHistory.actions[:add_user_to_group])
-          expect(group_history.acting_user).to eq(user)
-          expect(group_history.target_user).to eq(user)
-        end
+        expect(group_history.action).to eq(GroupHistory.actions[:add_user_to_group])
+        expect(group_history.acting_user).to eq(user)
+        expect(group_history.target_user).to eq(user)
       end
     end
   end
 
   describe '#log_remove_user_from_group' do
-    describe 'as group owner' do
+    context 'as group owner' do
       it 'should create the right record' do
         subject.log_remove_user_from_group(user)
 
@@ -94,27 +83,18 @@ RSpec.describe GroupActionLogger do
     context 'as a normal user' do
       subject { described_class.new(user, group) }
 
-      describe 'user cannot freely exit group' do
-        it 'should not be allowed to log the action' do
-          expect { subject.log_remove_user_from_group(user) }
-            .to raise_error(Discourse::InvalidParameters)
-        end
+      before do
+        group.update!(public_exit: true)
       end
 
-      describe 'user can freely exit group' do
-        before do
-          group.update!(public_exit: true)
-        end
+      it 'should create the right record' do
+        subject.log_remove_user_from_group(user)
 
-        it 'should create the right record' do
-          subject.log_remove_user_from_group(user)
+        group_history = GroupHistory.last
 
-          group_history = GroupHistory.last
-
-          expect(group_history.action).to eq(GroupHistory.actions[:remove_user_from_group])
-          expect(group_history.acting_user).to eq(user)
-          expect(group_history.target_user).to eq(user)
-        end
+        expect(group_history.action).to eq(GroupHistory.actions[:remove_user_from_group])
+        expect(group_history.acting_user).to eq(user)
+        expect(group_history.target_user).to eq(user)
       end
     end
   end

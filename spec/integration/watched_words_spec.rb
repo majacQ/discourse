@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe WatchedWord do
+RSpec.describe WatchedWord do
   fab!(:tl2_user) { Fabricate(:user, trust_level: TrustLevel[2]) }
   fab!(:admin) { Fabricate(:admin) }
   fab!(:moderator) { Fabricate(:moderator) }
@@ -23,13 +21,21 @@ describe WatchedWord do
     WordWatcher.clear_cache!
   end
 
-  context "block" do
+  context "with block" do
     def should_block_post(manager)
       expect {
         result = manager.perform
         expect(result).to_not be_success
         expect(result.errors[:base]&.first).to eq(I18n.t('contains_blocked_word', word: block_word.word))
       }.to_not change { Post.count }
+    end
+
+    it "escapes the blocked word in error message" do
+      block_word = Fabricate(:watched_word, action: WatchedWord.actions[:block], word: "<a>")
+      manager = NewPostManager.new(tl2_user, raw: "Want some #{block_word.word} for cheap?", topic_id: topic.id)
+      result = manager.perform
+      expect(result).to_not be_success
+      expect(result.errors[:base]&.first).to eq(I18n.t('contains_blocked_word', word: "&lt;a&gt;"))
     end
 
     it "should prevent the post from being created" do
@@ -82,7 +88,7 @@ describe WatchedWord do
     end
   end
 
-  context "require_approval" do
+  context "with require_approval" do
     it "should queue the post for approval" do
       manager = NewPostManager.new(tl2_user, raw: "My dog's name is #{require_approval_word.word}.", topic_id: topic.id)
       result = manager.perform
@@ -111,6 +117,7 @@ describe WatchedWord do
     end
 
     it "doesn't need approval in a private message" do
+      Group.refresh_automatic_groups!
       manager = NewPostManager.new(
         tl2_user,
         raw: "Want some #{require_approval_word.word} for cheap?",
@@ -124,7 +131,7 @@ describe WatchedWord do
     end
   end
 
-  context "flag" do
+  context "with flag" do
     def should_flag_post(author, raw, topic)
       post = Fabricate(:post, raw: raw, topic: topic, user: author)
       expect {

@@ -28,7 +28,8 @@ module Jobs
       post_id = args[:post_id]
       post = post_id ? Post.with_deleted.find_by(id: post_id) : nil
 
-      return if !post || post.trashed? || post.user_deleted? || !post.topic || post.raw.blank?
+      return if !post || post.trashed? || post.user_deleted? ||
+                  !post.topic || post.raw.blank? || post.topic.private_message?
 
       users =
           User.activated.not_silenced.not_suspended.real
@@ -68,7 +69,7 @@ module Jobs
       end
 
       if SiteSetting.mute_all_categories_by_default
-        users = users.watching_topic_when_mute_categories_by_default(post.topic)
+        users = users.watching_topic(post.topic)
       end
 
       DiscourseEvent.trigger(:notify_mailing_list_subscribers, users, post)

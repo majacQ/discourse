@@ -7,8 +7,9 @@ import { createWidget } from "discourse/widgets/widget";
 import { h } from "virtual-dom";
 import { iconNode } from "discourse-common/lib/icon-library";
 import { userPath } from "discourse/lib/url";
+import { htmlSafe } from "@ember/template";
 
-export function actionDescriptionHtml(actionCode, createdAt, username) {
+export function actionDescriptionHtml(actionCode, createdAt, username, path) {
   const dt = new Date(createdAt);
   const when = autoUpdatingRelativeAge(dt, {
     format: "medium-with-ago-and-on",
@@ -16,23 +17,35 @@ export function actionDescriptionHtml(actionCode, createdAt, username) {
 
   let who = "";
   if (username) {
-    if (actionCode === "invited_group" || actionCode === "removed_group") {
+    if (groupActionCodes.includes(actionCode)) {
       who = `<a class="mention-group" href="/g/${username}">@${username}</a>`;
     } else {
       who = `<a class="mention" href="${userPath(username)}">@${username}</a>`;
     }
   }
-  return I18n.t(`action_codes.${actionCode}`, { who, when }).htmlSafe();
+  return htmlSafe(I18n.t(`action_codes.${actionCode}`, { who, when, path }));
 }
 
-export function actionDescription(actionCode, createdAt, username) {
+export function actionDescription(
+  actionCode,
+  createdAt,
+  username,
+  path = null
+) {
   return computed(actionCode, createdAt, function () {
     const ac = this.get(actionCode);
     if (ac) {
-      return actionDescriptionHtml(ac, this.get(createdAt), this.get(username));
+      return actionDescriptionHtml(
+        ac,
+        this.get(createdAt),
+        this.get(username),
+        path ? this.get(path) : null
+      );
     }
   });
 }
+
+const groupActionCodes = ["invited_group", "removed_group"];
 
 const icons = {
   "closed.enabled": "lock",
@@ -64,6 +77,10 @@ export function addPostSmallActionIcon(key, icon) {
   icons[key] = icon;
 }
 
+export function addGroupPostSmallActionCode(actionCode) {
+  groupActionCodes.push(actionCode);
+}
+
 export default createWidget("post-small-action", {
   buildKey: (attrs) => `post-small-act-${attrs.id}`,
   tagName: "div.small-action.onscreen-post",
@@ -81,6 +98,17 @@ export default createWidget("post-small-action", {
   html(attrs) {
     const contents = [];
 
+    if (attrs.canRecover) {
+      contents.push(
+        this.attach("button", {
+          className: "small-action-recover",
+          icon: "undo",
+          action: "recoverPost",
+          title: "post.controls.undelete",
+        })
+      );
+    }
+
     if (attrs.canDelete) {
       contents.push(
         this.attach("button", {
@@ -92,7 +120,7 @@ export default createWidget("post-small-action", {
       );
     }
 
-    if (attrs.canEdit) {
+    if (attrs.canEdit && !attrs.canRecover) {
       contents.push(
         this.attach("button", {
           className: "small-action-edit",
@@ -111,19 +139,24 @@ export default createWidget("post-small-action", {
       })
     );
 
-    const description = actionDescriptionHtml(
-      attrs.actionCode,
-      new Date(attrs.created_at),
-      attrs.actionCodeWho
-    );
-    contents.push(new RawHtml({ html: `<p>${description}</p>` }));
-
-    if (attrs.cooked) {
-      contents.push(
-        new RawHtml({
-          html: `<div class='custom-message'>${attrs.cooked}</div>`,
-        })
+    if (attrs.actionDescriptionWidget) {
+      contents.push(this.attach(attrs.actionDescriptionWidget, attrs));
+    } else {
+      const description = actionDescriptionHtml(
+        attrs.actionCode,
+        new Date(attrs.created_at),
+        attrs.actionCodeWho,
+        attrs.actionCodePath
       );
+      contents.push(new RawHtml({ html: `<p>${description}</p>` }));
+
+      if (attrs.cooked) {
+        contents.push(
+          new RawHtml({
+            html: `<div class='custom-message'>${attrs.cooked}</div>`,
+          })
+        );
+      }
     }
 
     return [

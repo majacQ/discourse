@@ -1,9 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe BadgeGranter do
-
+RSpec.describe BadgeGranter do
   fab!(:badge) { Fabricate(:badge) }
   fab!(:user) { Fabricate(:user) }
 
@@ -205,6 +202,21 @@ describe BadgeGranter do
         BadgeGranter.backfill(Badge.find(Badge::FirstLike))
       }.to_not change { Notification.where(user_id: user.id).count }
     end
+
+    it 'does not grant sharing badges to deleted users' do
+      post = Fabricate(:post)
+      incoming_links = Fabricate.times(25, :incoming_link, post: post, user: user)
+      user_id = user.id
+      user.destroy!
+
+      nice_share = Badge.find(Badge::NiceShare)
+      first_share = Badge.find(Badge::FirstShare)
+
+      BadgeGranter.backfill(nice_share)
+      BadgeGranter.backfill(first_share)
+
+      expect(UserBadge.where(user_id: user_id).count).to eq(0)
+    end
   end
 
   describe 'grant' do
@@ -377,7 +389,7 @@ describe BadgeGranter do
     end
   end
 
-  context "update_badges" do
+  describe "update_badges" do
     fab!(:user) { Fabricate(:user) }
     fab!(:liker) { Fabricate(:user) }
 
@@ -468,9 +480,22 @@ describe BadgeGranter do
       BadgeGranter.backfill(Badge.find(Badge::GreatPost))
       expect(UserBadge.find_by(user_id: user.id, badge_id: Badge::GreatPost)).to eq(nil)
     end
+
+    it "triggers the 'user_badge_granted' DiscourseEvent per badge when badges are backfilled" do
+      post = create_post(user: user)
+      action = PostActionCreator.like(liker, post).post_action
+
+      events = DiscourseEvent.track_events(:user_badge_granted) do
+        BadgeGranter.process_queue!
+      end
+
+      expect(events.length).to eq(2)
+      expect(events[0][:params]).to eq([Badge::FirstLike, liker.id])
+      expect(events[1][:params]).to eq([Badge::Welcome, user.id])
+    end
   end
 
-  context 'notification locales' do
+  describe 'notification locales' do
     it 'is using default locales when user locales are not set' do
       SiteSetting.allow_user_locale = true
       expect(BadgeGranter.notification_locale('')).to eq(SiteSetting.default_locale)

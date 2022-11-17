@@ -44,13 +44,19 @@ bg:
   anonymous: "Анонимен"
   remove_posts_deleted_by_author: "Изтрит от автора"
   inline_oneboxer:
+    topic_page_title_post_number: "#%{post_number}"
     topic_page_title_post_number_by_user: "#%{post_number} от %{username} "
   themes:
     other_error: "Нещо се обърка при актуализирането на стила"
+    import_error:
+      unpack_failed: "Неуспешно разопаковане на файла"
   emails:
     incoming:
       default_subject: "Тази тема има нужда от заглавие"
       show_trimmed_content: "Показване на съкратеното съдържание"
+      no_subject: "(без тема)"
+      no_body: "(без съдържание)"
+      missing_attachment: "(Прикаченият файл %{filename} липсва)"
       errors:
         empty_email_error: "Се случва, когато raw имейла който получихме беше празен."
         no_message_id_error: "Се случва, когато имейла няма 'Message-Id' хедър."
@@ -151,7 +157,6 @@ bg:
   too_many_links:
     one: "Съжаляваме, новите потребители могат да поставят само по един линк в публикация."
     other: "Съжаляваме, новите потребители могат да поставят само %{count} линкове в публикация."
-  contains_blocked_word: "Публикацията ви съдържа непозволена дума: %{word}"
   spamming_host: "Съжаляваме, не можете да публикувате линк на този хост."
   user_is_suspended: "Отстранените потребители нямат право да публикуват."
   topic_not_found: "Нещо не е наред. Може би тази тема е била затворена или изтрита, докато я гледате."
@@ -247,14 +252,11 @@ bg:
             hex:
               invalid: "този цвят не е валиден "
       <<: *errors
-  vip_category_name: "Салон"
-  vip_category_description: "Категоята е само за членове с ниво на доверие 3 и по-високо."
+  general_category_name: "Основни"
   meta_category_name: "Заявка към сайта"
   meta_category_description: "Дискусия за сайта, неговата организация, как той работи, и как можем да го подобрим."
   staff_category_name: "Персонал"
   staff_category_description: "Частна категория за дискусии на персонала. Темите са видими само за админи и модератори."
-  lounge_welcome:
-    title: "Добре дошли в Салона"
   category:
     topic_prefix: "За %{category} категория"
     errors:
@@ -632,6 +634,18 @@ bg:
     top_uploads:
       labels:
         filename: Име на файла
+    top_users_by_likes_received:
+      labels:
+        user: Потребител
+        qtt_like: Получени харесвания
+    top_users_by_likes_received_from_inferior_trust_level:
+      labels:
+        user: Потребител
+        qtt_like: Получени харесвания
+    top_users_by_likes_received_from_a_variety_of_people:
+      labels:
+        user: Потребител
+        qtt_like: Получени харесвания
   dashboard:
     rails_env_warning: "Вашият сървър е в % {env} режим."
     host_names_warning: "Вашият config/database.yml файл използва по подразбиране localhost за hostname. Обновете, за да използва името на вашия сайт за hostname. "
@@ -658,7 +672,6 @@ bg:
     title: "Наименованието на този сайт , както е използвано в заглавния маркер."
     site_description: "Опишете този сайт с едно изречение като използвате мета описателен таг."
     crawl_images: "Възстановете изображенията от отдалечения URLs, за да въведете размери с правилната дължина и ширина."
-    download_remote_images_to_local: "Конвертирайте отдалечените изображения в местни изображения като ги свалите; това ще предотврати повредата им."
     download_remote_images_threshold: "Минимум необходимо дисково пространство за изтеглянето на отдалечените изображения ( в проценти)"
     disabled_image_download_domains: "Отдалечените изображения никога няма да бъдат изтеглени от тези домейни. Разделен със знака \"|\" списък."
     editing_grace_period: "За(n) секунди след публикуването , системата няма да запише нова версия в историята на публикациите."
@@ -675,9 +688,7 @@ bg:
     email_custom_headers: "Разделен със знака \"|\" списък от персонализирани имейл хедъри. "
     summary_score_threshold: "Минимална оценка необходима за една публикация, за да бъде включена в \"Обобщи тази тема\""
     summary_percent_filter: "Когато потребителят кликне върху \"Обобщи тази тема\", се показват % от най-добрите публикации "
-    enable_long_polling: "Системата за обработка на известия, да използва long polling - заявки с дълго изчакване / дълъг интервал "
     long_polling_base_url: "Основен URL използван за long polling - проверка на дълги интервали (когато се използва CDN за динамично съдръжание, уверете се, че тази стойност е настроена към основното съдържание) Например: http://origin.site.com"
-    long_polling_interval: "Времето, през което сървърът трябва да изчака преди да отговори на клиентите, когато няма данни за изпращане (влезли потребители само)"
     polling_interval: "Когато няма \"long polling\", колко често логнатите потребители трябва да правят заявка към сървъра в милисекунди"
     anon_polling_interval: "Колко често трябва анонимни клиенти да правят заявка към сървъра в милисекунди"
     background_polling_interval: "Колко често трябва клиентите да правят заявка към сървъра в милисекунди (когато прозорецът е на заден план)"
@@ -797,7 +808,6 @@ bg:
     privacy_policy_url: "Ако имате документ \"Декларация за поверителност\", който се хоства някъде другаде и желаете да го използвате, въведете пълния път до URL адреса тук. "
     allowed_spam_host_domains: "Списък с домейните изключени от спам хост теста. Новите потребители никога няма да бъдат ограничавани в създаването на публикации с линкове към тези домейни."
     levenshtein_distance_spammer_emails: "Колко символа разлика в съвпадението може да има, когато се проверява имейла за спам, за да има приблизително съвпадение."
-    max_new_accounts_per_registration_ip: "Ако вече има (n) в ниво на доверие 0 акаунта от това IP (и никой не е от екипа или от по-високо ниво на доверие 2), спри да приемаш нови регистрации от този IP адрес."
     min_ban_entries_for_roll_up: "Когато щракнете на бутона Сливане, ще създадете нов бан на подмрежа, ако в същата има повече от (N) записа."
     max_age_unmatched_emails: "Изтриване на несъвпадащите пресяти имейл записи след (N) дни."
     max_age_unmatched_ips: "Изтрий несъчетаните пресяти IP вписвания след (N) дни."
@@ -881,7 +891,6 @@ bg:
       user: "Потребители"
     results_page: "Резултати от търсенето на '%{term}'"
   original_poster: "Автор"
-  most_posts: "Повечето мнения"
   most_recent_poster: "Последен Автор"
   frequent_poster: "Частен Автор"
   redirected_to_top_reasons:
@@ -1038,7 +1047,6 @@ bg:
       subject_template: "Възстановяването се провали"
     bulk_invite_succeeded:
       subject_template: "Груповата потребителска покана e обработена успешно"
-      text_body_template: "Вашата групова потребителска покана от файл е обработена, %{sent} имейл покани бяха изпратени."
     bulk_invite_failed:
       subject_template: "Груповата потребителска покана завърши с грешки"
     csv_export_failed:
@@ -1092,6 +1100,7 @@ bg:
     signup_after_approval:
       subject_template: "Вие бяхте одобрени на %{site_name}!"
   page_not_found:
+    page_title: "Страницата не е намерена"
     popular_topics: "Популярни"
     recent_topics: "Скорошни"
     see_more: "Повече"
@@ -1262,7 +1271,6 @@ bg:
     register:
       button: "Регистриране"
       title: "Регистриране на Админ акаунт"
-      help: "регистрирайте нов профил за да започнете"
     confirm_email:
       title: "Потвърдете имейл адреса си"
     resend_email:
@@ -1271,43 +1279,30 @@ bg:
     title: "Влизане в безопасен режим"
   wizard:
     step:
-      forum_title:
-        title: "Име"
       privacy:
-        title: "Достъп"
         fields:
-          privacy:
-            choices:
-              open:
-                label: "Публични"
-              restricted:
-                label: "Затворени"
-      contact:
-        fields:
-          contact_email:
-            placeholder: "name@example.com"
-          contact_url:
-            label: "Уеб страница"
-          site_contact:
-            label: "Автоматизирани съобщения"
-      corporate:
-        title: "Организация"
-      colors:
-        title: "Цветове"
-      logos:
-        title: "Логота"
-        fields:
-          logo:
-            label: "Главно лого"
-      icons:
-        title: "Икони"
-      homepage:
-        title: "Начална страница"
+          login_required:
+            placeholder: "Затворени"
+          must_approve_users:
+            placeholder: "Изисквай одобрение"
+      ready:
+        title: "Вашият Discourse е готов!"
+      styling:
         fields:
           homepage_style:
             choices:
               latest:
                 label: "Последни теми"
+      branding:
+        fields:
+          logo:
+            label: "Главно лого"
+      corporate:
+        fields:
+          contact_url:
+            label: "Уеб страница"
+          site_contact:
+            label: "Автоматизирани съобщения"
       invites:
         title: "Поканете персонал"
       finished:
@@ -1353,6 +1348,7 @@ bg:
           title: "Изтрий потребител "
       reject:
         title: "Отхвърли"
+  fallback_username: "потребител"
   time:
     <<: *datetime_formats
   activemodel:

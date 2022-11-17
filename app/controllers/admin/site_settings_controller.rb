@@ -7,7 +7,7 @@ class Admin::SiteSettingsController < Admin::AdminController
 
   def index
     render_json_dump(
-      site_settings: SiteSetting.all_settings(sanitize_plain_text_settings: true),
+      site_settings: SiteSetting.all_settings,
       diags: SiteSetting.diags
     )
   end
@@ -18,9 +18,16 @@ class Admin::SiteSettingsController < Admin::AdminController
     value = params[id]
     value.strip! if value.is_a?(String)
 
-    new_setting_name = SiteSettings::DeprecatedSettings::SETTINGS.find do |old_name, new_name, _, _|
-      break new_name if old_name == id
+    new_setting_name = SiteSettings::DeprecatedSettings::SETTINGS.find do |old_name, new_name, override, _|
+      if old_name == id
+        if !override
+          raise Discourse::InvalidParameters, "You cannot change this site setting because it is deprecated, use #{new_name} instead."
+        end
+
+        break new_name
+      end
     end
+
     id = new_setting_name if new_setting_name
 
     raise_access_hidden_setting(id)
@@ -34,12 +41,12 @@ class Admin::SiteSettingsController < Admin::AdminController
     end
 
     update_existing_users = params[:update_existing_user].present?
-    previous_value = SiteSetting.send(id) || "" if update_existing_users
+    previous_value = value_or_default(SiteSetting.public_send(id)) if update_existing_users
 
     SiteSetting.set_and_log(id, value, current_user)
 
     if update_existing_users
-      new_value = value || ""
+      new_value = value_or_default(value)
 
       if (user_option = user_options[id.to_sym]).present?
         if user_option == "text_size_key"
@@ -53,23 +60,12 @@ class Admin::SiteSettingsController < Admin::AdminController
         attrs = { user_option => new_value }
         attrs[:email_digests] = (new_value.to_i != 0) if id == "default_email_digest_frequency"
 
-        UserOption.where(user_option => previous_value).update_all(attrs)
+        UserOption.human_users.where(user_option => previous_value).update_all(attrs)
       elsif id.start_with?("default_categories_")
         previous_category_ids = previous_value.split("|")
         new_category_ids = new_value.split("|")
 
-        case id
-        when "default_categories_watching"
-          notification_level = NotificationLevels.all[:watching]
-        when "default_categories_tracking"
-          notification_level = NotificationLevels.all[:tracking]
-        when "default_categories_muted"
-          notification_level = NotificationLevels.all[:muted]
-        when "default_categories_watching_first_post"
-          notification_level = NotificationLevels.all[:watching_first_post]
-        when "default_categories_regular"
-          notification_level = NotificationLevels.all[:regular]
-        end
+        notification_level = category_notification_level(id)
 
         categories_to_unwatch = previous_category_ids - new_category_ids
         CategoryUser.where(category_id: categories_to_unwatch, notification_level: notification_level).delete_all
@@ -94,16 +90,7 @@ class Admin::SiteSettingsController < Admin::AdminController
         new_tag_ids = Tag.where(name: new_value.split("|")).pluck(:id)
         now = Time.zone.now
 
-        case id
-        when "default_tags_watching"
-          notification_level = NotificationLevels.all[:watching]
-        when "default_tags_tracking"
-          notification_level = NotificationLevels.all[:tracking]
-        when "default_tags_muted"
-          notification_level = NotificationLevels.all[:muted]
-        when "default_tags_watching_first_post"
-          notification_level = NotificationLevels.all[:watching_first_post]
-        end
+        notification_level = tag_notification_level(id)
 
         TagUser.where(tag_id: (previous_tag_ids - new_tag_ids), notification_level: notification_level).delete_all
 
@@ -116,6 +103,8 @@ class Admin::SiteSettingsController < Admin::AdminController
             TagUser.insert_all!(tag_users)
           end
         end
+      elsif is_sidebar_default_setting?(id)
+        Jobs.enqueue(:backfill_sidebar_site_settings, setting_name: id, previous_value: previous_value, new_value: new_value)
       end
     end
 
@@ -126,10 +115,10 @@ class Admin::SiteSettingsController < Admin::AdminController
     params.require(:site_setting_id)
     id = params[:site_setting_id]
     raise Discourse::NotFound unless id.start_with?("default_")
-    new_value = params[id] || ""
+    new_value = value_or_default(params[id])
 
     raise_access_hidden_setting(id)
-    previous_value = SiteSetting.send(id) || ""
+    previous_value = value_or_default(SiteSetting.public_send(id))
     json = {}
 
     if (user_option = user_options[id.to_sym]).present?
@@ -139,23 +128,12 @@ class Admin::SiteSettingsController < Admin::AdminController
         previous_value = UserOption.title_count_modes[previous_value.to_sym]
       end
 
-      json[:user_count] = UserOption.where(user_option => previous_value).count
+      json[:user_count] = UserOption.human_users.where(user_option => previous_value).count
     elsif id.start_with?("default_categories_")
       previous_category_ids = previous_value.split("|")
       new_category_ids = new_value.split("|")
 
-      case id
-      when "default_categories_watching"
-        notification_level = NotificationLevels.all[:watching]
-      when "default_categories_tracking"
-        notification_level = NotificationLevels.all[:tracking]
-      when "default_categories_muted"
-        notification_level = NotificationLevels.all[:muted]
-      when "default_categories_watching_first_post"
-        notification_level = NotificationLevels.all[:watching_first_post]
-      when "default_categories_regular"
-        notification_level = NotificationLevels.all[:regular]
-      end
+      notification_level = category_notification_level(id)
 
       user_ids = CategoryUser.where(category_id: previous_category_ids - new_category_ids, notification_level: notification_level).distinct.pluck(:user_id)
       user_ids += User
@@ -172,16 +150,7 @@ class Admin::SiteSettingsController < Admin::AdminController
       previous_tag_ids = Tag.where(name: previous_value.split("|")).pluck(:id)
       new_tag_ids = Tag.where(name: new_value.split("|")).pluck(:id)
 
-      case id
-      when "default_tags_watching"
-        notification_level = TagUser.notification_levels[:watching]
-      when "default_tags_tracking"
-        notification_level = TagUser.notification_levels[:tracking]
-      when "default_tags_muted"
-        notification_level = TagUser.notification_levels[:muted]
-      when "default_tags_watching_first_post"
-        notification_level = TagUser.notification_levels[:watching_first_post]
-      end
+      notification_level = tag_notification_level(id)
 
       user_ids = TagUser.where(tag_id: previous_tag_ids - new_tag_ids, notification_level: notification_level).distinct.pluck(:user_id)
       user_ids += User
@@ -194,12 +163,18 @@ class Admin::SiteSettingsController < Admin::AdminController
         .pluck("users.id")
 
       json[:user_count] = user_ids.uniq.count
+    elsif is_sidebar_default_setting?(id)
+      json[:user_count] = SidebarSiteSettingsBackfiller.new(id, previous_value: previous_value, new_value: new_value).number_of_users_to_backfill
     end
 
     render json: json
   end
 
   private
+
+  def is_sidebar_default_setting?(setting_name)
+    %w{default_sidebar_categories default_sidebar_tags}.include?(setting_name.to_s)
+  end
 
   def user_options
     {
@@ -222,7 +197,8 @@ class Admin::SiteSettingsController < Admin::AdminController
       default_email_digest_frequency: "digest_after_minutes",
       default_include_tl0_in_digests: "include_tl0_in_digests",
       default_text_size: "text_size_key",
-      default_title_count_mode: "title_count_mode_key"
+      default_title_count_mode: "title_count_mode_key",
+      default_hide_profile_and_presence: "hide_profile_and_presence"
     }
   end
 
@@ -233,4 +209,35 @@ class Admin::SiteSettingsController < Admin::AdminController
     end
   end
 
+  def tag_notification_level(id)
+    case id
+    when "default_tags_watching"
+      NotificationLevels.all[:watching]
+    when "default_tags_tracking"
+      NotificationLevels.all[:tracking]
+    when "default_tags_muted"
+      NotificationLevels.all[:muted]
+    when "default_tags_watching_first_post"
+      NotificationLevels.all[:watching_first_post]
+    end
+  end
+
+  def category_notification_level(id)
+    case id
+    when "default_categories_watching"
+      NotificationLevels.all[:watching]
+    when "default_categories_tracking"
+      NotificationLevels.all[:tracking]
+    when "default_categories_muted"
+      NotificationLevels.all[:muted]
+    when "default_categories_watching_first_post"
+      NotificationLevels.all[:watching_first_post]
+    when "default_categories_normal"
+      NotificationLevels.all[:regular]
+    end
+  end
+
+  def value_or_default(value)
+    value.nil? ? "" : value
+  end
 end

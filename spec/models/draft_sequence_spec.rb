@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe DraftSequence do
+RSpec.describe DraftSequence do
   fab!(:user) { Fabricate(:user) }
 
   describe '.next' do
@@ -14,6 +12,13 @@ describe DraftSequence do
     it 'should not produce next sequence for non-human user' do
       user.id = -99999
       2.times { expect(DraftSequence.next!(user, 'test')).to eq(0) }
+    end
+
+    it 'updates draft count' do
+      Draft.create!(user: user, draft_key: 'test', data: {})
+      expect(user.reload.user_stat.draft_count).to eq(1)
+      expect(DraftSequence.next!(user, 'test')).to eq 1
+      expect(user.reload.user_stat.draft_count).to eq(0)
     end
   end
 

@@ -1,5 +1,5 @@
 import { action, computed } from "@ember/object";
-import { alias, and, or } from "@ember/object/computed";
+import { alias, and } from "@ember/object/computed";
 import Controller from "@ember/controller";
 import discourseComputed from "discourse-common/utils/decorators";
 import { makeArray } from "discourse-common/lib/helpers";
@@ -13,7 +13,10 @@ export default Controller.extend({
     return trustLevel >= this.siteSettings.min_trust_level_to_allow_ignore;
   },
 
-  ignoredEnabled: or("userCanIgnore", "model.staff"),
+  @discourseComputed("userCanIgnore", "model.staff")
+  ignoredEnabled(userCanIgnore, userIsStaff) {
+    return this.currentUser.staff || userCanIgnore || userIsStaff;
+  },
 
   allowPmUsersEnabled: and(
     "model.user_option.enable_allowed_pm_users",
@@ -67,6 +70,11 @@ export default Controller.extend({
   @discourseComputed("model.user_option.allow_private_messages")
   disableAllowPmUsersSetting(allowPrivateMessages) {
     return !allowPrivateMessages;
+  },
+
+  @discourseComputed("currentUser.can_send_private_messages")
+  showMessageSettings() {
+    return this.currentUser?.can_send_private_messages;
   },
 
   @action

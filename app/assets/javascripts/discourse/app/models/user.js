@@ -1,7 +1,15 @@
 import EmberObject, { computed, get, getProperties } from "@ember/object";
 import cookie, { removeCookie } from "discourse/lib/cookie";
 import { defaultHomepage, escapeExpression } from "discourse/lib/utilities";
-import { equal, gt, or } from "@ember/object/computed";
+import {
+  alias,
+  equal,
+  filterBy,
+  gt,
+  mapBy,
+  or,
+  readOnly,
+} from "@ember/object/computed";
 import getURL, { getURLWithCDN } from "discourse-common/lib/get-url";
 import { A } from "@ember/array";
 import Badge from "discourse/models/badge";
@@ -30,6 +38,17 @@ import { isEmpty } from "@ember/utils";
 import { longDate } from "discourse/lib/formatter";
 import { url } from "discourse/lib/computed";
 import { userPath } from "discourse/lib/url";
+import { htmlSafe } from "@ember/template";
+import Evented from "@ember/object/evented";
+import { cancel } from "@ember/runloop";
+import discourseLater from "discourse-common/lib/later";
+import { isTesting } from "discourse-common/config/environment";
+import {
+  hideAllUserTips,
+  hideUserTip,
+  showNextUserTip,
+  showUserTip,
+} from "discourse/lib/user-tips";
 
 export const SECOND_FACTOR_METHODS = {
   TOTP: 1,
@@ -37,7 +56,7 @@ export const SECOND_FACTOR_METHODS = {
   SECURITY_KEY: 3,
 };
 
-const isForever = (dt) => moment().diff(dt, "years") < -500;
+const isForever = (dt) => moment().diff(dt, "years") < -100;
 
 let userFields = [
   "bio_raw",
@@ -61,6 +80,9 @@ let userFields = [
   "primary_group_id",
   "flair_group_id",
   "user_notification_schedule",
+  "sidebar_category_ids",
+  "sidebar_tag_names",
+  "status",
 ];
 
 export function addSaveableUserField(fieldName) {
@@ -97,6 +119,10 @@ let userOptionFields = [
   "title_count_mode",
   "timezone",
   "skip_new_user_tips",
+  "seen_popups",
+  "default_calendar",
+  "bookmark_auto_delete_preference",
+  "sidebar_list_destination",
 ];
 
 export function addSaveableUserOptionField(fieldName) {
@@ -173,9 +199,9 @@ const User = RestModel.extend({
   @discourseComputed("profile_background_upload_url")
   profileBackgroundUrl(bgUrl) {
     if (isEmpty(bgUrl) || !this.siteSettings.allow_profile_backgrounds) {
-      return "".htmlSafe();
+      return htmlSafe("");
     }
-    return ("background-image: url(" + getURLWithCDN(bgUrl) + ")").htmlSafe();
+    return htmlSafe("background-image: url(" + getURLWithCDN(bgUrl) + ")");
   },
 
   @discourseComputed()
@@ -303,6 +329,22 @@ const User = RestModel.extend({
   @discourseComputed("silenced_till")
   silencedTillDate: longDate,
 
+  sidebarCategoryIds: alias("sidebar_category_ids"),
+
+  @discourseComputed("sidebar_tags.[]")
+  sidebarTags(sidebarTags) {
+    if (!sidebarTags || sidebarTags.length === 0) {
+      return [];
+    }
+
+    return sidebarTags.sort((a, b) => {
+      return a.name.localeCompare(b.name);
+    });
+  },
+
+  sidebarTagNames: mapBy("sidebarTags", "name"),
+  sidebarListDestination: readOnly("sidebar_list_destination"),
+
   changeUsername(new_username) {
     return ajax(userPath(`${this.username_lower}/preferences/username`), {
       type: "PUT",
@@ -330,38 +372,47 @@ const User = RestModel.extend({
 
   save(fields) {
     const data = this.getProperties(
-      userFields.filter((uf) => !fields || fields.indexOf(uf) !== -1)
+      userFields.filter((uf) => !fields || fields.includes(uf))
     );
 
+    let filteredUserOptionFields = [];
     if (fields) {
-      userOptionFields = userOptionFields.filter(
-        (uo) => fields.indexOf(uo) !== -1
+      filteredUserOptionFields = userOptionFields.filter((uo) =>
+        fields.includes(uo)
       );
+    } else {
+      filteredUserOptionFields = userOptionFields;
     }
 
-    userOptionFields.forEach((s) => {
+    filteredUserOptionFields.forEach((s) => {
       data[s] = this.get(`user_option.${s}`);
     });
 
     let updatedState = {};
 
     ["muted", "regular", "watched", "tracked", "watched_first_post"].forEach(
-      (s) => {
-        if (fields === undefined || fields.includes(s + "_category_ids")) {
+      (categoryNotificationLevel) => {
+        if (
+          fields === undefined ||
+          fields.includes(`${categoryNotificationLevel}_category_ids`)
+        ) {
           let prop =
-            s === "watched_first_post"
+            categoryNotificationLevel === "watched_first_post"
               ? "watchedFirstPostCategories"
-              : s + "Categories";
+              : `${categoryNotificationLevel}Categories`;
+
           let cats = this.get(prop);
+
           if (cats) {
             let cat_ids = cats.map((c) => c.get("id"));
-            updatedState[s + "_category_ids"] = cat_ids;
+            updatedState[`${categoryNotificationLevel}_category_ids`] = cat_ids;
 
             // HACK: denote lack of categories
             if (cats.length === 0) {
               cat_ids = [-1];
             }
-            data[s + "_category_ids"] = cat_ids;
+
+            data[`${categoryNotificationLevel}_category_ids`] = cat_ids;
           }
         }
       }
@@ -378,10 +429,20 @@ const User = RestModel.extend({
       }
     });
 
+    ["sidebar_category_ids", "sidebar_tag_names"].forEach((prop) => {
+      if (data[prop]?.length === 0) {
+        data[prop] = null;
+      }
+    });
+
+    return this._saveUserData(data, updatedState);
+  },
+
+  _saveUserData(data, updatedState) {
     // TODO: We can remove this when migrated fully to rest model.
     this.set("isSaving", true);
     return ajax(userPath(`${this.username_lower}.json`), {
-      data: data,
+      data,
       type: "PUT",
     })
       .then((result) => {
@@ -393,8 +454,9 @@ const User = RestModel.extend({
           "external_links_in_new_tab",
           "dynamic_favicon"
         );
-        User.current().setProperties(userProps);
+        User.current()?.setProperties(userProps);
         this.setProperties(updatedState);
+        return result;
       })
       .finally(() => {
         this.set("isSaving", false);
@@ -428,7 +490,7 @@ const User = RestModel.extend({
   changePassword() {
     return ajax("/session/forgot_password", {
       dataType: "json",
-      data: { login: this.username },
+      data: { login: this.email || this.username },
       type: "POST",
     });
   },
@@ -523,25 +585,27 @@ const User = RestModel.extend({
     });
   },
 
-  loadUserAction(id) {
-    const stream = this.stream;
-    return ajax(`/user_actions/${id}.json`).then((result) => {
-      if (result && result.user_action) {
-        const ua = result.user_action;
+  async loadUserAction(id) {
+    const result = await ajax(`/user_actions/${id}.json`);
 
-        if ((this.get("stream.filter") || ua.action_type) !== ua.action_type) {
-          return;
-        }
-        if (!this.get("stream.filter") && !this.inAllStream(ua)) {
-          return;
-        }
+    if (!result?.user_action) {
+      return;
+    }
 
-        ua.title = emojiUnescape(escapeExpression(ua.title));
-        const action = UserAction.collapseStream([UserAction.create(ua)]);
-        stream.set("itemsLoaded", stream.get("itemsLoaded") + 1);
-        stream.get("content").insertAt(0, action[0]);
-      }
-    });
+    const ua = result.user_action;
+
+    if ((this.get("stream.filter") || ua.action_type) !== ua.action_type) {
+      return;
+    }
+
+    if (!this.get("stream.filter") && !this.inAllStream(ua)) {
+      return;
+    }
+
+    ua.title = emojiUnescape(escapeExpression(ua.title));
+    const action = UserAction.collapseStream([UserAction.create(ua)]);
+    this.stream.set("itemsLoaded", this.stream.get("itemsLoaded") + 1);
+    this.stream.get("content").insertAt(0, action[0]);
   },
 
   inAllStream(ua) {
@@ -562,6 +626,8 @@ const User = RestModel.extend({
     });
   },
 
+  groupsWithMessages: filterBy("groups", "has_messages", true),
+
   @discourseComputed("filteredGroups", "numGroupsToDisplay")
   displayGroups(filteredGroups, numGroupsToDisplay) {
     const groups = filteredGroups.slice(0, numGroupsToDisplay);
@@ -571,6 +637,20 @@ const User = RestModel.extend({
   @discourseComputed("filteredGroups", "numGroupsToDisplay")
   showMoreGroupsLink(filteredGroups, numGroupsToDisplay) {
     return filteredGroups.length > numGroupsToDisplay;
+  },
+
+  // NOTE: This only includes groups *visible* to the user via the serializer,
+  // so be wary when using this.
+  isInAnyGroups(groupIds) {
+    if (!this.groups) {
+      return;
+    }
+
+    // auto group ID 0 is "everyone"
+    return (
+      groupIds.includes(0) ||
+      this.groups.mapBy("id").some((groupId) => groupIds.includes(groupId))
+    );
   },
 
   // The user's stat count, excluding PMs.
@@ -597,75 +677,80 @@ const User = RestModel.extend({
     return this.stats.rejectBy("isPM");
   },
 
-  findDetails(options) {
+  async findDetails(options) {
     const user = this;
 
-    return PreloadStore.getAndRemove(`user_${user.get("username")}`, () => {
-      if (options && options.existingRequest) {
-        // Existing ajax request has been passed, use it
-        return options.existingRequest;
-      }
-
-      const useCardRoute = options && options.forCard;
-      if (options) {
-        delete options.forCard;
-      }
-
-      const path = useCardRoute
-        ? `${user.get("username")}/card.json`
-        : `${user.get("username")}.json`;
-
-      return ajax(userPath(path), { data: options });
-    }).then((json) => {
-      if (!isEmpty(json.user.stats)) {
-        json.user.stats = User.groupStats(
-          json.user.stats.map((s) => {
-            if (s.count) {
-              s.count = parseInt(s.count, 10);
-            }
-            return UserActionStat.create(s);
-          })
-        );
-      }
-
-      if (!isEmpty(json.user.groups) && !isEmpty(json.user.group_users)) {
-        const groups = [];
-
-        for (let i = 0; i < json.user.groups.length; i++) {
-          const group = Group.create(json.user.groups[i]);
-          group.group_user = json.user.group_users[i];
-          groups.push(group);
+    const json = await PreloadStore.getAndRemove(
+      `user_${user.get("username")}`,
+      () => {
+        if (options?.existingRequest) {
+          // Existing ajax request has been passed, use it
+          return options.existingRequest;
         }
 
-        json.user.groups = groups;
-      }
+        const useCardRoute = options?.forCard;
+        if (options) {
+          delete options.forCard;
+        }
 
-      if (json.user.invited_by) {
-        json.user.invited_by = User.create(json.user.invited_by);
-      }
+        const path = useCardRoute
+          ? `${user.get("username")}/card.json`
+          : `${user.get("username")}.json`;
 
-      if (!isEmpty(json.user.featured_user_badge_ids)) {
-        const userBadgesMap = {};
-        UserBadge.createFromJson(json).forEach((userBadge) => {
-          userBadgesMap[userBadge.get("id")] = userBadge;
-        });
-        json.user.featured_user_badges = json.user.featured_user_badge_ids.map(
-          (id) => userBadgesMap[id]
-        );
+        return ajax(userPath(path), { data: options });
       }
+    );
 
-      if (json.user.card_badge) {
-        json.user.card_badge = Badge.create(json.user.card_badge);
-      }
+    if (!isEmpty(json.user.stats)) {
+      json.user.stats = User.groupStats(
+        json.user.stats.map((s) => {
+          if (s.count) {
+            s.count = parseInt(s.count, 10);
+          }
+          return UserActionStat.create(s);
+        })
+      );
+    }
 
-      if (!json.user._timezone) {
-        json.user._timezone = json.user.timezone;
-        delete json.user.timezone;
-      }
+    if (!isEmpty(json.user.groups) && !isEmpty(json.user.group_users)) {
+      json.user.groups = json.user.groups.map((groupJson, index) => {
+        const group = Group.create(groupJson);
+        group.group_user = json.user.group_users[index];
+        return group;
+      });
+    }
 
+    if (json.user.invited_by) {
+      json.user.invited_by = User.create(json.user.invited_by);
+    }
+
+    if (!isEmpty(json.user.featured_user_badge_ids)) {
+      const userBadgesMap = {};
+      UserBadge.createFromJson(json).forEach((userBadge) => {
+        userBadgesMap[userBadge.get("id")] = userBadge;
+      });
+      json.user.featured_user_badges = json.user.featured_user_badge_ids.map(
+        (id) => userBadgesMap[id]
+      );
+    }
+
+    if (json.user.card_badge) {
+      json.user.card_badge = Badge.create(json.user.card_badge);
+    }
+
+  <<<<<<< asyncify-preload-store
+    if (!json.user._timezone) {
+      json.user._timezone = json.user.timezone;
+      delete json.user.timezone;
+    }
+
+    user.setProperties(json.user);
+    return user;
+  =======
       user.setProperties(json.user);
       return user;
     });
+  >>>>>>> chat-quotes
   },
 
   findStaffInfo() {
@@ -749,8 +834,8 @@ const User = RestModel.extend({
   },
 
   @discourseComputed("watched_first_post_category_ids")
-  watchedFirstPostCategories(wachedFirstPostCategoryIds) {
-    return Category.findByIds(wachedFirstPostCategoryIds);
+  watchedFirstPostCategories(watchedFirstPostCategoryIds) {
+    return Category.findByIds(watchedFirstPostCategoryIds);
   },
 
   @discourseComputed("can_delete_account")
@@ -758,7 +843,7 @@ const User = RestModel.extend({
     return !this.siteSettings.enable_discourse_connect && canDeleteAccount;
   },
 
-  delete: function () {
+  delete() {
     if (this.can_delete_account) {
       return ajax(userPath(this.username + ".json"), {
         type: "DELETE",
@@ -769,18 +854,25 @@ const User = RestModel.extend({
     }
   },
 
-  updateNotificationLevel(level, expiringAt) {
+  updateNotificationLevel({ level, expiringAt = null, actingUser = null }) {
+    if (!actingUser) {
+      actingUser = User.current();
+    }
     return ajax(`${userPath(this.username)}/notification_level.json`, {
       type: "PUT",
-      data: { notification_level: level, expiring_at: expiringAt },
+      data: {
+        notification_level: level,
+        expiring_at: expiringAt,
+        acting_user_id: actingUser.id,
+      },
     }).then(() => {
-      const currentUser = User.current();
-      if (currentUser) {
-        if (level === "normal" || level === "mute") {
-          currentUser.ignored_users.removeObject(this.username);
-        } else if (level === "ignore") {
-          currentUser.ignored_users.addObject(this.username);
-        }
+      if (!actingUser.ignored_users) {
+        actingUser.ignored_users = [];
+      }
+      if (level === "normal" || level === "mute") {
+        actingUser.ignored_users.removeObject(this.username);
+      } else if (level === "ignore") {
+        actingUser.ignored_users.addObject(this.username);
       }
     });
   },
@@ -942,34 +1034,9 @@ const User = RestModel.extend({
     );
   },
 
-  resolvedTimezone(currentUser) {
-    if (this.hasSavedTimezone()) {
-      return this._timezone;
-    }
-
-    // only change the timezone and save it if we are
-    // looking at our own user
-    if (currentUser.id === this.id) {
-      this.changeTimezone(moment.tz.guess());
-      ajax(userPath(this.username + ".json"), {
-        type: "PUT",
-        dataType: "json",
-        data: { timezone: this._timezone },
-      });
-    }
-
-    return this._timezone;
-  },
-
-  changeTimezone(tz) {
-    this._timezone = tz;
-  },
-
-  hasSavedTimezone() {
-    if (this._timezone) {
-      return true;
-    }
-    return false;
+  // obsolete, just call "user.timezone" instead
+  resolvedTimezone() {
+    return this.timezone;
   },
 
   calculateMutedIds(notificationLevel, id, type) {
@@ -1012,50 +1079,138 @@ const User = RestModel.extend({
     this.appEvents.trigger("do-not-disturb:changed", this.do_not_disturb_until);
   },
 
+  updateDraftProperties(properties) {
+    this.setProperties(properties);
+    this.appEvents.trigger("user-drafts:changed");
+  },
+
+  updateReviewableCount(count) {
+    this.set("reviewable_count", count);
+    this.appEvents.trigger("user-reviewable-count:changed", count);
+  },
+
   isInDoNotDisturb() {
     return (
       this.do_not_disturb_until &&
       new Date(this.do_not_disturb_until) >= new Date()
     );
   },
+
+  @discourseComputed(
+    "tracked_tags.[]",
+    "watched_tags.[]",
+    "watching_first_post_tags.[]"
+  )
+  trackedTags(trackedTags, watchedTags, watchingFirstPostTags) {
+    return [...trackedTags, ...watchedTags, ...watchingFirstPostTags];
+  },
+
+  showUserTip(options) {
+    const userTips = Site.currentProp("user_tips");
+    if (!userTips || this.skip_new_user_tips) {
+      return;
+    }
+
+    if (!userTips[options.id]) {
+      if (!isTesting()) {
+        // eslint-disable-next-line no-console
+        console.warn("Cannot show user tip with type =", options.id);
+      }
+      return;
+    }
+
+    const seenUserTips = this.seen_popups || [];
+    if (
+      seenUserTips.includes(-1) ||
+      seenUserTips.includes(userTips[options.id])
+    ) {
+      return;
+    }
+
+    showUserTip({
+      ...options,
+      onDismiss: () => this.hideUserTipForever(options.id),
+      onDismissAll: () => this.hideUserTipForever(),
+    });
+  },
+
+  hideUserTipForever(userTipId) {
+    const userTips = Site.currentProp("user_tips");
+    if (!userTips || this.skip_new_user_tips) {
+      return;
+    }
+
+    // Empty userTipId means all user tips.
+    if (userTipId && !userTips[userTipId]) {
+      // eslint-disable-next-line no-console
+      console.warn("Cannot hide user tip with type =", userTipId);
+      return;
+    }
+
+    // Hide any shown user tips.
+    let seenUserTips = this.seen_popups || [];
+    if (userTipId) {
+      hideUserTip(userTipId);
+      if (!seenUserTips.includes(userTips[userTipId])) {
+        seenUserTips.push(userTips[userTipId]);
+      }
+    } else {
+      hideAllUserTips();
+      seenUserTips = [-1];
+    }
+
+    // Show next user tip in queue.
+    showNextUserTip();
+
+    // Save seen user tips on the server.
+    if (!this.user_option) {
+      this.set("user_option", {});
+    }
+    this.set("seen_popups", seenUserTips);
+    this.set("user_option.seen_popups", seenUserTips);
+    if (userTipId) {
+      return this.save(["seen_popups"]);
+    } else {
+      this.set("skip_new_user_tips", true);
+      this.set("user_option.skip_new_user_tips", true);
+      return this.save(["seen_popups", "skip_new_user_tips"]);
+    }
+  },
 });
 
 User.reopenClass(Singleton, {
-  munge(json) {
-    // timezone should not be directly accessed, use
-    // resolvedTimezone() and changeTimezone(tz)
-    if (!json._timezone) {
-      json._timezone = json.timezone;
-      delete json.timezone;
-    }
-
-    return json;
-  },
-
   // Find a `User` for a given username.
   findByUsername(username, options) {
-    const user = User.create({ username: username });
+    const user = User.create({ username });
     return user.findDetails(options);
   },
 
   // TODO: Use app.register and junk Singleton
   createCurrent() {
-    let userJson = PreloadStore.get("currentUser");
-
-    if (userJson && userJson.primary_group_id) {
-      const primaryGroup = userJson.groups.find(
-        (group) => group.id === userJson.primary_group_id
-      );
-      if (primaryGroup) {
-        userJson.primary_group_name = primaryGroup.name;
-      }
-    }
-
+    const userJson = PreloadStore.get("currentUser");
     if (userJson) {
-      userJson = User.munge(userJson);
+      userJson.isCurrent = true;
+
+      if (userJson.primary_group_id) {
+        const primaryGroup = userJson.groups.find(
+          (group) => group.id === userJson.primary_group_id
+        );
+        if (primaryGroup) {
+          userJson.primary_group_name = primaryGroup.name;
+        }
+      }
+
+      if (!userJson.timezone) {
+        userJson.timezone = moment.tz.guess();
+        this._saveTimezone(userJson);
+      }
+
       const store = getOwner(this).lookup("service:store");
-      return store.createRecord("user", userJson);
+      const currentUser = store.createRecord("user", userJson);
+      currentUser.trackStatus();
+      return currentUser;
     }
+
     return null;
   },
 
@@ -1067,6 +1222,14 @@ User.reopenClass(Singleton, {
 
   checkEmail(email) {
     return ajax(userPath("check_email"), { data: { email } });
+  },
+
+  loadRecentSearches() {
+    return ajax(`/u/recent-searches`);
+  },
+
+  resetRecentSearches() {
+    return ajax(`/u/recent-searches`, { type: "DELETE" });
   },
 
   groupStats(stats) {
@@ -1118,16 +1281,130 @@ User.reopenClass(Singleton, {
       type: "POST",
     });
   },
+
+  _saveTimezone(user) {
+    ajax(userPath(user.username + ".json"), {
+      type: "PUT",
+      dataType: "json",
+      data: { timezone: user.timezone },
+    });
+  },
+});
+
+User.reopenClass({
+  create(args) {
+    args = args || {};
+    this.deleteStatusTrackingFields(args);
+    return this._super(args);
+  },
+
+  deleteStatusTrackingFields(args) {
+    // every user instance has to have it's own tracking fields
+    // when creating a new user model
+    // its _subscribersCount and _clearStatusTimerId fields
+    // should be equal to 0 and null
+    // here we makes sure that even if these fields
+    // will be passed in args they won't be set anyway
+    //
+    // this is something that could be implemented by making these fields private,
+    // but EmberObject doesn't support private fields
+    if (args.hasOwnProperty("_subscribersCount")) {
+      delete args._subscribersCount;
+    }
+    if (args.hasOwnProperty("_clearStatusTimerId")) {
+      delete args._clearStatusTimerId;
+    }
+  },
+});
+
+// user status tracking
+User.reopen(Evented, {
+  _subscribersCount: 0,
+  _clearStatusTimerId: null,
+
+  // always call stopTrackingStatus() when done with a user
+  trackStatus() {
+    if (this._subscribersCount === 0) {
+      this.addObserver("status", this, "_statusChanged");
+
+      this.appEvents.on("user-status:changed", this, this._updateStatus);
+
+      if (this.status && this.status.ends_at) {
+        this._scheduleStatusClearing(this.status.ends_at);
+      }
+    }
+
+    this._subscribersCount++;
+  },
+
+  stopTrackingStatus() {
+    if (this._subscribersCount === 0) {
+      return;
+    }
+
+    if (this._subscribersCount === 1) {
+      // the last subscriber is unsubscribing
+      this.removeObserver("status", this, "_statusChanged");
+      this.appEvents.off("user-status:changed", this, this._updateStatus);
+      this._unscheduleStatusClearing();
+    }
+
+    this._subscribersCount--;
+  },
+
+  _statusChanged(sender, key) {
+    this.trigger("status-changed");
+
+    const status = this.get(key);
+    if (status && status.ends_at) {
+      this._scheduleStatusClearing(status.ends_at);
+    } else {
+      this._unscheduleStatusClearing();
+    }
+  },
+
+  _scheduleStatusClearing(endsAt) {
+    if (isTesting()) {
+      return;
+    }
+
+    if (this._clearStatusTimerId) {
+      this._unscheduleStatusClearing();
+    }
+
+    const utcNow = moment.utc();
+    const remaining = moment.utc(endsAt).diff(utcNow, "milliseconds");
+    this._clearStatusTimerId = discourseLater(
+      this,
+      "_autoClearStatus",
+      remaining
+    );
+  },
+
+  _unscheduleStatusClearing() {
+    cancel(this._clearStatusTimerId);
+    this._clearStatusTimerId = null;
+  },
+
+  _autoClearStatus() {
+    this.set("status", null);
+  },
+
+  _updateStatus(statuses) {
+    if (statuses.hasOwnProperty(this.id)) {
+      this.set("status", statuses[this.id]);
+    }
+  },
 });
 
 if (typeof Discourse !== "undefined") {
   let warned = false;
+  // eslint-disable-next-line no-undef
   Object.defineProperty(Discourse, "User", {
     get() {
       if (!warned) {
-        deprecated("Import the User class instead of using User", {
+        deprecated("Import the User class instead of using Discourse.User", {
           since: "2.4.0",
-          dropFrom: "2.6.0",
         });
         warned = true;
       }

@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-describe Onebox::Engine::ImageOnebox do
+RSpec.describe Onebox::Engine::ImageOnebox do
   it "supports png" do
     expect(Onebox.preview('http://www.discourse.org/images/logo.png').to_s).to match(/<img/)
   end
@@ -37,5 +35,9 @@ describe Onebox::Engine::ImageOnebox do
 
   it "includes a direct link to the image" do
     expect(Onebox.preview('http://www.discourse.org/images/logo.png').to_s).to match(/<a.*png/)
+  end
+
+  it "matches on content_type" do
+    expect(Onebox.preview('http://www.discourse.org/images/logo', { content_type: 'image/png' }).to_s).to match(/<img/)
   end
 end

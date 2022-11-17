@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 require 'swagger_helper'
 
-describe 'posts' do
+RSpec.describe 'posts' do
 
   let(:'Api-Key') { Fabricate(:api_key).key }
   let(:'Api-Username') { 'system' }
@@ -16,8 +16,10 @@ describe 'posts' do
 
     get 'List latest posts across topics' do
       tags 'Posts'
+      operationId 'listPosts'
       parameter name: 'Api-Key', in: :header, type: :string, required: true
       parameter name: 'Api-Username', in: :header, type: :string, required: true
+      parameter name: 'before', in: :query, type: :string, description: "Load posts with an id lower than this value. Useful for pagination.", required: false
       produces 'application/json'
 
       response '200', 'latest posts' do
@@ -37,7 +39,7 @@ describe 'posts' do
                 post_type: { type: :integer },
                 updated_at: { type: :string },
                 reply_count: { type: :integer },
-                reply_to_post_number: { type: :string, nullable: true },
+                reply_to_post_number: { type: [:string, :null] },
                 quote_count: { type: :integer },
                 incoming_link_count: { type: :integer },
                 reads: { type: :integer },
@@ -50,17 +52,17 @@ describe 'posts' do
                 topic_html_title: { type: :string },
                 category_id: { type: :integer },
                 display_username: { type: :string },
-                primary_group_name: { type: :string, nullable: true },
-                flair_name: { type: :string, nullable: true },
-                flair_url: { type: :string, nullable: true },
-                flair_bg_color: { type: :string, nullable: true },
-                flair_color: { type: :string, nullable: true },
+                primary_group_name: { type: [:string, :null] },
+                flair_name: { type: [:string, :null] },
+                flair_url: { type: [:string, :null] },
+                flair_bg_color: { type: [:string, :null] },
+                flair_color: { type: [:string, :null] },
                 version: { type: :integer },
                 can_edit: { type: :boolean },
                 can_delete: { type: :boolean },
                 can_recover: { type: :boolean },
                 can_wiki: { type: :boolean },
-                user_title: { type: :string, nullable: true },
+                user_title: { type: [:string, :null] },
                 raw: { type: :string },
                 actions_summary: {
                   type: :array,
@@ -78,12 +80,12 @@ describe 'posts' do
                 user_id: { type: :integer },
                 hidden: { type: :boolean },
                 trust_level: { type: :integer },
-                deleted_at: { type: :string, nullable: true },
+                deleted_at: { type: [:string, :null] },
                 user_deleted: { type: :boolean },
-                edit_reason: { type: :string, nullable: true },
+                edit_reason: { type: [:string, :null] },
                 can_view_edit_history: { type: :boolean },
                 wiki: { type: :boolean },
-                reviewable_id: { type: :string, nullable: true },
+                reviewable_id: { type: [:string, :null] },
                 reviewable_score_count: { type: :integer },
                 reviewable_score_pending_count: { type: :integer },
               }
@@ -98,6 +100,7 @@ describe 'posts' do
 
     post 'Creates a new topic, a new post, or a private message' do
       tags 'Posts', 'Topics', 'Private Messages'
+      operationId 'createTopicPostPM'
       consumes 'application/json'
       expected_request_schema = load_spec_schema('topic_create_request')
       parameter name: :params, in: :body, schema: expected_request_schema
@@ -121,6 +124,7 @@ describe 'posts' do
 
     get 'Retrieve a single post' do
       tags 'Posts'
+      operationId 'getPost'
       parameter name: 'Api-Key', in: :header, type: :string, required: true
       parameter name: 'Api-Username', in: :header, type: :string, required: true
       parameter name: :id, in: :path, schema: { type: :string }
@@ -130,7 +134,7 @@ describe 'posts' do
       response '200', 'latest posts' do
         schema type: :object, properties: {
           id: { type: :integer },
-          name: { type: :string, nullable: true },
+          name: { type: [:string, :null] },
           username: { type: :string },
           avatar_template: { type: :string },
           created_at: { type: :string },
@@ -139,7 +143,7 @@ describe 'posts' do
           post_type: { type: :integer },
           updated_at: { type: :string },
           reply_count: { type: :integer },
-          reply_to_post_number: { type: :string, nullable: true },
+          reply_to_post_number: { type: [:string, :null] },
           quote_count: { type: :integer },
           incoming_link_count: { type: :integer },
           reads: { type: :integer },
@@ -148,18 +152,18 @@ describe 'posts' do
           yours: { type: :boolean },
           topic_id: { type: :integer },
           topic_slug: { type: :string },
-          display_username: { type: :string, nullable: true },
-          primary_group_name: { type: :string, nullable: true },
-          flair_name: { type: :string, nullable: true },
-          flair_url: { type: :string, nullable: true },
-          flair_bg_color: { type: :string, nullable: true },
-          flair_color: { type: :string, nullable: true },
+          display_username: { type: [:string, :null] },
+          primary_group_name: { type: [:string, :null] },
+          flair_name: { type: [:string, :null] },
+          flair_url: { type: [:string, :null] },
+          flair_bg_color: { type: [:string, :null] },
+          flair_color: { type: [:string, :null] },
           version: { type: :integer },
           can_edit: { type: :boolean },
           can_delete: { type: :boolean },
           can_recover: { type: :boolean },
           can_wiki: { type: :boolean },
-          user_title: { type: :string, nullable: true },
+          user_title: { type: [:string, :null] },
           raw: { type: :string },
           actions_summary: {
             type: :array,
@@ -177,12 +181,12 @@ describe 'posts' do
           user_id: { type: :integer },
           hidden: { type: :boolean },
           trust_level: { type: :integer },
-          deleted_at: { type: :string, nullable: true },
+          deleted_at: { type: [:string, :null] },
           user_deleted: { type: :boolean },
-          edit_reason: { type: :string, nullable: true },
+          edit_reason: { type: [:string, :null] },
           can_view_edit_history: { type: :boolean },
           wiki: { type: :boolean },
-          reviewable_id: { type: :string, nullable: true },
+          reviewable_id: { type: [:string, :null] },
           reviewable_score_count: { type: :integer },
           reviewable_score_pending_count: { type: :integer },
         }
@@ -194,6 +198,7 @@ describe 'posts' do
 
     put 'Update a single post' do
       tags 'Posts'
+      operationId 'updatePost'
       consumes 'application/json'
       parameter name: 'Api-Key', in: :header, type: :string, required: true
       parameter name: 'Api-Username', in: :header, type: :string, required: true
@@ -219,7 +224,7 @@ describe 'posts' do
             type: :object,
             properties: {
               id: { type: :integer },
-              name: { type: :string, nullable: true },
+              name: { type: [:string, :null] },
               username: { type: :string },
               avatar_template: { type: :string },
               created_at: { type: :string },
@@ -228,7 +233,7 @@ describe 'posts' do
               post_type: { type: :integer },
               updated_at: { type: :string },
               reply_count: { type: :integer },
-              reply_to_post_number: { type: :string, nullable: true },
+              reply_to_post_number: { type: [:string, :null] },
               quote_count: { type: :integer },
               incoming_link_count: { type: :integer },
               reads: { type: :integer },
@@ -237,17 +242,17 @@ describe 'posts' do
               yours: { type: :boolean },
               topic_id: { type: :integer },
               topic_slug: { type: :string },
-              display_username: { type: :string, nullable: true },
-              primary_group_name: { type: :string, nullable: true },
-              flair_url: { type: :string, nullable: true },
-              flair_bg_color: { type: :string, nullable: true },
-              flair_color: { type: :string, nullable: true },
+              display_username: { type: [:string, :null] },
+              primary_group_name: { type: [:string, :null] },
+              flair_url: { type: [:string, :null] },
+              flair_bg_color: { type: [:string, :null] },
+              flair_color: { type: [:string, :null] },
               version: { type: :integer },
               can_edit: { type: :boolean },
               can_delete: { type: :boolean },
               can_recover: { type: :boolean },
               can_wiki: { type: :boolean },
-              user_title: { type: :string, nullable: true },
+              user_title: { type: [:string, :null] },
               actions_summary: {
                 type: :array,
                 items: {
@@ -265,12 +270,12 @@ describe 'posts' do
               draft_sequence: { type: :integer },
               hidden: { type: :boolean },
               trust_level: { type: :integer },
-              deleted_at: { type: :string, nullable: true },
+              deleted_at: { type: [:string, :null] },
               user_deleted: { type: :boolean },
-              edit_reason: { type: :string, nullable: true },
+              edit_reason: { type: [:string, :null] },
               can_view_edit_history: { type: :boolean },
               wiki: { type: :boolean },
-              reviewable_id: { type: :string, nullable: true },
+              reviewable_id: { type: [:string, :null] },
               reviewable_score_count: { type: :integer },
               reviewable_score_pending_count: { type: :integer },
             }
@@ -287,11 +292,64 @@ describe 'posts' do
         end
       end
     end
+
+    delete 'delete a single post' do
+      tags 'Posts'
+      operationId 'deletePost'
+      consumes 'application/json'
+      expected_request_schema = load_spec_schema('post_delete_request')
+      parameter name: :id, in: :path, schema: { type: :integer }
+      parameter name: :params, in: :body, schema: expected_request_schema
+
+      produces 'application/json'
+      response '200', 'success response' do
+        expected_response_schema = nil
+        schema expected_response_schema
+
+        let(:topic) { Fabricate(:topic) }
+        let(:post) { Fabricate(:post, topic_id: topic.id, post_number: 3) }
+        let(:id) { post.id }
+        let(:params) { { 'force_destroy' => false } }
+
+        it_behaves_like "a JSON endpoint", 200 do
+          let(:expected_response_schema) { expected_response_schema }
+          let(:expected_request_schema) { expected_request_schema }
+        end
+      end
+    end
+  end
+
+  path '/posts/{id}/replies.json' do
+    get 'List replies to a post' do
+      tags 'Posts'
+      operationId 'postReplies'
+      consumes 'application/json'
+      expected_request_schema = nil
+      parameter name: :id, in: :path, schema: { type: :string }
+
+      produces 'application/json'
+      response '200', 'post replies' do
+        expected_response_schema = load_spec_schema('post_replies_response')
+        schema expected_response_schema
+
+        fab!(:user) { Fabricate(:user) }
+        fab!(:topic) { Fabricate(:topic) }
+        fab!(:post) { Fabricate(:post, topic: topic, user: user) }
+        let!(:reply) { PostCreator.new(user, raw: "this is some text for my post", topic_id: topic.id, reply_to_post_number: post.post_number).create }
+        let!(:id) { post.id }
+
+        it_behaves_like "a JSON endpoint", 200 do
+          let(:expected_response_schema) { expected_response_schema }
+          let(:expected_request_schema) { expected_request_schema }
+        end
+      end
+    end
   end
 
   path '/posts/{id}/locked.json' do
     put 'Lock a post from being edited' do
       tags 'Posts'
+      operationId 'lockPost'
       consumes 'application/json'
       parameter name: 'Api-Key', in: :header, type: :string, required: true
       parameter name: 'Api-Username', in: :header, type: :string, required: true
@@ -300,7 +358,7 @@ describe 'posts' do
       parameter name: :post_body, in: :body, schema: {
         type: :object,
         properties: {
-          locked: { type: :boolean }
+          locked: { type: :string }
         }, required: [ 'locked' ]
       }
 
@@ -324,6 +382,7 @@ describe 'posts' do
   path '/post_actions.json' do
     post 'Like a post and other actions' do
       tags 'Posts'
+      operationId 'performPostAction'
       consumes 'application/json'
       parameter name: 'Api-Key', in: :header, type: :string, required: true
       parameter name: 'Api-Username', in: :header, type: :string, required: true
@@ -350,7 +409,7 @@ describe 'posts' do
           post_type: { type: :integer },
           updated_at: { type: :string },
           reply_count: { type: :integer },
-          reply_to_post_number: { type: :string, nullable: true },
+          reply_to_post_number: { type: [:string, :null] },
           quote_count: { type: :integer },
           incoming_link_count: { type: :integer },
           reads: { type: :integer },
@@ -360,17 +419,17 @@ describe 'posts' do
           topic_id: { type: :integer },
           topic_slug: { type: :string },
           display_username: { type: :string },
-          primary_group_name: { type: :string, nullable: true },
-          flair_name: { type: :string, nullable: true },
-          flair_url: { type: :string, nullable: true },
-          flair_bg_color: { type: :string, nullable: true },
-          flair_color: { type: :string, nullable: true },
+          primary_group_name: { type: [:string, :null] },
+          flair_name: { type: [:string, :null] },
+          flair_url: { type: [:string, :null] },
+          flair_bg_color: { type: [:string, :null] },
+          flair_color: { type: [:string, :null] },
           version: { type: :integer },
           can_edit: { type: :boolean },
           can_delete: { type: :boolean },
           can_recover: { type: :boolean },
           can_wiki: { type: :boolean },
-          user_title: { type: :string, nullable: true },
+          user_title: { type: [:string, :null] },
           actions_summary: {
             type: :array,
             items: {
@@ -389,13 +448,13 @@ describe 'posts' do
           user_id: { type: :integer },
           hidden: { type: :boolean },
           trust_level: { type: :integer },
-          deleted_at: { type: :string, nullable: true },
+          deleted_at: { type: [:string, :null] },
           user_deleted: { type: :boolean },
-          edit_reason: { type: :string, nullable: true },
+          edit_reason: { type: [:string, :null] },
           can_view_edit_history: { type: :boolean },
           wiki: { type: :boolean },
           notice: { type: :object },
-          reviewable_id: { type: :string, nullable: true },
+          reviewable_id: { type: [:string, :null] },
           reviewable_score_count: { type: :integer },
           reviewable_score_pending_count: { type: :integer },
         }

@@ -26,11 +26,14 @@ class TopicCreator
 
     category = find_category
     if category.present? && guardian.can_tag?(topic)
-      tags = @opts[:tags].present? ? Tag.where(name: @opts[:tags]) : (@opts[:tags] || [])
+      tags = @opts[:tags].presence || []
+      existing_tags = tags.present? ? Tag.where(name: tags) : []
+      valid_tags = guardian.can_create_tag? ? tags : existing_tags
 
-      # both add to topic.errors
-      DiscourseTagging.validate_min_required_tags_for_category(guardian, topic, category, tags)
-      DiscourseTagging.validate_required_tags_from_group(guardian, topic, category, tags)
+      # all add to topic.errors
+      DiscourseTagging.validate_min_required_tags_for_category(guardian, topic, category, valid_tags)
+      DiscourseTagging.validate_required_tags_from_group(guardian, topic, category, existing_tags)
+      DiscourseTagging.validate_category_restricted_tags(guardian, topic, category, valid_tags)
     end
 
     DiscourseEvent.trigger(:after_validate_topic, topic, self)
@@ -109,7 +112,7 @@ class TopicCreator
       visible: @opts[:visible]
     }
 
-    [:subtype, :archetype, :meta_data, :import_mode].each do |key|
+    [:subtype, :archetype, :meta_data, :import_mode, :advance_draft].each do |key|
       topic_params[key] = @opts[key] if @opts[key].present?
     end
 
@@ -132,15 +135,11 @@ class TopicCreator
     end
 
     topic_params[:category_id] = category.id if category.present?
-
     topic_params[:created_at] = convert_time(@opts[:created_at]) if @opts[:created_at].present?
-
     topic_params[:pinned_at] = convert_time(@opts[:pinned_at]) if @opts[:pinned_at].present?
     topic_params[:pinned_globally] = @opts[:pinned_globally] if @opts[:pinned_globally].present?
-
-    if SiteSetting.topic_featured_link_enabled && @opts[:featured_link].present? && @guardian.can_edit_featured_link?(topic_params[:category_id])
-      topic_params[:featured_link] = @opts[:featured_link]
-    end
+    topic_params[:external_id] = @opts[:external_id] if @opts[:external_id].present?
+    topic_params[:featured_link] = @opts[:featured_link]
 
     topic_params
   end
@@ -181,8 +180,10 @@ class TopicCreator
     if watched_words.present?
       word_watcher = WordWatcher.new("#{@opts[:title]} #{@opts[:raw]}")
       word_watcher_tags = topic.tags.map(&:name)
-      watched_words.each do |word, tags|
-        word_watcher_tags += tags.split(",") if word_watcher.word_matches?(word)
+      watched_words.each do |word, opts|
+        if word_watcher.word_matches?(word, case_sensitive: opts[:case_sensitive])
+          word_watcher_tags += opts[:replacement].split(",")
+        end
       end
       DiscourseTagging.tag_topic_by_names(topic, Discourse.system_user.guardian, word_watcher_tags)
     end

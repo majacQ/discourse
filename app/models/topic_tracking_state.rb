@@ -16,8 +16,8 @@
 #
 # See discourse/app/models/topic-tracking-state.js
 class TopicTrackingState
-
   include ActiveModel::SerializerSupport
+  include TopicTrackingStatePublishable
 
   UNREAD_MESSAGE_TYPE = "unread"
   LATEST_MESSAGE_TYPE = "latest"
@@ -31,15 +31,6 @@ class TopicTrackingState
   DISMISS_NEW_MESSAGE_TYPE = "dismiss_new"
   MAX_TOPICS = 5000
 
-  attr_accessor :user_id,
-                :topic_id,
-                :highest_post_number,
-                :last_read_post_number,
-                :created_at,
-                :category_id,
-                :notification_level,
-                :tags
-
   def self.publish_new(topic)
     return unless topic.regular?
 
@@ -52,7 +43,6 @@ class TopicTrackingState
       last_read_post_number: nil,
       highest_post_number: 1,
       created_at: topic.created_at,
-      topic_id: topic.id,
       category_id: topic.category_id,
       archetype: topic.archetype,
       created_in_new_period: true
@@ -72,10 +62,10 @@ class TopicTrackingState
     group_ids = topic.category && topic.category.secure_group_ids
 
     MessageBus.publish("/new", message.as_json, group_ids: group_ids)
-    publish_read(topic.id, 1, topic.user_id)
+    publish_read(topic.id, 1, topic.user)
   end
 
-  def self.publish_latest(topic, staff_only = false)
+  def self.publish_latest(topic, whisper = false)
     return unless topic.regular?
 
     tag_ids, tags = nil
@@ -99,8 +89,8 @@ class TopicTrackingState
     end
 
     group_ids =
-      if staff_only
-        [Group::AUTO_GROUPS[:staff]]
+      if whisper
+        [Group::AUTO_GROUPS[:staff], *SiteSetting.whispers_allowed_group_ids]
       else
         topic.category && topic.category.secure_group_ids
       end
@@ -128,8 +118,7 @@ class TopicTrackingState
   end
 
   def self.publish_unmuted(topic)
-    return if !SiteSetting.mute_all_categories_by_default
-    user_ids = User.watching_topic_when_mute_categories_by_default(topic)
+    user_ids = User.watching_topic(topic)
       .where("users.last_seen_at > ?", 7.days.ago)
       .order("users.last_seen_at DESC")
       .limit(100)
@@ -146,52 +135,57 @@ class TopicTrackingState
     return unless post.topic.regular?
     # TODO at high scale we are going to have to defer this,
     #   perhaps cut down to users that are around in the last 7 days as well
-
-    group_ids =
-      if post.post_type == Post.types[:whisper]
-        [Group::AUTO_GROUPS[:staff]]
-      else
-        post.topic.category && post.topic.category.secure_group_ids
-      end
-
     tags = nil
     tag_ids = nil
     if include_tags_in_report?
       tag_ids, tags = post.topic.tags.pluck(:id, :name).transpose
     end
 
-    TopicUser
+    # We don't need to publish unread to the person who just made the post,
+    # this is why they are excluded from the initial scope.
+    scope = TopicUser
       .tracking(post.topic_id)
       .includes(user: :user_stat)
-      .select([:user_id, :last_read_post_number, :notification_level])
-      .each do |tu|
+      .where.not(user_id: post.user_id)
 
-      payload = {
-        last_read_post_number: tu.last_read_post_number,
-        highest_post_number: post.post_number,
-        updated_at: post.topic.updated_at,
-        created_at: post.created_at,
-        category_id: post.topic.category_id,
-        notification_level: tu.notification_level,
-        archetype: post.topic.archetype,
-        first_unread_at: tu.user.user_stat.first_unread_at,
-        unread_not_too_old: true
-      }
-
-      if tags
-        payload[:tags] = tags
-        payload[:topic_tag_ids] = tag_ids
+    group_ids =
+      if post.post_type == Post.types[:whisper]
+        [Group::AUTO_GROUPS[:staff], *SiteSetting.whispers_allowed_group_ids]
+      else
+        post.topic.category && post.topic.category.secure_group_ids
       end
 
-      message = {
-        topic_id: post.topic_id,
-        message_type: UNREAD_MESSAGE_TYPE,
-        payload: payload
-      }
-
-      MessageBus.publish(self.unread_channel_key(tu.user_id), message.as_json, group_ids: group_ids)
+    if group_ids.present?
+      scope = scope
+        .joins("INNER JOIN group_users gu ON gu.user_id = topic_users.user_id")
+        .where("gu.group_id IN (?)", group_ids)
     end
 
+    user_ids = scope.pluck(:user_id)
+    return if user_ids.empty?
+
+    payload = {
+      highest_post_number: post.post_number,
+      updated_at: post.topic.updated_at,
+      created_at: post.created_at,
+      category_id: post.topic.category_id,
+      archetype: post.topic.archetype,
+    }
+
+    if tags
+      payload[:tags] = tags
+      payload[:topic_tag_ids] = tag_ids
+    end
+
+    message = {
+      topic_id: post.topic_id,
+      message_type: UNREAD_MESSAGE_TYPE,
+      payload: payload
+    }
+
+    MessageBus.publish("/unread", message.as_json,
+      user_ids: user_ids
+    )
   end
 
   def self.publish_recover(topic)
@@ -228,21 +222,15 @@ class TopicTrackingState
     MessageBus.publish("/destroy", message.as_json, group_ids: group_ids)
   end
 
-  def self.publish_read(topic_id, last_read_post_number, user_id, notification_level = nil)
-    highest_post_number = DB.query_single("SELECT highest_post_number FROM topics WHERE id = ?", topic_id).first
-
-    message = {
-      topic_id: topic_id,
+  def self.publish_read(topic_id, last_read_post_number, user, notification_level = nil)
+    self.publish_read_message(
       message_type: READ_MESSAGE_TYPE,
-      payload: {
-        last_read_post_number: last_read_post_number,
-        highest_post_number: highest_post_number,
-        topic_id: topic_id,
-        notification_level: notification_level
-      }
-    }
-
-    MessageBus.publish(self.unread_channel_key(user_id), message.as_json, user_ids: [user_id])
+      channel_name: self.unread_channel_key(user.id),
+      topic_id: topic_id,
+      user: user,
+      last_read_post_number: last_read_post_number,
+      notification_level: notification_level
+    )
   end
 
   def self.publish_dismiss_new(user_id, topic_ids: [])
@@ -263,8 +251,8 @@ class TopicTrackingState
       " AND dismissed_topic_users.id IS NULL"
   end
 
-  def self.unread_filter_sql(staff: false)
-    TopicQuery.unread_filter(Topic, staff: staff).where_clause.ast.to_sql
+  def self.unread_filter_sql(whisperer: false)
+    TopicQuery.unread_filter(Topic, whisperer: whisperer).where_clause.ast.to_sql
   end
 
   def self.treat_as_new_topic_clause
@@ -288,7 +276,7 @@ class TopicTrackingState
   end
 
   def self.include_tags_in_report?
-    SiteSetting.tagging_enabled && @include_tags_in_report
+    SiteSetting.tagging_enabled && (@include_tags_in_report || SiteSetting.enable_experimental_sidebar_hamburger)
   end
 
   def self.include_tags_in_report=(v)
@@ -329,6 +317,7 @@ class TopicTrackingState
       skip_order: true,
       staff: user.staff?,
       admin: user.admin?,
+      whisperer: user.whisperer?,
       user: user,
       muted_tag_ids: tag_ids
     )
@@ -342,6 +331,7 @@ class TopicTrackingState
       staff: user.staff?,
       filter_old_unread: true,
       admin: user.admin?,
+      whisperer: user.whisperer?,
       user: user,
       muted_tag_ids: tag_ids
     )
@@ -379,6 +369,7 @@ class TopicTrackingState
     skip_order: false,
     staff: false,
     admin: false,
+    whisperer: false,
     select: nil,
     custom_state_filter: nil,
     additional_join_sql: nil
@@ -387,7 +378,7 @@ class TopicTrackingState
       if skip_unread
         "1=0"
       else
-        unread_filter_sql
+        unread_filter_sql(whisperer: whisperer)
       end
 
     filter_old_unread_sql =
@@ -409,7 +400,7 @@ class TopicTrackingState
            u.id as user_id,
            topics.created_at,
            topics.updated_at,
-           #{highest_post_number_column_select(staff)},
+           #{highest_post_number_column_select(whisperer)},
            last_read_post_number,
            c.id as category_id,
            tu.notification_level,
@@ -477,8 +468,7 @@ class TopicTrackingState
       JOIN user_options AS uo ON uo.user_id = u.id
       JOIN categories c ON c.id = topics.category_id
       LEFT JOIN topic_users tu ON tu.topic_id = topics.id AND tu.user_id = u.id
-      LEFT JOIN category_users ON category_users.category_id = topics.category_id AND category_users.user_id = #{user.id}
-      LEFT JOIN dismissed_topic_users ON dismissed_topic_users.topic_id = topics.id AND dismissed_topic_users.user_id = #{user.id}
+      #{skip_new ? "" : "LEFT JOIN dismissed_topic_users ON dismissed_topic_users.topic_id = topics.id AND dismissed_topic_users.user_id = :user_id"}
       #{additional_join_sql}
       WHERE u.id = :user_id AND
             #{filter_old_unread_sql}
@@ -491,7 +481,7 @@ class TopicTrackingState
             NOT (
               #{(skip_new && skip_unread) ? "" : "last_read_post_number IS NULL AND"}
               (
-                COALESCE(category_users.notification_level, #{CategoryUser.default_notification_level}) = #{CategoryUser.notification_levels[:muted]}
+                topics.category_id IN (#{CategoryUser.muted_category_ids_query(user, include_direct: true).select("categories.id").to_sql})
                 AND tu.notification_level <= #{TopicUser.notification_levels[:regular]}
               )
             )
@@ -508,61 +498,8 @@ class TopicTrackingState
     sql
   end
 
-  def self.highest_post_number_column_select(staff)
-    "#{staff ? "topics.highest_staff_post_number AS highest_post_number" : "topics.highest_post_number"}"
-  end
-
-  def self.publish_private_message(topic, archive_user_id: nil,
-                                          post: nil,
-                                          group_archive: false)
-
-    return unless topic.private_message?
-    channels = {}
-
-    allowed_user_ids = topic.allowed_users.pluck(:id)
-
-    if post && allowed_user_ids.include?(post.user_id)
-      channels["/private-messages/sent"] = [post.user_id]
-    end
-
-    if archive_user_id
-      user_ids = [archive_user_id]
-
-      [
-        "/private-messages/archive",
-        "/private-messages/inbox",
-        "/private-messages/sent",
-      ].each do |channel|
-        channels[channel] = user_ids
-      end
-    end
-
-    if channels.except("/private-messages/sent").blank?
-      channels["/private-messages/inbox"] = allowed_user_ids
-    end
-
-    topic.allowed_groups.each do |group|
-      group_user_ids = group.users.pluck(:id)
-      next if group_user_ids.blank?
-      group_channels = []
-      group_channels << "/private-messages/group/#{group.name.downcase}"
-      group_channels << "#{group_channels.first}/archive" if group_archive
-      group_channels.each { |channel| channels[channel] = group_user_ids }
-    end
-
-    message = {
-      topic_id: topic.id
-    }
-
-    channels.each do |channel, ids|
-      if ids.present?
-        MessageBus.publish(
-          channel,
-          message.as_json,
-          user_ids: ids
-        )
-      end
-    end
+  def self.highest_post_number_column_select(whisperer)
+    "#{whisperer ? "topics.highest_staff_post_number AS highest_post_number" : "topics.highest_post_number"}"
   end
 
   def self.publish_read_indicator_on_write(topic_id, last_read_post_number, user_id)

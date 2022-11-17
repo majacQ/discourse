@@ -18,7 +18,6 @@ export default ComboBoxComponent.extend(TagsMixin, {
   classNameBindings: ["categoryStyle", "tagClass"],
   classNames: ["tag-drop"],
   value: readOnly("tagId"),
-  tagName: "li",
   categoryStyle: setting("category_style"),
   maxTagSearchResults: setting("max_tag_search_results"),
   sortTagsAlphabetically: setting("tags_sort_alphabetically"),
@@ -158,7 +157,9 @@ export default ComboBoxComponent.extend(TagsMixin, {
       .map((r) => {
         const content = context.defaultItem(r.id, r.text);
         content.targetTagId = r.target_tag || r.id;
-        content.count = r.count;
+        if (!context.currentCategory) {
+          content.count = r.count;
+        }
         content.pmCount = r.pm_count;
         return content;
       });

@@ -213,6 +213,8 @@ module Email
       style('pre', 'word-wrap: break-word; max-width: 694px;')
       style('code', 'background-color: #f9f9f9; padding: 2px 5px;')
       style('pre code', 'display: block; background-color: #f9f9f9; overflow: auto; padding: 5px;')
+      style('pre.onebox code', 'white-space: normal;')
+      style('pre code li', 'white-space: pre;')
       style('.featured-topic a', "text-decoration: none; font-weight: bold; color: #{SiteSetting.email_link_color}; line-height:1.5em;")
       style('.summary-email', "-moz-box-sizing:border-box;-ms-text-size-adjust:100%;-webkit-box-sizing:border-box;-webkit-text-size-adjust:100%;box-sizing:border-box;color:#0a0a0a;font-family:Arial,sans-serif;font-size:14px;font-weight:400;line-height:1.3;margin:0;min-width:100%;padding:0;width:100%")
 
@@ -236,6 +238,7 @@ module Email
 
       onebox_styles
       plugin_styles
+      dark_mode_styles
 
       style('.post-excerpt img', "max-width: 50%; max-height: #{MAX_IMAGE_DIMENSION}px;")
 
@@ -253,11 +256,11 @@ module Email
       @@plugin_callbacks.each { |block| block.call(@fragment, @opts) }
     end
 
-    def inline_secure_images(attachments)
-      stripped_media = @fragment.css('[data-stripped-secure-media]')
+    def inline_secure_images(attachments, attachments_index)
+      stripped_media = @fragment.css('[data-stripped-secure-media], [data-stripped-secure-upload]')
       upload_shas = {}
       stripped_media.each do |div|
-        url = div['data-stripped-secure-media']
+        url = div['data-stripped-secure-media'] || div['data-stripped-secure-upload']
         filename = File.basename(url)
         filename_bare = filename.gsub(File.extname(filename), "")
         sha1 = filename_bare.partition('_').first
@@ -266,13 +269,13 @@ module Email
       uploads = Upload.select(:original_filename, :sha1).where(sha1: upload_shas.values)
 
       stripped_media.each do |div|
-        upload = uploads.find { |upl| upl.sha1 == upload_shas[div['data-stripped-secure-media']] }
+        upload = uploads.find do |upl|
+          upl.sha1 == (upload_shas[div['data-stripped-secure-media']] || upload_shas[div['data-stripped-secure-upload']])
+        end
         next if !upload
 
-        original_filename = upload.original_filename
-
-        if attachments[original_filename]
-          url = attachments[original_filename].url
+        if attachments[attachments_index[upload.sha1]]
+          url = attachments[attachments_index[upload.sha1]].url
 
           onebox_type = div['data-onebox-type']
           style = if onebox_type
@@ -293,7 +296,7 @@ module Email
     def to_html
       # needs to be before class + id strip because we need to style redacted
       # media and also not double-redact already redacted from lower levels
-      replace_secure_media_urls if SiteSetting.secure_media?
+      replace_secure_uploads_urls if SiteSetting.secure_uploads?
       strip_classes_and_ids
       replace_relative_urls
 
@@ -333,6 +336,18 @@ module Email
 
     private
 
+    def dark_mode_styles
+      # When we ship the email template and its styles we strip all css classes so to give our
+      # dark mode styles we are including in the template a selector we add a data-attr of 'dm=value' to
+      # the appropriate place
+      style(".digest-header, .digest-topic, .digest-topic-title-wrapper, .digest-topic-stats, .popular-post-excerpt", nil, dm: "header")
+      style(".digest-content, .header-popular-posts, .spacer, .popular-post-spacer, .popular-post-meta, .digest-new-header, .digest-new-topic, .body", nil, dm: "body")
+      style(".with-accent-colors, .digest-content-header", nil, dm: "body_primary")
+      style(".digest-topic-body", nil, dm: "topic-body")
+      style(".summary-footer", nil, dm: "text-color")
+      style("code, pre code, blockquote", nil, dm: "bg")
+    end
+
     def replace_relative_urls
       forum_uri = URI(Discourse.base_url)
       host = forum_uri.host
@@ -356,13 +371,13 @@ module Email
       end
     end
 
-    def replace_secure_media_urls
+    def replace_secure_uploads_urls
       # strip again, this can be done at a lower level like in the user
       # notification template but that may not catch everything
-      PrettyText.strip_secure_media(@fragment)
+      PrettyText.strip_secure_uploads(@fragment)
 
-      style('div.secure-media-notice', 'border: 5px solid #e9e9e9; padding: 5px; display: inline-block;')
-      style('div.secure-media-notice a', "color: #{SiteSetting.email_link_color}")
+      style('div.secure-upload-notice', 'border: 5px solid #e9e9e9; padding: 5px; display: inline-block;')
+      style('div.secure-upload-notice a', "color: #{SiteSetting.email_link_color}")
     end
 
     def correct_first_body_margin

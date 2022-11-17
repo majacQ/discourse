@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe TopicList do
+RSpec.describe TopicList do
   let!(:topic) {
     t = Fabricate(:topic)
     t.allowed_user_ids = [t.user.id]
@@ -30,7 +28,7 @@ describe TopicList do
     end
   end
 
-  context "preload" do
+  describe "preload" do
     it "allows preloading of data" do
       preloaded_topic = false
       preloader = lambda do |topics, topic_list|
@@ -50,7 +48,11 @@ describe TopicList do
 
   describe '#load_topics' do
     it 'loads additional data for serialization' do
-      category_user = CategoryUser.create!(user: user, category: topic.category)
+      category_user = CategoryUser.create!(
+        user: user,
+        category: topic.category,
+        notification_level: NotificationLevels.all[:regular]
+      )
 
       topic = topic_list.load_topics.first
 
@@ -95,24 +97,9 @@ describe TopicList do
     let(:category) { Fabricate(:category) }
     let(:tag) { Fabricate(:tag) }
 
-    it "generates correct key for categories" do
+    it "returns topic_list" do
       topic_list = TopicList.new('latest', nil, nil, category: category, category_id: category.id)
-      expect(topic_list.preload_key).to eq("topic_list_c/#{category.slug}/#{category.id}/l/latest")
-    end
-
-    it "generates correct key for 'no subcategories' option" do
-      topic_list = TopicList.new('latest', nil, nil, category: category, category_id: category.id, no_subcategories: true)
-      expect(topic_list.preload_key).to eq("topic_list_c/#{category.slug}/#{category.id}/none/l/latest")
-    end
-
-    it "generates correct key for tag" do
-      topic_list = TopicList.new('latest', nil, nil, tags: [tag])
-      expect(topic_list.preload_key).to eq("topic_list_tag/#{tag.name}/l/latest")
-    end
-
-    it "generates correct key when both category and tags are missing" do
-      topic_list = TopicList.new('latest', nil, nil, tags: Tag.none)
-      expect(topic_list.preload_key).to eq("topic_list_latest")
+      expect(topic_list.preload_key).to eq("topic_list")
     end
   end
 end

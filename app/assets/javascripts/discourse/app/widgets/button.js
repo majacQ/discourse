@@ -38,12 +38,19 @@ export const ButtonClass = {
     }
 
     if (title) {
-      attributes["aria-label"] = title;
       attributes.title = title;
     }
 
     if (attrs.role) {
       attributes["role"] = attrs.role;
+    }
+
+    if (attrs.translatedAriaLabel) {
+      attributes["aria-label"] = attrs.translatedAriaLabel;
+    }
+
+    if (attrs.ariaPressed) {
+      attributes["aria-pressed"] = attrs.ariaPressed;
     }
 
     if (attrs.tabAttrs) {
@@ -79,8 +86,12 @@ export const ButtonClass = {
   html(attrs) {
     const contents = [];
     const left = !attrs.iconRight;
+
     if (attrs.icon && left) {
       contents.push(this._buildIcon(attrs));
+    }
+    if (attrs.emoji && left) {
+      contents.push(this.attach("emoji", { name: attrs.emoji }));
     }
     if (attrs.label) {
       contents.push(
@@ -98,6 +109,9 @@ export const ButtonClass = {
     }
     if (attrs.contents) {
       contents.push(attrs.contents);
+    }
+    if (attrs.emoji && !left) {
+      contents.push(this.attach("emoji", { name: attrs.emoji }));
     }
     if (attrs.icon && !left) {
       contents.push(this._buildIcon(attrs));
@@ -132,7 +146,7 @@ export default createWidget("button", ButtonClass);
 
 createWidget(
   "flat-button",
-  jQuery.extend(ButtonClass, {
+  Object.assign(ButtonClass, {
     tagName: "button.widget-button.btn-flat",
   })
 );

@@ -1,21 +1,12 @@
 import {
   acceptance,
+  chromeTest,
   count,
   exists,
 } from "discourse/tests/helpers/qunit-helpers";
 import { click, triggerEvent, visit } from "@ember/test-helpers";
-import { test } from "qunit";
 
 async function triggerSwipeStart(touchTarget) {
-  // some tests are shown in a zoom viewport.
-  // boundingClientRect is affected by the zoom and need to be multiplied by the zoom effect.
-  // EG: if the element has a zoom of 50%, this DOUBLES the x and y positions and offsets.
-  // The numbers you get from getBoundingClientRect are seen as twice as large... however, the
-  // touch input still deals with the base inputs, not doubled. This allows us to convert for those environments.
-  let zoom = parseFloat(
-    window.getComputedStyle(document.querySelector("#ember-testing")).zoom || 1
-  );
-
   // Other tests are shown in a transformed viewport, and this is a multiple for the offsets
   let scale = parseFloat(
     window
@@ -24,15 +15,13 @@ async function triggerSwipeStart(touchTarget) {
   );
 
   const touchStart = {
-    touchTarget: touchTarget,
+    touchTarget,
     x:
-      zoom *
-      (touchTarget.getBoundingClientRect().x +
-        (scale * touchTarget.offsetWidth) / 2),
+      touchTarget.getBoundingClientRect().x +
+      (scale * touchTarget.offsetWidth) / 2,
     y:
-      zoom *
-      (touchTarget.getBoundingClientRect().y +
-        (scale * touchTarget.offsetHeight) / 2),
+      touchTarget.getBoundingClientRect().y +
+      (scale * touchTarget.offsetHeight) / 2,
   };
   const touch = new Touch({
     identifier: "test",
@@ -73,11 +62,12 @@ async function triggerSwipeEnd({ x, y, touchTarget }) {
   });
 }
 
+// new Touch() isn't available in Firefox, so this is skipped there
 acceptance("Mobile - menu swipes", function (needs) {
   needs.mobileView();
   needs.user();
 
-  test("swipe to close hamburger", async function (assert) {
+  chromeTest("swipe to close hamburger", async function (assert) {
     await visit("/");
     await click(".hamburger-dropdown");
 
@@ -93,26 +83,29 @@ acceptance("Mobile - menu swipes", function (needs) {
     );
   });
 
-  test("swipe back and flick to re-open hamburger", async function (assert) {
-    await visit("/");
-    await click(".hamburger-dropdown");
+  chromeTest(
+    "swipe back and flick to re-open hamburger",
+    async function (assert) {
+      await visit("/");
+      await click(".hamburger-dropdown");
 
-    const touchTarget = document.querySelector(".panel-body");
-    let swipe = await triggerSwipeStart(touchTarget);
-    swipe.x -= 100;
-    await triggerSwipeMove(swipe);
-    swipe.x += 20;
-    await triggerSwipeMove(swipe);
-    await triggerSwipeEnd(swipe);
+      const touchTarget = document.querySelector(".panel-body");
+      let swipe = await triggerSwipeStart(touchTarget);
+      swipe.x -= 100;
+      await triggerSwipeMove(swipe);
+      swipe.x += 20;
+      await triggerSwipeMove(swipe);
+      await triggerSwipeEnd(swipe);
 
-    assert.equal(
-      count(".panel-body"),
-      1,
-      "it should re-open hamburger on a right swipe"
-    );
-  });
+      assert.strictEqual(
+        count(".panel-body"),
+        1,
+        "it should re-open hamburger on a right swipe"
+      );
+    }
+  );
 
-  test("swipe to user menu", async function (assert) {
+  chromeTest("swipe to user menu", async function (assert) {
     await visit("/");
     await click("#current-user");
 

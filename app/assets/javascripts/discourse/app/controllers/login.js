@@ -3,12 +3,11 @@ import { alias, not, or, readOnly } from "@ember/object/computed";
 import { areCookiesEnabled, escapeExpression } from "discourse/lib/utilities";
 import cookie, { removeCookie } from "discourse/lib/cookie";
 import { next, schedule } from "@ember/runloop";
-import EmberObject from "@ember/object";
+import EmberObject, { action } from "@ember/object";
 import I18n from "I18n";
 import ModalFunctionality from "discourse/mixins/modal-functionality";
 import { SECOND_FACTOR_METHODS } from "discourse/models/user";
 import { ajax } from "discourse/lib/ajax";
-import bootbox from "bootbox";
 import discourseComputed from "discourse-common/utils/decorators";
 import { escape } from "pretty-text/sanitizer";
 import { extractError } from "discourse/lib/ajax-error";
@@ -19,6 +18,7 @@ import { isEmpty } from "@ember/utils";
 import { setting } from "discourse/lib/computed";
 import showModal from "discourse/lib/show-modal";
 import { wavingHandURL } from "discourse/lib/waving-hand-url";
+import { inject as service } from "@ember/service";
 
 // This is happening outside of the app via popup
 const AuthErrors = [
@@ -33,6 +33,7 @@ export default Controller.extend(ModalFunctionality, {
   createAccount: controller(),
   forgotPassword: controller(),
   application: controller(),
+  dialog: service(),
 
   loggingIn: false,
   loggedIn: false,
@@ -132,7 +133,66 @@ export default Controller.extend(ModalFunctionality, {
     return canLoginLocalWithEmail;
   },
 
+  @action
+  emailLogin(event) {
+    event?.preventDefault();
+
+    if (this.processingEmailLink) {
+      return;
+    }
+
+    if (isEmpty(this.loginName)) {
+      this.flash(I18n.t("login.blank_username"), "info");
+      return;
+    }
+
+    this.set("processingEmailLink", true);
+
+    ajax("/u/email-login", {
+      data: { login: this.loginName.trim() },
+      type: "POST",
+    })
+      .then((data) => {
+        const loginName = escapeExpression(this.loginName);
+        const isEmail = loginName.match(/@/);
+        let key = `email_login.complete_${isEmail ? "email" : "username"}`;
+        if (data.user_found === false) {
+          this.flash(
+            I18n.t(`${key}_not_found`, {
+              email: loginName,
+              username: loginName,
+            }),
+            "error"
+          );
+        } else {
+          let postfix = data.hide_taken ? "" : "_found";
+          this.flash(
+            I18n.t(`${key}${postfix}`, {
+              email: loginName,
+              username: loginName,
+            })
+          );
+        }
+      })
+      .catch((e) => this.flash(extractError(e), "error"))
+      .finally(() => this.set("processingEmailLink", false));
+  },
+
+  @action
+  handleForgotPassword(event) {
+    event?.preventDefault();
+    const forgotPasswordController = this.forgotPassword;
+    if (forgotPasswordController) {
+      forgotPasswordController.set("accountEmailOrUsername", this.loginName);
+    }
+    this.send("showForgotPassword");
+  },
+
   actions: {
+    forgotPassword() {
+      this.handleForgotPassword();
+    },
+
     login() {
       if (this.loginDisabled) {
         return;
@@ -160,23 +220,33 @@ export default Controller.extend(ModalFunctionality, {
           // Successful login
           if (result && result.error) {
             this.set("loggingIn", false);
+            this.clearFlash();
 
             if (
-              (result.security_key_enabled || result.totp_enabled) &&
+              (result.security_key_enabled ||
+                result.totp_enabled ||
+                result.backup_enabled) &&
               !this.secondFactorRequired
             ) {
+              let secondFactorMethod;
+              if (result.security_key_enabled) {
+                secondFactorMethod = SECOND_FACTOR_METHODS.SECURITY_KEY;
+              } else if (result.totp_enabled) {
+                secondFactorMethod = SECOND_FACTOR_METHODS.TOTP;
+              } else {
+                secondFactorMethod = SECOND_FACTOR_METHODS.BACKUP_CODE;
+              }
               this.setProperties({
                 otherMethodAllowed: result.multiple_second_factor_methods,
                 secondFactorRequired: true,
                 showLoginButtons: false,
                 backupEnabled: result.backup_enabled,
-                showSecondFactor: result.totp_enabled,
+                totpEnabled: result.totp_enabled,
+                showSecondFactor: result.totp_enabled || result.backup_enabled,
                 showSecurityKey: result.security_key_enabled,
-                secondFactorMethod: result.security_key_enabled
-                  ? SECOND_FACTOR_METHODS.SECURITY_KEY
-                  : SECOND_FACTOR_METHODS.TOTP,
                 securityKeyChallenge: result.challenge,
                 securityKeyAllowedCredentialIds: result.allowed_credential_ids,
+                secondFactorMethod,
               });
 
               // only need to focus the 2FA input for TOTP
@@ -198,16 +268,15 @@ export default Controller.extend(ModalFunctionality, {
               });
             } else if (result.reason === "suspended") {
               this.send("closeModal");
-              bootbox.alert(result.error);
+              this.dialog.alert(result.error);
             } else {
               this.flash(result.error, "error");
             }
           } else {
             this.set("loggedIn", true);
             // Trigger the browser's password manager using the hidden static login form:
-            const hiddenLoginForm = document.getElementById(
-              "hidden-login-form"
-            );
+            const hiddenLoginForm =
+              document.getElementById("hidden-login-form");
             const applyHiddenFormInputValue = (value, key) => {
               if (!hiddenLoginForm) {
                 return;
@@ -255,6 +324,12 @@ export default Controller.extend(ModalFunctionality, {
           // Failed to login
           if (e.jqXHR && e.jqXHR.status === 429) {
             this.flash(I18n.t("login.rate_limit"), "error");
+          } else if (
+            e.jqXHR &&
+            e.jqXHR.status === 503 &&
+            e.jqXHR.responseJSON.error_type === "read_only"
+          ) {
+            this.flash(I18n.t("read_only_mode.login_disabled"), "error");
           } else if (!areCookiesEnabled()) {
             this.flash(I18n.t("login.cookies_error"), "error");
           } else {
@@ -273,9 +348,7 @@ export default Controller.extend(ModalFunctionality, {
       }
 
       this.set("loggingIn", true);
-      loginMethod
-        .doLogin({ signup: signup })
-        .catch(() => this.set("loggingIn", false));
+      loginMethod.doLogin({ signup }).catch(() => this.set("loggingIn", false));
     },
 
     createAccount() {
@@ -290,56 +363,6 @@ export default Controller.extend(ModalFunctionality, {
         }
       }
       this.send("showCreateAccount");
-    },
-
-    forgotPassword() {
-      const forgotPasswordController = this.forgotPassword;
-      if (forgotPasswordController) {
-        forgotPasswordController.set("accountEmailOrUsername", this.loginName);
-      }
-      this.send("showForgotPassword");
-    },
-
-    emailLogin() {
-      if (this.processingEmailLink) {
-        return;
-      }
-
-      if (isEmpty(this.loginName)) {
-        this.flash(I18n.t("login.blank_username"), "info");
-        return;
-      }
-
-      this.set("processingEmailLink", true);
-
-      ajax("/u/email-login", {
-        data: { login: this.loginName.trim() },
-        type: "POST",
-      })
-        .then((data) => {
-          const loginName = escapeExpression(this.loginName);
-          const isEmail = loginName.match(/@/);
-          let key = `email_login.complete_${isEmail ? "email" : "username"}`;
-          if (data.user_found === false) {
-            this.flash(
-              I18n.t(`${key}_not_found`, {
-                email: loginName,
-                username: loginName,
-              }),
-              "error"
-            );
-          } else {
-            let postfix = data.hide_taken ? "" : "_found";
-            this.flash(
-              I18n.t(`${key}${postfix}`, {
-                email: loginName,
-                username: loginName,
-              })
-            );
-          }
-        })
-        .catch((e) => this.flash(extractError(e), "error"))
-        .finally(() => this.set("processingEmailLink", false));
     },
 
     authenticateSecurityKey() {
@@ -428,7 +451,10 @@ export default Controller.extend(ModalFunctionality, {
     });
 
     next(() => {
-      showModal("createAccount", { modalClass: "create-account" });
+      showModal("createAccount", {
+        modalClass: "create-account",
+        titleAriaElementId: "create-account-title",
+      });
     });
   },
 });

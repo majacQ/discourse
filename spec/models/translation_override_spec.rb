@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe TranslationOverride do
-  context 'validations' do
+RSpec.describe TranslationOverride do
+  describe 'Validations' do
     describe '#value' do
       before do
         I18n.backend.store_translations(
@@ -61,7 +59,7 @@ describe TranslationOverride do
             translation_override = TranslationOverride.upsert!(
               I18n.locale,
               "not_a_notification",
-              "Overriden %{key1} %{topic_title_url_encoded}",
+              "Overridden %{key1} %{topic_title_url_encoded}",
             )
             expect(translation_override.errors.full_messages).to include(I18n.t(
               "activerecord.errors.models.translation_overrides.attributes.value.invalid_interpolation_keys",
@@ -115,6 +113,16 @@ describe TranslationOverride do
     expect(ovr.value).to eq('some value')
   end
 
+  it 'sanitizes values before upsert' do
+    xss = "<a target='blank' href='%{path}'>Click here</a> <script>alert('TEST');</script>"
+
+    TranslationOverride.upsert!('en', 'js.themes.error_caused_by', xss)
+
+    ovr = TranslationOverride.where(locale: 'en', translation_key: 'js.themes.error_caused_by').first
+    expect(ovr).to be_present
+    expect(ovr.value).to eq("<a href=\"%{path}\">Click here</a> alert('TEST');")
+  end
+
   it "stores js for a message format key" do
     TranslationOverride.upsert!('ru', 'some.key_MF', '{NUM_RESULTS, plural, one {1 result} other {many} }')
 
@@ -124,7 +132,7 @@ describe TranslationOverride do
     expect(ovr.compiled_js).to_not match(/Invalid Format/i)
   end
 
-  context "site cache" do
+  describe "site cache" do
     def cached_value(guardian, translation_key, locale:)
       types_name, name_key, attribute = translation_key.split('.')
 
@@ -163,19 +171,19 @@ describe TranslationOverride do
       end
     end
 
-    context "post_action_types" do
+    context "with post_action_types" do
       let(:translation_keys) { ['post_action_types.off_topic.description'] }
 
       include_examples "resets site text"
     end
 
-    context "topic_flag_types" do
+    context "with topic_flag_types" do
       let(:translation_keys) { ['topic_flag_types.spam.description'] }
 
       include_examples "resets site text"
     end
 
-    context "multiple keys" do
+    context "with multiple keys" do
       let(:translation_keys) { ['post_action_types.off_topic.description', 'topic_flag_types.spam.description'] }
 
       include_examples "resets site text"

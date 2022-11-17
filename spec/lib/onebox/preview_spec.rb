@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-describe Onebox::Preview do
+RSpec.describe Onebox::Preview do
   before do
     stub_request(:get, "https://www.amazon.com/product")
       .to_return(status: 200, body: onebox_response("amazon"))
@@ -59,8 +57,15 @@ describe Onebox::Preview do
   end
 
   describe "#engine" do
+    let(:preview_image_url) { "http://www.example.com/image/without/file_extension" }
+    let(:preview_image) { described_class.new(preview_image_url, content_type: 'image/png') }
+
     it "returns an engine" do
       expect(preview.send(:engine)).to be_an(Onebox::Engine)
+    end
+
+    it "can match based on content_type" do
+      expect(preview_image.send(:engine)).to be_an(Onebox::Engine::ImageOnebox)
     end
   end
 

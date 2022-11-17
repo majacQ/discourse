@@ -1,39 +1,64 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
+RSpec.describe Admin::ColorSchemesController do
+  fab!(:admin) { Fabricate(:admin) }
+  fab!(:moderator) { Fabricate(:moderator) }
+  fab!(:user) { Fabricate(:user) }
 
-describe Admin::ColorSchemesController do
-  it "is a subclass of AdminController" do
-    expect(described_class < Admin::AdminController).to eq(true)
-  end
+  let(:valid_params) { { color_scheme: {
+      name: 'Such Design',
+      colors: [
+        { name: 'primary', hex: 'FFBB00' },
+        { name: 'secondary', hex: '888888' }
+      ]
+    }
+  } }
 
-  context "while logged in as an admin" do
-    fab!(:admin) { Fabricate(:admin) }
-    let(:valid_params) { { color_scheme: {
-        name: 'Such Design',
-        colors: [
-          { name: 'primary', hex: 'FFBB00' },
-          { name: 'secondary', hex: '888888' }
-        ]
-      }
-    } }
+  describe "#index" do
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
 
-    before do
-      sign_in(admin)
-    end
-
-    describe "#index" do
       it "returns JSON" do
         scheme_name = Fabricate(:color_scheme).name
         get "/admin/color_schemes.json"
 
         expect(response.status).to eq(200)
-        schemes = response.parsed_body.map { |scheme| scheme["name"] }
-        expect(schemes).to include(scheme_name)
+        scheme_names = response.parsed_body.map { |scheme| scheme["name"] }
+        scheme_colors = response.parsed_body[0]["colors"]
+        base_scheme_colors = ColorScheme.base.colors
+
+        expect(scheme_names).to include(scheme_name)
+        expect(scheme_colors[0]["name"]).to eq(base_scheme_colors[0].name)
+        expect(scheme_colors[0]["hex"]).to eq(base_scheme_colors[0].hex)
       end
     end
 
-    describe "#create" do
+    shared_examples "color schemes inaccessible" do
+      it "denies access with a 404 response" do
+        get "/admin/color_schemes.json"
+
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+      end
+    end
+
+    context "when logged in as a moderator" do
+      before { sign_in(moderator) }
+
+      include_examples "color schemes inaccessible"
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      include_examples "color schemes inaccessible"
+    end
+  end
+
+  describe "#create" do
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
+
       it "returns JSON" do
         post "/admin/color_schemes.json", params: valid_params
 
@@ -52,8 +77,38 @@ describe Admin::ColorSchemesController do
       end
     end
 
-    describe "#update" do
-      fab!(:existing) { Fabricate(:color_scheme) }
+    shared_examples "color scheme creation not allowed" do
+      it "prevents creation with a 404 response" do
+        params = valid_params
+        params[:color_scheme][:colors][0][:hex] = 'cool color please'
+
+        expect do
+          post "/admin/color_schemes.json", params: valid_params
+        end.not_to change { ColorScheme.count }
+
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+      end
+    end
+
+    context "when logged in as a moderator" do
+      before { sign_in(moderator) }
+
+      include_examples "color scheme creation not allowed"
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      include_examples "color scheme creation not allowed"
+    end
+  end
+
+  describe "#update" do
+    fab!(:existing) { Fabricate(:color_scheme) }
+
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
 
       it "returns success" do
         put "/admin/color_schemes/#{existing.id}.json", params: valid_params
@@ -81,8 +136,33 @@ describe Admin::ColorSchemesController do
       end
     end
 
-    describe "#destroy" do
-      fab!(:existing) { Fabricate(:color_scheme) }
+    shared_examples "color scheme update not allowed" do
+      it "prevents update with a 404 response" do
+        put "/admin/color_schemes/#{existing.id}.json", params: valid_params
+
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+      end
+    end
+
+    context "when logged in as a moderator" do
+      before { sign_in(moderator) }
+
+      include_examples "color scheme update not allowed"
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      include_examples "color scheme update not allowed"
+    end
+  end
+
+  describe "#destroy" do
+    fab!(:existing) { Fabricate(:color_scheme) }
+
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
 
       it "returns success" do
         expect {
@@ -90,6 +170,27 @@ describe Admin::ColorSchemesController do
         }.to change { ColorScheme.count }.by(-1)
         expect(response.status).to eq(200)
       end
+    end
+
+    shared_examples "color scheme deletion not allowed" do
+      it "prevents deletion with a 404 response" do
+        delete "/admin/color_schemes/#{existing.id}.json"
+
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+      end
+    end
+
+    context "when logged in as a moderator" do
+      before { sign_in(moderator) }
+
+      include_examples "color scheme deletion not allowed"
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      include_examples "color scheme deletion not allowed"
     end
   end
 end

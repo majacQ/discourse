@@ -1,3 +1,4 @@
+import { inject as service } from "@ember/service";
 import { empty, equal, notEmpty } from "@ember/object/computed";
 import Component from "@ember/component";
 import DiscourseURL from "discourse/lib/url";
@@ -21,10 +22,12 @@ export default Component.extend({
   translatedAriaLabel: null,
   forwardEvent: false,
   preventFocus: false,
+  onKeyDown: null,
+  router: service(),
 
   isLoading: computed({
     set(key, value) {
-      this.set("forceDisabled", value);
+      this.set("forceDisabled", !!value);
       return value;
     },
   }),
@@ -70,7 +73,7 @@ export default Component.extend({
 
   @discourseComputed("title", "translatedTitle")
   computedTitle(title, translatedTitle) {
-    if (this.title) {
+    if (title) {
       return I18n.t(title);
     }
     return translatedTitle;
@@ -78,21 +81,20 @@ export default Component.extend({
 
   @discourseComputed("label", "translatedLabel")
   computedLabel(label, translatedLabel) {
-    if (this.label) {
+    if (label) {
       return I18n.t(label);
     }
     return translatedLabel;
   },
 
-  @discourseComputed("ariaLabel", "translatedAriaLabel", "computedLabel")
-  computedAriaLabel(ariaLabel, translatedAriaLabel, computedLabel) {
+  @discourseComputed("ariaLabel", "translatedAriaLabel")
+  computedAriaLabel(ariaLabel, translatedAriaLabel) {
     if (ariaLabel) {
       return I18n.t(ariaLabel);
     }
     if (translatedAriaLabel) {
       return translatedAriaLabel;
     }
-    return computedLabel;
   },
 
   @discourseComputed("ariaExpanded")
@@ -105,39 +107,62 @@ export default Component.extend({
     }
   },
 
+  keyDown(e) {
+    if (this.onKeyDown) {
+      e.stopPropagation();
+      this.onKeyDown(e);
+    } else if (e.key === "Enter") {
+      this._triggerAction(e);
+      return false;
+    }
+  },
+
   click(event) {
-    let { action } = this;
-
-    if (action) {
-      if (typeof action === "string") {
-        // Note: This is deprecated in new Embers and needs to be removed in the future.
-        // There is already a warning in the console.
-        this.sendAction("action", this.actionParam);
-      } else if (typeof action === "object" && action.value) {
-        if (this.forwardEvent) {
-          action.value(this.actionParam, event);
-        } else {
-          action.value(this.actionParam);
-        }
-      } else if (typeof this.action === "function") {
-        if (this.forwardEvent) {
-          action(this.actionParam, event);
-        } else {
-          action(this.actionParam);
-        }
-      }
-    }
-
-    if (this.href && this.href.length) {
-      DiscourseURL.routeTo(this.href);
-    }
-
-    return false;
+    return this._triggerAction(event);
   },
 
   mouseDown(event) {
     if (this.preventFocus) {
       event.preventDefault();
+    }
+  },
+
+  _triggerAction(event) {
+    let { action, route, href } = this;
+
+    if (action || route || href?.length) {
+      if (action) {
+        if (typeof action === "string") {
+          // Note: This is deprecated in new Embers and needs to be removed in the future.
+          // There is already a warning in the console.
+          this.sendAction("action", this.actionParam);
+        } else if (typeof action === "object" && action.value) {
+          if (this.forwardEvent) {
+            action.value(this.actionParam, event);
+          } else {
+            action.value(this.actionParam);
+          }
+        } else if (typeof this.action === "function") {
+          if (this.forwardEvent) {
+            action(this.actionParam, event);
+          } else {
+            action(this.actionParam);
+          }
+        }
+      }
+
+      if (route) {
+        this.router.transitionTo(route);
+      }
+
+      if (href?.length) {
+        DiscourseURL.routeTo(href);
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      return false;
     }
   },
 });

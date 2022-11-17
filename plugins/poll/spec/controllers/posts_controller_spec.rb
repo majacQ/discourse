@@ -2,7 +2,7 @@
 
 require "rails_helper"
 
-describe PostsController do
+RSpec.describe PostsController do
   let!(:user) { log_in }
   let!(:title) { "Testing Poll Plugin" }
 
@@ -185,7 +185,7 @@ describe PostsController do
         end
 
         it "resets the votes" do
-          DiscoursePoll::Poll.vote(post_id, "poll", ["5c24fc1df56d764b550ceae1b9319125"], user)
+          DiscoursePoll::Poll.vote(user, post_id, "poll", ["5c24fc1df56d764b550ceae1b9319125"])
 
           put :update, params: {
             id: post_id, post: { raw: "[poll]\n- A\n- B\n- C\n[/poll]" }
@@ -244,7 +244,7 @@ describe PostsController do
         describe "with at least one vote" do
 
           before do
-            DiscoursePoll::Poll.vote(post_id, "poll", ["5c24fc1df56d764b550ceae1b9319125"], user)
+            DiscoursePoll::Poll.vote(user, post_id, "poll", ["5c24fc1df56d764b550ceae1b9319125"])
           end
 
           it "cannot change the options" do
@@ -441,6 +441,30 @@ describe PostsController do
       json = response.parsed_body
       expect(json["cooked"]).to match("data-poll-")
       expect(Poll.exists?(post_id: json["id"])).to eq(true)
+    end
+  end
+
+  describe "staff editing posts of users with insufficient trust level" do
+    before do
+      SiteSetting.poll_minimum_trust_level_to_create = 2
+    end
+
+    it "validates the post" do
+      log_in_user(Fabricate(:user, trust_level: 1))
+
+      post :create, params: { title: title, raw: title }, format: :json
+
+      expect(response.status).to eq(200)
+      post_id = response.parsed_body["id"]
+
+      log_in_user(Fabricate(:admin))
+
+      put :update, params: {
+        id: post_id, post: { raw: "#{title}\n[poll]\n- A\n- B\n- C\n[/poll]" }
+      }, format: :json
+
+      expect(response.status).to eq(200)
+      expect(response.parsed_body["post"]["polls"][0]["options"][2]["html"]).to eq("C")
     end
   end
 end

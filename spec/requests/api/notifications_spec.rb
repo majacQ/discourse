@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 require 'swagger_helper'
 
-describe 'notifications' do
+RSpec.describe 'notifications' do
 
   let(:admin) { Fabricate(:admin) }
   let!(:notification) { Fabricate(:notification, user: admin) }
@@ -15,6 +15,7 @@ describe 'notifications' do
 
     get 'Get the notifications that belong to the current user' do
       tags 'Notifications'
+      operationId 'getNotifications'
 
       produces 'application/json'
       response '200', 'notifications' do
@@ -29,9 +30,9 @@ describe 'notifications' do
                 notification_type: { type: :integer },
                 read: { type: :boolean },
                 created_at: { type: :string },
-                post_number: { type: :string, nullable: true },
-                topic_id: { type: :integer, nullable: true },
-                slug: { type: :string, nullable: true },
+                post_number: { type: [:string, :null] },
+                topic_id: { type: [:integer, :null] },
+                slug: { type: [:string, :null] },
                 data: {
                   type: :object,
                   properties: {
@@ -60,6 +61,7 @@ describe 'notifications' do
 
     put 'Mark notifications as read' do
       tags 'Notifications'
+      operationId 'markNotificationsAsRead'
       consumes 'application/json'
       parameter name: :notification, in: :body, schema: {
         type: :object,

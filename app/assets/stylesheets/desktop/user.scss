@@ -6,28 +6,33 @@
       margin-top: 10px;
     }
   }
-
-  .show-mores {
-    position: absolute;
-  }
-}
-
-.form-horizontal .control-group.category {
-  margin-top: 18px;
 }
 
 .user-profile-hidden {
   font-size: 1.5em;
   text-align: center;
 }
+
 .user-secondary-navigation {
   min-width: 150px;
+
+  .combo-box {
+    width: 100%;
+    &:not(:last-of-type) {
+      margin-bottom: 0.875em;
+    }
+  }
+
   .nav-stacked {
     background-color: transparent;
+    margin: 0;
 
     li {
       border-bottom: none;
-
+      &:hover,
+      &.active {
+        background: var(--primary-very-low);
+      }
       &.archive {
         padding-left: 1.4em;
       }
@@ -46,6 +51,39 @@
         }
       }
     }
+  }
+
+  .select-kit + .messages-nav {
+    margin-top: 1em;
+  }
+
+  .inboxes-controls {
+    margin-bottom: 0.75em;
+  }
+
+  &.user-messages {
+    --left-padding: 0.8em;
+
+    .nav-stacked {
+      a {
+        padding-left: calc(
+          var(--left-padding) - 1px
+        ); // 1px accounts for border on select-kit elements above
+      }
+    }
+  }
+}
+.user-additional-controls {
+  display: flex;
+  flex-wrap: wrap;
+  padding-top: 15px;
+  .single-select-header,
+  button {
+    margin-bottom: 1em;
+    margin-right: 0.75em;
+  }
+  .user-invite-buttons {
+    margin-left: auto;
   }
 }
 
@@ -169,8 +207,11 @@ table.user-invite-list {
     .controls {
       padding: 0 0 12px 0;
       float: right;
-      text-align: right;
       max-width: 13.5em;
+
+      li {
+        margin-bottom: 0.5em;
+      }
 
       li > .select-kit-header, // select-kit
       .btn {
@@ -224,6 +265,20 @@ table.user-invite-list {
   .public-user-fields {
     overflow: hidden;
   }
+}
+
+.user-messages-page {
+  .topic-list th {
+    padding-top: 4px;
+  }
+
+  .show-mores {
+    position: absolute;
+  }
+}
+
+.user-messages {
+  margin-right: 0.2em;
 }
 
 .user-preferences {

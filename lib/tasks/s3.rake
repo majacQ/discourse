@@ -10,10 +10,18 @@ def gzip_s3_path(path)
   "#{path[0..-ext.length]}gz#{ext}"
 end
 
+def existing_assets
+  @existing_assets ||= Set.new(helper.list("assets/").map(&:key))
+end
+
+def prefix_s3_path(path)
+  path = File.join(helper.s3_bucket_folder_path, path) if helper.s3_bucket_folder_path
+  path
+end
+
 def should_skip?(path)
   return false if ENV['FORCE_S3_UPLOADS']
-  @existing_assets ||= Set.new(helper.list("assets/").map(&:key))
-  @existing_assets.include?(path)
+  existing_assets.include?(prefix_s3_path(path))
 end
 
 def upload(path, remote_path, content_type, content_encoding = nil)
@@ -37,6 +45,8 @@ def upload(path, remote_path, content_type, content_encoding = nil)
       helper.upload(file, remote_path, options)
     end
   end
+
+  File.delete(path) if (File.exist?(path) && ENV["DELETE_ASSETS_AFTER_S3_UPLOAD"])
 end
 
 def use_db_s3_config
@@ -44,22 +54,7 @@ def use_db_s3_config
 end
 
 def helper
-  @helper ||= begin
-    bucket, options =
-      if use_db_s3_config
-        [
-          SiteSetting.s3_upload_bucket.downcase,
-          S3Helper.s3_options(SiteSetting)
-        ]
-      else
-        [
-          GlobalSetting.s3_bucket.downcase,
-          S3Helper.s3_options(GlobalSetting)
-        ]
-      end
-
-    S3Helper.new(bucket, '', options)
-  end
+  @helper ||= S3Helper.build_from_config(use_db_s3_config: use_db_s3_config)
 end
 
 def assets
@@ -72,9 +67,9 @@ def assets
     fullpath = (Rails.root + "public/assets/#{path}").to_s
 
     # Ignore files we can't find the mime type of, like yarn.lock
-    if mime = MiniMime.lookup_by_filename(fullpath)
-      content_type = mime.content_type
-
+    content_type = MiniMime.lookup_by_filename(fullpath)&.content_type
+    content_type ||= "application/json" if fullpath.end_with?(".map")
+    if content_type
       asset_path = "assets/#{path}"
       results << [fullpath, asset_path, content_type]
 
@@ -184,12 +179,23 @@ task 's3:correct_cachecontrol' => :environment do
 
 end
 
-task 's3:upload_assets' => :environment do
+task 's3:ensure_cors_rules' => :environment do
   ensure_s3_configured!
 
-  puts "installing CORS rule"
-  helper.ensure_cors!
+  puts "Installing CORS rules..."
+  result = S3CorsRulesets.sync(use_db_s3_config: use_db_s3_config)
 
+  if !result
+    puts "skipping"
+    next
+  end
+
+  puts "Assets rules status: #{result[:assets_rules_status]}."
+  puts "Backup rules status: #{result[:backup_rules_status]}."
+  puts "Direct upload rules status: #{result[:direct_upload_rules_status]}."
+end
+
+task 's3:upload_assets' => [:environment, 's3:ensure_cors_rules'] do
   assets.each do |asset|
     upload(*asset)
   end
@@ -198,26 +204,37 @@ end
 task 's3:expire_missing_assets' => :environment do
   ensure_s3_configured!
 
-  count = 0
-  keep = 0
+  puts "Checking for stale S3 assets..."
 
-  in_manifest = asset_paths
+  assets_to_delete = existing_assets.dup
 
-  puts "Ensuring AWS assets are tagged correctly for removal"
-  helper.list('assets/').each do |f|
-    if !in_manifest.include?(f.key)
-      helper.tag_file(f.key, old: true)
-      count += 1
-    else
-      # ensure we do not delete this by mistake
-      helper.tag_file(f.key, {})
-      keep += 1
+  # Check that all current assets are uploaded, and remove them from the to_delete list
+  asset_paths.each do |current_asset_path|
+    uploaded = assets_to_delete.delete?(prefix_s3_path(current_asset_path))
+    if !uploaded
+      puts "A current asset does not exist on S3 (#{current_asset_path}). Aborting cleanup task."
+      exit 1
     end
   end
 
-  puts "#{count} assets were flagged for removal in 10 days (#{keep} assets will be retained)"
+  if assets_to_delete.size > 0
+    puts "Found #{assets_to_delete.size} assets to delete..."
 
-  puts "Ensuring AWS rule exists for purging old assets"
-  helper.update_lifecycle("delete_old_assets", 10, tag: { key: 'old', value: 'true' })
+    assets_to_delete.each do |to_delete|
+      if !to_delete.start_with?(prefix_s3_path("assets/"))
+        # Sanity check, this should never happen
+        raise "Attempted to delete a non-/asset S3 path (#{to_delete}). Aborting"
+      end
+    end
 
+    assets_to_delete.each_slice(500) do |slice|
+      message = "Deleting #{slice.size} assets...\n"
+      message += slice.join("\n").indent(2)
+      puts message
+      helper.delete_objects(slice)
+      puts "... done"
+    end
+  else
+    puts "No stale assets found"
+  end
 end

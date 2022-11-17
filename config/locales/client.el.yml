@@ -115,9 +115,9 @@ el:
       previous_month: "Προηγούμενος μήνας"
       next_month: "Επόμενος μήνας"
       placeholder: ημερομηνία
+      to_placeholder: "μέχρι σήμερα"
     share:
       topic_html: 'Θέμα: <span class="topic-title">%{topicTitle}</span>'
-      post: "ανάρτηση #%{postNumber}"
       close: "κλείσιμο"
       twitter: "Κοινοποιήστε στο Twitter"
       facebook: "Μοιραστείτε στο Facebook"
@@ -156,14 +156,13 @@ el:
         disabled: "το αφαίρεσε από ανακοίνωση στις %{when}. Δε θα εμφανίζεται πλέον στην κορυφή κάθε σελίδας."
       forwarded: "προώθησε το παραπάνω email"
     topic_admin_menu: "ρυθμίσεις θέματος"
-    wizard_required: "Καλώς ήλθατε στο νέο σας Discourse! Ας αρχίσουμε με τον <a href='%{url}' data-auto-route='true'>οδηγό εγκατάστασης</a> ✨"
     emails_are_disabled: "Όλα τα εξερχόμενα emails έχουν απενεργοποιηθεί καθολικά από κάποιον διαχειριστή. Δε θα σταλεί καμία ειδοποίηση email."
     software_update_prompt:
       dismiss: "Απόρριψη"
     bootstrap_mode_disabled: "Η λειτουργία bootstrap θα απενεργοποιηθεί εντός 24 ωρών."
+    bootstrap_invite_button_title: "Αποστολή Προσκλήσεων"
     themes:
       default_description: "Προεπιλογή"
-      broken_theme_alert: "Ο ιστότοπός σας ενδέχεται να μη λειτουργεί επειδή το θέμα/συστατικό %{theme} έχει σφάλματα. Απενεργοποιήστε το στο %{path}."
     s3:
       regions:
         ap_northeast_1: "Ασία Ειρηνικός (Τόκιο)"
@@ -191,7 +190,10 @@ el:
     not_implemented: "Αυτή η λειτουργία δεν έχει υλοποιηθεί ακόμα, συγγνώμη!"
     no_value: "Όχι"
     yes_value: "Ναι"
+    ok_value: "OK"
+    cancel_value: "Ακύρωση"
     submit: "Υποβολή"
+    delete: "Σβήσιμο"
     generic_error: "Λυπάμαι, προέκυψε κάποιο σφάλμα."
     generic_error_with_reason: "Προέκυψε ένα σφάλμα: %{error}"
     sign_up: "Εγγραφή"
@@ -214,7 +216,6 @@ el:
     conduct: "Κώδικας δεοντολογίας"
     mobile_view: "Προβολή κινητού"
     desktop_view: "Προβολή υπολογιστή"
-    you: "Εσείς"
     or: "ή"
     now: "μόλις τώρα"
     read_more: "διαβάστε περισσότερα"
@@ -263,6 +264,8 @@ el:
         unbookmark: "Πατήστε εδώ για να αφαιρεθούν όλοι οι σελιδοδείκτες από αυτό το θέμα."
     bookmarks:
       created: "Έχετε προσθέσει σελιδοδείκτη σε αυτήν την ανάρτηση. %{name}"
+      create: "Δημιουργία σελιδοδείκτη"
+      edit: "Επεξεργασία σελιδοδείκτη"
       not_bookmarked: "προσθέστε σελιδοδείκτη σε αυτήν την ανάρτηση"
       created_with_reminder: "Έχετε προσθέσει σελιδοδείκτη σε αυτήν την ανάρτηση με υπενθύμιση %{date}. %{name}"
       remove: "Αφαίρεση σελιδοδείκτη"
@@ -275,10 +278,7 @@ el:
       list_permission_denied: "Δεν έχετε άδεια για την προβολή των σελιδοδεικτών αυτού του χρήστη."
       no_user_bookmarks: "Δεν έχετε σελιδοδείκτες. Οι σελιδοδείκτες σας επιτρέπουν να ανατρέξετε γρήγορα σε συγκεκριμένες αναρτήσεις."
       auto_delete_preference:
-        label: "Αυτόματη διαγραφή"
-        never: "Ποτέ"
-        when_reminder_sent: "Μόλις αποσταλεί η υπενθύμιση"
-        on_owner_reply: "Αφού απαντήσω σε αυτό το θέμα"
+        when_reminder_sent: "Διαγραφή σελιδοδείκτη"
       search_placeholder: "Αναζήτηση σελιδοδεικτών με βάση το όνομα, τον τίτλο θέματος ή το περιεχόμενο δημοσίευσης"
       search: "Αναζήτηση"
       reminders:
@@ -289,14 +289,20 @@ el:
     copy_codeblock:
       copied: "αντιγράφηκε!"
     drafts:
+      label: "Προσχέδια"
       resume: "Βιογραφικό"
       remove: "Αφαίρεση"
       new_topic: "Νέο προσχέδιο θέματος"
-      new_private_message: "Νέο προσχέδιο ιδιωτικού μηνύματος"
       topic_reply: "Προσχέδιο απάντησης"
       abandon:
         yes_value: "Απόρριψη"
+    topic_count_categories:
+      one: "Δείτε %{count} νέο ή ενημερωμένο θέμα"
+      other: "Δείτε %{count} νέα ή ενημερωμένα θέματα"
     topic_count_latest:
+      one: "Δείτε %{count} νέο ή ενημερωμένο θέμα"
+      other: "Δείτε %{count} νέα ή ενημερωμένα θέματα"
+    topic_count_unseen:
       one: "Δείτε %{count} νέο ή ενημερωμένο θέμα"
       other: "Δείτε %{count} νέα ή ενημερωμένα θέματα"
     topic_count_unread:
@@ -325,8 +331,8 @@ el:
     switch_to_anon: "Έναρξη Κατάστασης Ανωνυμίας"
     switch_from_anon: "Τερματισμός Κατάστασης Ανωνυμίας"
     banner:
-      close: "Απόρριψη αυτής της ανακοίνωσης."
-      edit: "Επεξεργασία αυτής της ανακοίνωσης >>"
+      close: "Απόρριψη αυτής της ανακοίνωσης"
+      edit: "Επεξεργασία"
     pwa:
       install_banner: "Θέλετε να <a href>εγκαταστήσετε %{title} σε αυτήν τη συσκευή;</a>"
     choose_topic:
@@ -500,6 +506,7 @@ el:
         one: "ημέρα"
         other: "ημέρες"
     time_shortcut:
+      now: "Τώρα"
       later_today: "Αργότερα σήμερα"
       next_business_day: "Επόμενη εργάσιμη ημέρα"
       tomorrow: "Αύριο"
@@ -507,8 +514,12 @@ el:
       this_weekend: "Αυτό το Σαββατοκύριακο"
       start_of_next_business_week: "Τη Δευτέρα"
       start_of_next_business_week_alt: "Την επόμενη Δευτέρα"
+      next_week: "Την άλλη εβδομάδα"
       next_month: "Τον άλλο μήνα"
+      forever: "Για Πάντα"
+      never: "Ποτέ"
       custom: "Προσαρμοσμένη ημερομηνία και ώρα"
+      select_timeframe: "Επιλέξτε χρονικό περιθώριο"
     user_action:
       user_posted_topic: "<a href='%{userUrl}'>%{user}</a> ανάρτησε <a href='%{topicUrl}'>το νήμα </a>"
       you_posted_topic: "<a href='%{userUrl}'>Ανάρτησες</a> αυτό <a href='%{topicUrl}'>το νήμα</a>"
@@ -681,8 +692,6 @@ el:
         public: "Δημόσια"
         private: "Ιδιωτική"
         public_groups: "Δημόσιες ομάδες"
-        automatic_group: Αυτόματη Ομάδα
-        close_group: Κλείσιμο ομάδας
         my_groups: "Οι Ομάδες Μου"
         group_type: "Τύπος ομάδας"
         is_group_user: "Μέλος"
@@ -744,6 +753,10 @@ el:
       flair_type:
         icon: "Επιλέξτε ένα εικονίδιο"
         image: "Επιφορτώστε μια εικόνα"
+      default_notifications:
+        modal_description: "Θα θέλατε να εφαρμόσετε αυτήν την αλλαγή αναδρομικά; Αυτό θα αλλάξει τις προτιμήσεις για %{count} υπάρχοντες χρήστες."
+        modal_yes: "Ναι"
+        modal_no: "Όχι, εφαρμόστε την αλλαγή μόνο προς τα εμπρός"
     user_action_groups:
       "1": "Αρέσει που Έδωσα"
       "2": "Αρέσει που Έλαβα"
@@ -773,7 +786,6 @@ el:
       posts: "Αναρτήσεις"
       topics: "Νήματα"
       latest: "Πρόσφατες"
-      toggle_ordering: "εναλλαγή ταξινόμησης"
       subcategories: "Υποκατηγορίες"
       muted: "Κατηγορίες σε σίγαση"
       topic_sentence:
@@ -902,6 +914,9 @@ el:
       external_links_in_new_tab: "Άνοιγε όλους τους εξωτερικούς συνδέσμους σε νέα καρτέλα"
       enable_quoting: "Το κείμενο που επισημαίνεται να παρατίθεται στην απάντηση "
       enable_defer: "Ενεργοποίηση αναβολής για επισήμανση θεμάτων ως μη αναγνωσμένων"
+      experimental_sidebar:
+        options: "Επιλογές"
+        navigation_section: "Πλοήγηση"
       change: "αλλαγή"
       featured_topic: "Επιλεγμένο θέμα"
       moderator: "Ο/Η %{user} είναι συντονιστής"
@@ -945,7 +960,7 @@ el:
       muted_categories: "Σε σίγαση"
       muted_categories_instructions: "Δε θα ειδοποιηθείτε για τίποτα σχετικό με νέα θέματα σε αυτές τις κατηγορίες και αυτά δε θα εμφανίζονται στις σελίδες κατηγοριών ή πρόσφατων."
       muted_categories_instructions_dont_hide: "Δε θα ειδοποιηθείτε για τίποτα σχετικό με νέα θέματα σε αυτές τις κατηγορίες."
-      regular_categories: "Τακτικός"
+      regular_categories: "Κανονικό"
       regular_categories_instructions: "Θα βλέπετε αυτές τις κατηγορίες στις λίστες θεμάτων «Πρόσφατα» και «Κορυφαία»."
       no_category_access: "Ως συντονιστής έχεις περιορισμένη πρόσβαση στην κατηγορία, η αποθήκευση είναι απενεργοποιημένη."
       delete_account: "Διαγραφή Λογαριασμού"
@@ -981,15 +996,24 @@ el:
         warnings_received: "προειδοποιήσεις"
         rejected_posts: "απορριφθείσες αναρτήσεις"
       messages:
-        all: "Όλα"
         inbox: "Εισερχόμενα"
+        latest: "Πρόσφατες"
         sent: "Απεσταλμένα"
+        unread: "Αδιάβαστα"
+        unread_with_count:
+          one: "Μη αναγνωσμένα (%{count})"
+          other: "Μη αναγνωσμένα (%{count})"
+        new: "Νέα"
+        new_with_count:
+          one: "Νέα (%{count})"
+          other: "Νέα (%{count})"
         archive: "Αρχείο"
         groups: "Οι Ομάδες Μου"
         move_to_inbox: "Μετακίνηση στα Εισερχόμενα"
         move_to_archive: "Αρχειοθέτηση"
         failed_to_move: "Αποτυχία μετακίνησης των επιλεγμένων μηνυμάτων (πιθανόν δεν υπάρχει σύνδεση στο δίκτυο)"
         tags: "Ετικέτες"
+        all_tags: "Όλες οι Ετικέτες"
       preferences_nav:
         account: "Λογαριασμός"
         security: "Ασφάλεια"
@@ -1040,8 +1064,6 @@ el:
         disable: "Απενεργοποίηση"
         save: "Αποθήκευση"
         edit: "Επεξεργασία"
-        enable_security_key_description: |
-          Όταν έχετε προετοιμάσει το <a href="https://www.google.com/search?q=hardware+security+key" target="_blank">κλειδί ασφαλείας υλικού</a> , πατήστε το κουμπί Εγγραφή παρακάτω.
         totp:
           title: "Επαληθευτές βάσει τεκμηρίων"
           add: "Προσθήκη επαληθευτή"
@@ -1049,14 +1071,10 @@ el:
           name_and_code_required_error: "Πρέπει να δώσετε ένα όνομα και τον κωδικό από την εφαρμογή ελέγχου ταυτότητας."
         security_key:
           register: "Εγγραφή"
-          title: "Κλειδιά ασφαλείας"
-          add: "Προσθήκη κλειδιού ασφαλείας"
           default_name: "Κύριο κλειδί ασφαλείας"
           not_allowed_error: "Η διαδικασία καταχώρισης κλειδιού ασφαλείας είτε έληξε είτε ακυρώθηκε."
           already_added_error: "Έχετε ήδη καταχωρίσει αυτό το κλειδί ασφαλείας. Δε χρειάζεται να το καταχωρίσετε ξανά."
-          edit: "Επεξεργασία κλειδιού ασφαλείας"
           save: "Αποθήκευση"
-          edit_description: "Όνομα κλειδιού ασφαλείας"
           name_required_error: "Πρέπει να δώσετε ένα όνομα για το κλειδί ασφαλείας σας."
       change_about:
         title: "Άλλαξε τα «σχετικά με εμένα»"
@@ -1170,7 +1188,6 @@ el:
         secure_account: "Ασφάλισε τον λογαριασμό μου"
         latest_post: "Τελευταία δημοσιεύσατε το…"
       last_posted: "Τελευταία Ανάρτηση"
-      last_emailed: "Τελευταίο email"
       last_seen: "Εθεάθη"
       created: "Μέλος από"
       log_out: "Αποσύνδεση"
@@ -1210,11 +1227,9 @@ el:
         every_month: "κάθε μήνα"
         every_six_months: "κάθε έξι μήνες"
       email_level:
-        title: "Στείλε μου ένα email όταν κάποιος παραθέσει ανάρτησή μου, απαντήσει σε ανάρτησή μου, αναφέρει το @username μου ή με προσκαλεί σε ένα νήμα."
         always: "πάντα"
         only_when_away: "μόνο όταν είμαι μακριά"
         never: "ποτέ"
-      email_messages_level: "Στείλε μου ένα email όταν κάποιος μου στείλει προσωπικό μήνυμα."
       include_tl0_in_digests: "Συμπερίλαβε περιεχόμενο από νέους χρήστες σε περιληπτικά email"
       email_in_reply_to: "Συμπερίλαβε ένα απόσπασμα της απαντημένης ανάρτησης στο email"
       other_settings: "Λοιπά"
@@ -1277,8 +1292,6 @@ el:
           title: "Σύνδεσμος πρόσκλησης"
           success: "Η δημιουργία του συνδέσμου πρόσκλησης έγινε επιτυχώς!"
           error: "Παρουσιάστηκε σφάλμα κατά τη δημιουργία συνδέσμου πρόσκλησης"
-          max_redemptions_allowed_label: "Πόσα άτομα επιτρέπεται να εγγραφούν χρησιμοποιώντας αυτόν τον σύνδεσμο;"
-          expires_at: "Πότε θα λήξει αυτός ο σύνδεσμος πρόσκλησης;"
         bulk_invite:
           text: "Μαζική πρόσκληση"
           error: "Λυπούμαστε, το αρχείο πρέπει να έχει την μορφή CSV."
@@ -1360,6 +1373,8 @@ el:
         sent_by: "Στάλθηκε από"
         private_message: "μήνυμα"
         the_topic: "το νήμα"
+    user_status:
+      save: "Αποθήκευση"
     loading: "Φόρτωση... "
     errors:
       prev_page: "κατά το φόρτωμα"
@@ -1407,10 +1422,8 @@ el:
       other: απαντήσεις
     signup_cta:
       sign_up: "Εγγραφή"
-      hide_session: "Υπενθύμιση αύριο"
       hide_forever: "όχι ευχαριστώ"
       intro: "Γεια! Φαίνεται ότι απολαμβάνεις τη συζήτηση, αλλά δεν έχεις εγγραφεί ακόμα για λογαριασμό."
-      value_prop: "Όταν δημιουργείτε έναν λογαριασμό, θυμόμαστε ακριβώς τι έχετε διαβάσει, έτσι ώστε να επιστρέφετε πάντα από εκεί που σταματήσατε. Μπορείτε επίσης να λαμβάνετε ειδοποιήσεις, εδώ και μέσω ηλεκτρονικού ταχυδρομείου, κάθε φορά που κάποιος σας απαντά. Και μπορείτε να σας αρέσουν οι δημοσιεύσεις και να μοιραστείς την αγάπη. :heartpulse:"
     summary:
       enabled_description: "Βλέπεις μια περίληψη αυτού του νήματος: οι πιο ενδιαφέρουσες αναρτήσεις, όπως αυτές καθορίστηκαν από την κοινότητα."
       enable: "Σύνοψη του Νήματος"
@@ -1428,6 +1441,8 @@ el:
       leave_message: "Σίγουρα θελετε να αφήσετε αυτό το μήνυμα;"
       remove_allowed_user: "Θέλεις σίγουρα να αφαιρέσεις τον/την %{name} από αυτή τη συζήτηση;"
       remove_allowed_group: "Θέλεις σίγουρα να αφαιρέσεις τον/την %{name} από αυτό το μήνυμα;"
+      leave: "Αποχώρηση"
+      remove_user: "Αφαίρεση χρήστη"
     email: "Email"
     username: "Όνομα Χρήστη"
     last_seen: "Εθεάθη"
@@ -1474,7 +1489,6 @@ el:
       second_factor_backup: "Συνδεθείτε χρησιμοποιώντας έναν εφεδρικό κωδικό"
       second_factor_backup_description: "Παρακαλώ εισαγάγετε έναν από τους εφεδρικούς κωδικούς σας:"
       second_factor: "Συνδεθείτε χρησιμοποιώντας την εφαρμογή Authenticator"
-      security_key_description: "Όταν έχετε προετοιμάσει το φυσικό κλειδί ασφαλείας σας, πατήστε το κουμπί «Έλεγχος ταυτότητας με κλειδί ασφαλείας» παρακάτω."
       security_key_alternative: "Δοκιμάστε με έναν άλλο τρόπο"
       security_key_authenticate: "Έλεγχος ταυτότητας με κλειδί ασφαλείας"
       security_key_not_allowed_error: "Η διαδικασία ελέγχου ταυτότητας κλειδιού ασφαλείας είτε έληξε είτε ακυρώθηκε."
@@ -1508,22 +1522,16 @@ el:
       not_approved: "Ο λογαριασμός σας δεν έχει εγκριθεί ακόμα. Θα ειδοποιηθείτε με email όταν είστε έτοιμοι να συνδεθείτε."
       google_oauth2:
         name: "Google"
-        title: "μέσω της Google"
       twitter:
         name: "Twitter"
-        title: "μέσω του Twitter"
       instagram:
         name: "Instagram"
-        title: "μέσω του Instagram"
       facebook:
         name: "Facebook"
-        title: "μέσω του Facebook"
       github:
         name: "GitHub"
-        title: "μέσω του GitHub"
       discord:
         name: "Discord"
-        title: "με το Discord"
       second_factor_toggle:
         totp: "Χρησιμοποιήστε αντ 'αυτού μια εφαρμογή ελέγχου ταυτότητας"
         backup_code: "Χρησιμοποιήστε αντ 'αυτού έναν εφεδρικό κωδικό"
@@ -1538,7 +1546,6 @@ el:
       success: "Ο λογαριασμός σας έχει δημιουργηθεί και έχετε συνδεθεί. "
       name_label: "Όνομα"
       password_label: "Κωδικός Πρόσβασης"
-      optional_description: "(προεραιτικό)"
     password_reset:
       continue: "Συνεχίστε στην %{site_name}"
     emoji_set:
@@ -1573,6 +1580,7 @@ el:
         one: "+ %{count} υποκατηγορία"
         other: "+ %{count} υποκατηγορίες"
     select_kit:
+      delete_item: "Διαγραφή %{name}"
       default_header_text: Επιλογή...
       no_content: Δεν βρέθηκαν αποτελέσματα
       filter_placeholder: Αναζήτηση...
@@ -1584,9 +1592,6 @@ el:
       min_content_not_reached:
         one: "Επιλέξτε τουλάχιστον %{count} στοιχείο."
         other: "Επιλέξτε τουλάχιστον %{count} στοιχεία."
-      invalid_selection_length:
-        one: "Η επιλογή πρέπει να έχει τουλάχιστον %{count} χαρακτήρα."
-        other: "Η επιλογή πρέπει να έχει τουλάχιστον %{count} χαρακτήρες."
       components:
         categories_admin_dropdown:
           title: "Διαχείριση κατηγοριών"
@@ -1635,9 +1640,6 @@ el:
       group_mentioned:
         one: "Αναφέροντας %{group}, πρόκειται να λάβει ειδοποίηση <a href='%{group_link}'> %{count} άτομο</a> - είσαι βέβαιος;"
         other: "Αναφέροντας το %{group}, πρόκειται να ειδοποίησεις <a href='%{group_link}'>%{count} μέλη</a> - είσαι σίγουρος;"
-      cannot_see_mention:
-        category: "Ανέφερες το %{username} αλλά δε θα λάβουν ειδοποίηση, επειδή δεν έχουν πρόσβαση σε αυτή την κατηγορία. Θα πρέπει να τους προσθέσεις σε μια ομάδα που έχει πρόσβαση σε αυτή την κατηγορία."
-        private: "Ανέφερες %{username} αλλά δεν θα λάβουν ειδοποίηση, επειδή δεν μπορούν να δουν αυτό το προσωπικό μήνυμα. Πρέπει να τους προσκαλέσεις σε αυτό το ΠΜ."
       duplicate_link: "Όπως φαίνετα ο σύνδεσμος σας προς <b>%{domain}</b> έχει ήδη αναρτηθεί στο νήμα από <b>@%{username}</b> σε μία <a href='%{post_url}'>απάντηση πριν από %{ago}</a> – θέλετε σίγουρα να αναρτήσετε τον σύνδεσμο ξανά;"
       reference_topic_title: "ΑΠ: %{title}"
       error:
@@ -1660,8 +1662,6 @@ el:
       create_whisper: "Ψυθίρισμα"
       create_shared_draft: "Δημιουργήστε κοινόχρηστο προσχέδιο"
       edit_shared_draft: "Επεξεργασία κοινόχρηστου προσχεδίου"
-      title: "Ή πάτα Ctrl+Enter"
-      users_placeholder: "Προσθήκη χρήστη"
       title_placeholder: "Τι αφορά αυτή η συζήτησης σε μία σύντομη πρόταση;"
       title_or_link_placeholder: "Πληκτρολόγησε τίτλο, ή κάνε επικόλληση ένα σύνδεσμο εδώ"
       edit_reason_placeholder: "γιατί αναθεωρείς;"
@@ -1724,10 +1724,6 @@ el:
           confirm: Έχετε αποθηκεύσει ένα νέο προσχέδιο θέματος, το οποίο θα αντικατασταθεί εάν δημιουργήσετε ένα συνδεδεμένο θέμα.
         reply_as_new_group_message:
           label: Απάντηση ως νέο ομαδικό μήνυμα
-          desc: Δημιουργήστε ένα νέο ιδιωτικό μήνυμα με τους ίδιους παραλήπτες
-        reply_as_private_message:
-          label: Νέο μήνυμα
-          desc: Δημιουργήστε ένα νέο προσωπικό μήνυμα
         reply_to_topic:
           label: Απάντηση στο θέμα
           desc: Απάντηση στο θέμα, όχι σε συγκεκριμένη ανάρτηση
@@ -1759,6 +1755,7 @@ el:
       empty: "Δεν βρέθηκαν ειδοποιήσεις."
       post_approved: "Η ανάρτησή σας εγκρίθηκε"
       reviewable_items: "στοιχεία που απαιτούν αναθεώρηση"
+      watching_first_post_label: "Νέο Νήμα"
       mentioned: "<span>%{username}</span> %{description}"
       group_mentioned: "<span>%{username}</span> %{description}"
       quoted: "<span>%{username}</span> %{description}"
@@ -1771,6 +1768,10 @@ el:
       liked_many:
         one: "<span class='multi-user'>%{username}, %{username2} και %{count} ακόμα</span> %{description}"
         other: "<span class='multi-user'>%{username}, %{username2} και %{count} ακόμα</span> %{description}"
+      liked_by_2_users: "%{username}, %{username2}"
+      liked_by_multiple_users:
+        one: "%{username}, %{username2} και %{count} ακόμα"
+        other: "%{username}, %{username2} και %{count} ακόμα"
       liked_consolidated_description:
         one: "μου άρεσε %{count} από τις αναρτήσεις σας"
         other: "μου άρεσαν %{count} από τις αναρτήσεις σας"
@@ -1788,6 +1789,9 @@ el:
       reaction: "<span>%{username}</span> %{description}"
       reaction_2: "<span>%{username}, %{username2}</span> %{description}"
       votes_released: "%{description} - ολοκληρώθηκε"
+      dismiss_confirmation:
+        dismiss: "Απόρριψη"
+        cancel: "Άκυρο"
       group_message_summary:
         one: "%{count} μήνυμα στα εισερχόμενα της ομάδας %{group_name}"
         other: "%{count} μηνύματα στα εισερχόμενα της ομάδας %{group_name} "
@@ -1845,8 +1849,8 @@ el:
       result_count:
         one: "<span>%{count} αποτέλεσμα για</span><span class='term'>%{term}</span>"
         other: "<span>%{count}%{plus} αποτελέσματα για</span><span class='term'>%{term}</span>"
-      title: "ψάξε σε νήματα, αναρτήσεις, χρήστες ή κατηγορίες"
-      full_page_title: "αναζήτηση θεμάτων ή αναρτήσεων"
+      title: "Αναζήτηση"
+      full_page_title: "Αναζήτηση"
       no_results: "Δε βρέθηκαν αποτελέσματα."
       no_more_results: "Δε βρέθηκαν άλλα αποτελέσματα"
       post_format: "#%{post_number} από %{username}"
@@ -1858,6 +1862,11 @@ el:
       search_google: "Προσπαθήστε να κάνετε αναζήτηση με το Google:"
       search_google_button: "Google"
       search_button: "Αναζήτηση"
+      categories: "Κατηγορίες"
+      tags: "Ετικέτες"
+      type:
+        users: "Χρήστες"
+        categories: "Κατηγορίες"
       context:
         user: "Ψάξε στις αναρτήσεις του χρήστη @%{username}"
         category: "Αναζήτηση στην κατηγορία #%{category} "
@@ -1865,7 +1874,6 @@ el:
         topic: "Ψάξε σε αυτό το νήμα"
         private_messages: "Αναζήτηση στα μηνύματα"
       advanced:
-        title: Προηγμένη Αναζήτηση
         posted_by:
           label: Αναρτήθηκε από
         in_category:
@@ -1910,11 +1918,17 @@ el:
             after: μετά
         views:
           label: Προβολές
-    hamburger_menu: "πήγαινε σε άλλη καταχώρηση νήματος ή κατηγορία"
     new_item: "καινούριο"
     go_back: "επιστροφή"
     not_logged_in_user: "σελίδα λογαριασμού που περιέχει σύνοψη της τρέχουσας δραστηριότητας και τις προτιμήσεις"
     current_user: "πήγαινε στη σελίδα του λογαριασμού σου"
+    user_menu:
+      tabs:
+        replies: "Απαντήσεις"
+        mentions: "Αναφορές"
+        likes: "Μου αρέσει"
+        bookmarks: "Σελιδοδείκτες"
+        profile: "Προφίλ"
     topics:
       new_messages_marker: "τελευταία επίσκεψη"
       bulk:
@@ -1922,7 +1936,7 @@ el:
         clear_all: "Καθαρισμός Όλων"
         unlist_topics: "Απόκρυψη Νημάτων"
         relist_topics: "Εμφάνιση Νημάτων"
-        reset_read: "Μηδενισμός Διαβασμένων"
+        defer: "Αναβολή"
         delete: "Διαγραφή Νημάτων"
         dismiss: "Απόρριψη"
         dismiss_read: "Απόρριψη όλων των μη αναγνωσμένων"
@@ -1932,11 +1946,9 @@ el:
         dismiss_new: "Αγνόησε τα νέα"
         toggle: "εναλλαγή μαζικής επιλογής νημάτων"
         actions: "Μαζικές Ενέργειες"
-        change_category: "Θέσε Κατηγορία"
         close_topics: "Κλείσιμο Νημάτων"
         archive_topics: "Αρχειοθέτηση Νημάτων"
         move_messages_to_inbox: "Μετακίνηση στα Εισερχόμενα"
-        notification_level: "Ειδοποιήσεις"
         choose_new_category: "Διάλεξε νέα κατηγορία για τα νήματα:"
         selected:
           one: "Έχεις διαλέξει <b>%{count}</b> νήμα."
@@ -1984,13 +1996,6 @@ el:
       defer:
         help: "Σήμανση ως μη αναγνωσμένο"
         title: "Αναβολή"
-      feature_on_profile:
-        help: "Προσθέστε έναν σύνδεσμο σε αυτό το θέμα στην κάρτα χρήστη και στο προφίλ σας"
-        title: "Προτεινόμενο στο προφίλ"
-      remove_from_profile:
-        warning: "Το προφίλ σας έχει ήδη ένα προτεινόμενο θέμα. Εάν συνεχίσετε, αυτό το θέμα θα αντικαταστήσει το υπάρχον θέμα."
-        help: "Αφαιρέστε τον σύνδεσμο για αυτό το θέμα στο προφίλ χρήστη σας"
-        title: "Αφαίρεση από το προφίλ"
       list: "Νήματα"
       new: "νέο νήμα"
       unread: "αδιάβαστο"
@@ -2054,18 +2059,7 @@ el:
         publish_to: "Δημοσίευση Σε:"
         when: "Πότε:"
         time_frame_required: "Παρακαλώ επιλέξτε ένα χρονικό πλαίσιο"
-      auto_update_input:
-        none: "Επιλέξτε χρονικό περιθώριο"
-        now: "Τώρα"
-        later_today: "Αργότερα σήμερα"
-        tomorrow: "Αύριο"
-        later_this_week: "Αργότερα αυτή την εβδομάδα"
-        this_weekend: "Αυτό το Σαββατοκύριακο"
-        next_week: "Την άλλη εβδομάδα"
-        next_month: "Τον άλλο μήνα"
-        forever: "Για Πάντα"
-        pick_date_and_time: "Επίλεξε ημερομηνία και ώρα"
-        set_based_on_last_post: "Κλείσε ανάλογα με την τελευταία ανάρτηση"
+        duration: "Διάρκεια"
       publish_to_category:
         title: "Χρονοδιάγραμμα Δημοσιεύσεων"
       temp_open:
@@ -2103,17 +2097,10 @@ el:
         replies_short: "%{current} / %{total}"
       progress:
         title: πρόοδος νήματος
-        go_top: "αρχή"
-        go_bottom: "τέλος"
-        go: "πάμε"
-        jump_bottom: "μετάβαση στην τελευταία ανάρτηση"
         jump_prompt: "μετάβαση σε..."
         jump_prompt_long: "Μετάβαση σε..."
-        jump_bottom_with_number: "μετάβαση στην ανάρτηση %{post_number}"
         jump_prompt_to_date: "μέχρι σήμερα"
         jump_prompt_or: "ή"
-        total: σύνολο αναρτήσεων
-        current: τρέχουσα ανάρτηση
       notifications:
         title: άλλαξε το πόσο συχνά ειδοποιείσαι για αυτό το θέμα
         reasons:
@@ -2169,10 +2156,7 @@ el:
         unpin: "Ξεκαρφίτσωμα Νήματος..."
         unarchive: "Επαναφορά Νήματος από Αρχείο"
         archive: "Αρχειοθέτηση Νήματος"
-        invisible: "Απόκρυψη Νήματος"
-        visible: "Εμφάνιση Νήματος"
         reset_read: "Μηδενισμός Διαβασμένων"
-        make_public: "Κάνε Δημόσιο το Νήμα"
         make_private: "Κάνε προσωπικό μήνυμα"
         reset_bump_date: "Επαναφορά ημερομηνίας ώθησης"
       feature:
@@ -2184,7 +2168,6 @@ el:
         title: "Απάντηση"
         help: "ξεκινήστε να συνθέτετε μια απάντηση σε αυτό το νήμα"
       share:
-        title: "Κοινοποίηση"
         extended_title: "Μοιραστείτε έναν σύνδεσμο"
         help: "κοινοποίησε έναν σύνδεσμο προς αυτό το νήμα"
         invite_users: "Πρόσκληση"
@@ -2353,6 +2336,7 @@ el:
           other: "Έχεις επιλέξει <b>%{count}</b> αναρτήσεις."
     post:
       quote_reply: "Παράθεση"
+      quote_edit: "Επεξεργασία"
       quote_share: "Κοινοποίηση"
       edit_reason: "Αιτία:"
       post_number: "ανάρτηση %{number}"
@@ -2401,8 +2385,6 @@ el:
       whisper: "αυτή η ανάρτηση είναι εμπιστευτική προς τους συντονιστές"
       wiki:
         about: "αυτή η ανάρτηση είναι βίκι"
-      archetypes:
-        save: "Αποθήκευση Επιλογών"
       few_likes_left: "Ευχαριστούμε που μοιράστηκες την αγάπη σου! Έχεις μόνο μερικά \"μου αρέσει\" ακόμα να χρησιμοποιήσεις σήμερα."
       controls:
         reply: "απάντησε σε αυτή την ανάρτηση"
@@ -2435,8 +2417,6 @@ el:
         rebake: "Ανανέωση HTML"
         publish_page: "Δημοσίευση σελίδας"
         unhide: "Επανεμφάνιση"
-        change_owner: "Αλλαγή Ιδιοκτησίας"
-        grant_badge: "Απονομή Παράσημου"
         lock_post: "Κλείδωμα ανάρτησης"
         lock_post_description: "αποτρέψτε τον συντάκτη από την επεξεργασία αυτής της ανάρτησης"
         unlock_post: "Ξεκλείδωμα ανάρτησης"
@@ -2444,7 +2424,6 @@ el:
         delete_topic_disallowed_modal: "Δεν έχετε άδεια διαγραφής αυτού του θέματος. Εάν θέλετε πραγματικά να διαγραφεί, υποβάλετε μια επισήμανση για προσοχή από συντονιστή μαζί με το σκεπτικό."
         delete_topic_disallowed: "δεν έχετε άδεια να διαγράψετε αυτό το θέμα"
         delete_topic: "διαγραφή νήματος"
-        add_post_notice: "Προσθήκη ειδοποίησης προσωπικού"
         remove_timer: "αφαίρεση χρονοδιακόπτη"
       actions:
         people:
@@ -2470,10 +2449,6 @@ el:
         confirm:
           one: "Είστε βέβαιοι ότι θέλετε να διαγράψετε αυτήν την ανάρτηση;"
           other: "Είστε βέβαιοι ότι θέλετε να διαγράψετε αυτές τις %{count} αναρτήσεις;"
-      merge:
-        confirm:
-          one: "Είσαι σίγουρος πως θέλεις να συγχωνεύσεις αυτές τις δημοσιεύσεις;"
-          other: "Είσαι σίγουρος πως θέλεις να συγχωνεύσεις αυτές τις %{count} αναρτήσεις;"
       revisions:
         controls:
           first: "Πρώτη αναθεώρηση"
@@ -2515,6 +2490,7 @@ el:
         name: "Όνομα"
         name_placeholder: "Σε τι χρησιμεύει αυτός ο σελιδοδείκτης;"
         set_reminder: "Υπενθύμισέ μου"
+        options: "Επιλογές"
         actions:
           delete_bookmark:
             name: "Διαγραφή σελιδοδείκτη"
@@ -2523,7 +2499,6 @@ el:
             name: "Επεξεργασία σελιδοδείκτη"
             description: "Επεξεργαστείτε το όνομα του σελιδοδείκτη ή αλλάξτε την ημερομηνία και την ώρα υπενθύμισης"
     category:
-      can: "μπορεί&hellip; "
       none: "(χωρίς κατηγορία)"
       all: "Όλες οι κατηγορίες"
       choose: "κατηγορία&hellip;"
@@ -2540,10 +2515,8 @@ el:
       tags_tab_description: "Οι ετικέτες και οι ομάδες ετικετών που καθορίζονται παραπάνω θα είναι διαθέσιμες μόνο σε αυτήν την κατηγορία και άλλες κατηγορίες που τις καθορίζουν επίσης. Δε θα είναι διαθέσιμες για χρήση σε άλλες κατηγορίες."
       tag_groups_placeholder: "(Προαιρετική) λίστα επιτρεπόμενων ομάδων ετικετών"
       allow_global_tags_label: "Επιτρέψτε επίσης άλλες ετικέτες"
-      tag_group_selector_placeholder: "(Προαιρετικό) Ομάδα ετικετών"
-      required_tag_group_description: "Απαιτήστε τα νέα θέματα να έχουν ετικέτες από μια ομάδα ετικετών:"
-      min_tags_from_required_group_label: "Αριθμός ετικετών:"
-      required_tag_group_label: "Ομάδα ετικετών:"
+      required_tag_group:
+        delete: "Σβήσιμο"
       topic_featured_link_allowed: "Επίτρεψε προτεινόμενους συνδέσμους σε αυτή την κατηγορία"
       delete: "Διαγραφή Κατηγορίας"
       create: "Νέα Κατηγορία"
@@ -2555,7 +2528,6 @@ el:
       save_error: Παρουσιάστηκε κάποιο σφάλμα κατά την αποθήκευση της κατηγορίας.
       name: "Όνομα Κατηγορίας"
       description: "Περιγραφή"
-      topic: "νήμα κατηγορίας"
       logo: "Εικονίδιο Κατηγορίας"
       background_image: "Εικόνα Φόντου Κατηγορίας"
       badge_colors: "Χρώματα παρασήμων"
@@ -2597,7 +2569,6 @@ el:
       default_list_filter: "Προεπιλεγμένο φίλτρο λίστας:"
       allow_badges_label: "Να επιτρέπεται η απονομή παράσημων σε αυτή την κατηγορία"
       edit_permissions: "Επεξεργασία Δικαιωμάτων"
-      reviewable_by_group: "Εκτός από το προσωπικό, το περιεχόμενο αυτής της κατηγορίας μπορεί επίσης να αναθεωρηθεί από:"
       review_group_name: "όνομα ομάδας"
       require_topic_approval: "Απαιτήστε έγκριση συντονιστή για όλα τα νέα θέματα"
       require_reply_approval: "Απαιτήστε έγκριση συντονιστή για όλες τις νέες απαντήσεις"
@@ -2737,6 +2708,9 @@ el:
         title: "Αυτό το θέμα είναι ένα προσωπικό μήνυμα"
         help: "Αυτό το θέμα είναι ένα προσωπικό μήνυμα"
     posts: "Αναρτήσεις"
+    pending_posts:
+      label: "Εκκρεμή"
+      label_with_count: "Εκρεμείς (%{count})"
     original_post: "Αρχική Ανάρτηση"
     views: "Προβολές"
     views_lowercase:
@@ -2834,6 +2808,7 @@ el:
       full: "Δημιούργησε / Απάντησε / Δες"
       create_post: "Απάντησε / Δες"
       readonly: "Δες"
+    preloader_text: "Φόρτωση"
     lightbox:
       download: "λήψη"
       previous: "Προηγούμενο (πλήκτρο αριστερού βέλους)"
@@ -2915,7 +2890,6 @@ el:
         edit: "%{shortcut} Επεξεργασία ανάρτησης"
         delete: "%{shortcut} Διαγραφή ανάρτησης"
         mark_muted: "%{shortcut} Σίγαση νήματος"
-        mark_regular: "%{shortcut} Κανονικό (προεπιλογή) νήμα"
         mark_tracking: "%{shortcut} Παρακολούθηση νήματος"
         mark_watching: "%{shortcut} Επιτήρηση Νήματος"
         print: "%{shortcut} Εκτύπωση νήματος"
@@ -2957,8 +2931,9 @@ el:
           name: Άλλο
         posting:
           name: Αναρτάται
+    download_calendar:
+      download: "Κατέβασμα"
     tagging:
-      all_tags: "Όλες οι Ετικέτες"
       other_tags: "Άλλες ετικέτες"
       selector_all_tags: "όλες οι ετικέτες"
       selector_no_tags: "καμία ετικέτα"
@@ -2966,6 +2941,7 @@ el:
       tags: "Ετικέτες"
       choose_for_topic: "προαιρετικές ετικέτες"
       info: "Πληροφορίες"
+      default_info: "Αυτή η ετικέτα δεν περιορίζεται σε καμία κατηγορία και δεν έχει συνώνυμα."
       category_restricted: "Αυτή η ετικέτα περιορίζεται σε κατηγορίες στις οποίες δεν έχετε άδεια πρόσβασης."
       synonyms: "Συνώνυμα"
       synonyms_description: "Όταν χρησιμοποιούνται οι ακόλουθες ετικέτες, θα αντικατασταθούν με <b>%{base_tag_name}</b>."
@@ -2975,7 +2951,6 @@ el:
       category_restrictions:
         one: "Μπορεί να χρησιμοποιηθεί μόνο σε αυτήν την κατηγορία:"
         other: "Μπορεί να χρησιμοποιηθεί μόνο σε αυτές τις κατηγορίες:"
-      edit_synonyms: "Διαχείριση συνωνύμων"
       add_synonyms_label: "Προσθήκη συνωνύμων:"
       add_synonyms: "Προσθήκη"
       add_synonyms_explanation:
@@ -2992,8 +2967,7 @@ el:
       delete_confirm_synonyms:
         one: "Το συνώνυμό του θα διαγραφεί επίσης."
         other: "Τα %{count} συνώνυμά του θα διαγραφούν επίσης."
-      rename_tag: "Μετονομασία Ετικέτας"
-      rename_instructions: "Επίλεξε ένα καινούριο όνομα για την ετικέτα:"
+      description: "Περιγραφή"
       sort_by: "Ταξινόμηση κατά:"
       sort_by_count: "άθροισμα"
       sort_by_name: "όνομα"
@@ -3012,7 +2986,6 @@ el:
       delete_no_unused_tags: "Δεν υπάρχουν αχρησιμοποίητες ετικέτες."
       delete_unused: "Διαγραφή αχρησιμοποίητων ετικετών"
       delete_unused_description: "Διαγράψτε όλες τις ετικέτες που δεν επισυνάπτονται σε θέματα ή προσωπικά μηνύματα"
-      cancel_delete_unused: "Άκυρο"
       filters:
         without_category: "%{filter} %{tag} νήματα"
         with_category: "%{filter} %{tag} νήματα στην %{category}"
@@ -3029,7 +3002,7 @@ el:
           title: "Παρακολουθείται"
           description: "Θα παρακολουθείτε αυτόματα όλα τα θέματα με αυτήν την ετικέτα. Ένας αριθμός μη αναγνωσμένων και νέων αναρτήσεων θα εμφανιστεί δίπλα στο θέμα."
         regular:
-          title: "Τακτικός"
+          title: "Κανονικό"
           description: "Θα λαμβάνεις ειδοποίηση εάν κάποιος αναφέρει το @όνομά σου ή απαντήσει σε αυτή τη ανάρτηση."
         muted:
           title: "Σίγαση"
@@ -3086,6 +3059,55 @@ el:
         member: "μέλος"
         regular: "τακτικός"
         leader: "αρχηγός"
+    sidebar:
+      unread_count:
+        one: "%{count} μη αναγνωσμένο"
+        other: "%{count} αδιάβαστα"
+      new_count:
+        one: "%{count} νέο"
+        other: "%{count} νέα"
+      more: "Περισσότερα"
+      all_categories: "Όλες οι κατηγορίες"
+      sections:
+        about:
+          header_link_text: "Σχετικά"
+        messages:
+          header_link_text: "Μηνύματα"
+          links:
+            inbox: "Εισερχόμενα"
+            sent: "Απεσταλμένα"
+            new: "Νέα"
+            new_with_count: "Νέα (%{count})"
+            unread: "Αδιάβαστα"
+            unread_with_count: "Μη αναγνωσμένα (%{count})"
+            archive: "Αρχείο"
+        tags:
+          header_link_text: "Ετικέτες"
+        categories:
+          header_link_text: "Κατηγορίες"
+        community:
+          header_link_text: "Κοινότητα"
+          links:
+            about:
+              content: "Σχετικά"
+            admin:
+              content: "Διαχείριση"
+            badges:
+              content: "Παράσημα"
+            faq:
+              content: "Συχνές ερωτήσεις"
+            tracked:
+              content: "Παρακολουθείται"
+            groups:
+              content: "Ομάδες"
+              title: "Όλες οι ομάδες"
+            users:
+              content: "Χρήστες"
+            my_posts:
+              content: "Οι αναρτήσεις μου"
+            review:
+              content: "Ανασκόπηση"
+              title: "ανασκόπηση"
   admin_js:
     type_to_filter: "γράψε εδώ για φιλτράρισμα..."
     admin:
@@ -3214,7 +3236,6 @@ el:
               description: "Οι διαχειριστές μπορούν να δουν όλες τις ομάδες."
             members_visibility_levels:
               title: "Ποιος μπορεί να δει τα μέλη αυτής της ομάδας;"
-              description: "Οι διαχειριστές μπορούν να δουν τα μέλη όλων των ομάδων."
             publish_read_state: "Σε ομαδικά μηνύματα δημοσιεύστε την ομαδική κατάσταση ανάγνωσης"
           membership:
             automatic: Αυτόματα
@@ -3274,7 +3295,6 @@ el:
         revoked: Ανακλήθηκε
         not_shown_again: Αυτό το κλειδί δε θα εμφανιστεί ξανά. Βεβαιωθείτε ότι έχετε λάβει ένα αντίγραφο πριν συνεχίσετε.
         continue: Συνεχίστε
-        use_global_key: Καθολικό κλειδί (επιτρέπει όλες τις ενέργειες)
         scopes:
           description: |
             Όταν χρησιμοποιείτε πεδία εφαρμογής, μπορείτε να περιορίσετε ένα κλειδί API σε ένα συγκεκριμένο σύνολο τελικών σημείων.
@@ -3291,7 +3311,6 @@ el:
               read: Διαβάστε ένα θέμα ή μια συγκεκριμένη ανάρτηση σε αυτό. Υποστηρίζεται επίσης το RSS.
               write: Δημιουργήστε ένα νέο θέμα ή αναρτήστε σε ένα υπάρχον.
               read_lists: Διαβάστε λίστες θεμάτων όπως κορυφαία, νέα, πρόσφατα, κλπ. Υποστηρίζεται επίσης το RSS.
-              wordpress: Απαραίτητο για να λειτουργήσει η προσθήκη WordPress wp-discourse.
             users:
               bookmarks: Λίστα σελιδοδεικτών χρηστών. Επιστρέφει τις υπενθυμίσεις σελιδοδεικτών όταν χρησιμοποιείτε τη μορφή ICS.
               show: Λάβετε πληροφορίες σχετικά με έναν χρήστη.
@@ -3484,7 +3503,6 @@ el:
         delete_confirm: 'Είστε βέβαιοι πως θέλετε να διαγράψετε το «%{theme_name}»;'
         color: "Χρώμα"
         opacity: "Αδιαφάνεια"
-        copy: "Αντιγραφή"
         copy_to_clipboard: "Αντιγραφή στο Clipboard"
         copied_to_clipboard: "Αντιγράφτηκε στο Clipboard"
         copy_to_clipboard_error: "Σφάλμα αντιγραφής δεδομένων στο Clipboard"
@@ -3636,12 +3654,8 @@ el:
           color_definitions:
             text: "Ορισμοί χρωμάτων"
             title: "Εισαγωγή προσαρμοσμένων ορισμών χρωμάτων (μόνο για προχωρημένους χρήστες)"
-          head_tag:
-            text: "</head>"
-            title: "HTML το οποίο θα προστίθεται πριν το </head> tag"
           body_tag:
-            text: "</body>"
-            title: "HTML το οποίο θα προστίθεται πριν το </body> tag"
+            text: "Body"
           yaml:
             text: "YAML"
             title: "Ορισμός ρυθμίσεων θέματος σε μορφή YAML"
@@ -3919,9 +3933,6 @@ el:
           title: "Ελεγχόμενες IP"
           description: 'Διευθύνσεις IP που παρακολουθούνται. Χρησιμοποιήστε το «Επιτρέπεται» για να επιτρέψετε τη λίστα διευθύνσεων IP.'
           delete_confirm: "Σίγουρα θέλεις να αφαιρέσεις τον κανόνα για τη διεύθυνση %{ip_address};"
-          roll_up_confirm: "Σίγουρα θες να συνοψίσεις σε υποδίκτυα τις συχνά αποκλεισμένες διευθύνσεις IP;"
-          rolled_up_some_subnets: "Οι αποκλεισμένες διευθύνσεις IP συνοψίστηκαν επιτυχώς στα παρακάτω υποδίκτυα: %{subnets}."
-          rolled_up_no_subnet: "Δεν υπήρχε κάτι για να συνοψιστεί."
           actions:
             block: "Αποκλεισμός"
             do_nothing: "Επιτρέπεται"
@@ -4044,8 +4055,6 @@ el:
         silence_message_placeholder: "(αφήστε κενό για να στείλετε το προκαθορισμένο μήνυμα)"
         suspended_until: "(έως %{until})"
         cant_suspend: "Ο χρήστης αυτός δεν μπορεί να αποβληθεί."
-        delete_all_posts: "Σβήσε όλες τις αναρτήσεις"
-        delete_posts_progress: "Διαγραφή αναρτήσεων..."
         delete_posts_failed: "Παρουσιάστηκε πρόβλημα κατά τη διαγραφή των αναρτήσεων."
         penalty_post_actions: "Τι θα θέλατε να κάνετε με τη σχετική ανάρτηση;"
         penalty_post_delete: "Διαγραφή ανάρτησης"
@@ -4103,6 +4112,12 @@ el:
         anonymize_yes: "Ναι, ανωνυμοποίησε αυτόν τον λογαριασμό"
         anonymize_failed: "Παρουσιάστηκε ένα σφάλμα κατά την ανωνυμοποίηση του λογαριασμού."
         delete: "Διαγραφή χρήστη"
+        delete_posts:
+          button: "Σβήσε όλες τις αναρτήσεις"
+          progress:
+            description: "Διαγραφή αναρτήσεων..."
+          confirmation:
+            cancel: "Άκυρο"
         merge:
           button: "Συγχώνευση"
           prompt:
@@ -4138,7 +4153,6 @@ el:
         cant_delete_all_too_many_posts:
           one: "Δεν γίνεται να σβήσεις όλες τις αναρτήσεις επειδή ο χρήστης έχει περισσότερες από %{count} αναρτήσεις. (Η ρύθμιση «delete_all_posts_max»)"
           other: "Δεν γίνεται να σβήσεις όλες τις αναρτήσεις επειδή ο χρήστης έχει περισσότερες από %{count} αναρτήσεις. (Η ρύθμιση «delete_all_posts_max»)"
-        delete_confirm: "Είναι γενικά προτιμότερο να ανωνυμοποιούνται οι χρήστες αντί να διαγράφονται, για να αποφεύγεται η αφαίρεση περιεχομένου από υπάρχουσες συζητήσεις.<br><br>Είστε βέβαιοι ότι θέλετε να διαγράψετε αυτόν τον χρήστη; Αυτό είναι μόνιμο!"
         delete_and_block: "Σβήσε και <b>απόκλεισε</b> αυτή την διεύθυνση email και τη διεύθυνση IP "
         delete_dont_block: "Μόνο διαγραφή"
         deleting_user: "Διαγραφή χρήστη..."
@@ -4174,7 +4188,6 @@ el:
         trust_level_2_users: "Χρήστες Επιπέδου Εμπιστοσύνης 2"
         trust_level_3_requirements: "Προϋποθέσεις Επιπέδου Εμπιστοσύνης 3"
         trust_level_locked_tip: "το επίπεδο εμπιστοσύνης κλειδώθηκε, το σύστημα δεν θα προβιβάσει ή υποβιβάσει τον χρήστη"
-        trust_level_unlocked_tip: "το επίπεδο εμπιστοσύνης ξεκλειδώθηκε, το σύστημα μπορεί να προβιβάσει ή υποβιβάσει τον χρήστη"
         lock_trust_level: "Κλείδωσε το επίπεδο εμπιστοσύνης"
         unlock_trust_level: "Ξεκλείδωσε το επίπεδο εμπιστοσύνης"
         silenced_count: "Σιγήθηκαν"
@@ -4229,19 +4242,15 @@ el:
         delete_confirm: "Είσαι σίγουρος πως θέλεις να διαγράψεις αυτό το πεδίο χρήστη;"
         options: "Επιλογές"
         required:
-          title: "Απαιτείται κατά την εγγραφή;"
           enabled: "απαραίτητο"
           disabled: "δεν είναι απαραίτητο"
         editable:
-          title: "Μπορεί να αλλάξει μετά την εγγραφή;"
           enabled: "επεξεργάσιμο"
           disabled: "μη επεξεργάσιμο"
         show_on_profile:
-          title: "Εμφάνιση στο δημόσιο προφίλ;"
           enabled: "εμφάνιση στο προφίλ"
           disabled: "να μην εμφανίζεται στο προφίλ"
         show_on_user_card:
-          title: "Εμφάνιση στην κάρτα του χρήστη;"
           enabled: "να εμφανίζεται στην κάρτα του χρήστη"
           disabled: "να μην εμφανίζεται στην κάρτα του χρήστη"
         field_types:
@@ -4364,7 +4373,6 @@ el:
           post_revision: "Όταν ένας χρήστης επεξεργάζεται ή δημιουργεί μια ανάρτηση"
           trust_level_change: "Όταν το επίπεδο εμπιστοσύνης ενός χρήστη αλλάξει"
           user_change: "Όταν ένας χρήστης δημιουργείται ή υφίσταται επεξεργασία "
-          post_processed: "Αφού μια ανάρτηση έχει δεχτεί επεξεργασία"
         preview:
           link_text: "Προεπισκόπηση απονεμηθέντων παράσημων"
           plan_text: "Προεπισκόπηση του ερωτήματος"
@@ -4396,11 +4404,9 @@ el:
           perform: "Απονομή σήματος στους χρήστες"
           upload_csv: Επιφορτώστε ένα CSV είτε με emails χρηστών είτε με ονόματα χρηστών
           aborted: Παρακαλώ επιφορτώστε ένα CSV που περιέχει είτε emails χρηστών είτε ονόματα χρηστών
-          success: Το CSV σας παραλήφθηκε και οι χρήστες θα λάβουν το σήμα τους σύντομα.
           replace_owners: Αφαιρέστε το σήμα από προηγούμενους κατόχους
       emoji:
         title: "Emoji"
-        help: "Πρόσθεσε ένα νέο emoji που θα είναι διαθέσιμο σε όλους. (Συμβουλή: μπορείς να σύρεις πολλά αρχεία ταυτόχρονα)"
         add: "Προσθήκη νέου emoji"
         uploading: "Ανεβαίνει..."
         name: "Όνομα"
@@ -4411,7 +4417,6 @@ el:
       embedding:
         get_started: "Εάν θέλεις να ενσωματώσεις το Discourse σε μια άλλη ιστοσελίδα, ξεκίνα με το να προσθέσεις το host του."
         confirm_delete: "Είσαι βέβαιος πως θέλεις να διαγράψεις το host;"
-        sample: "Χρησιμοποιήστε τον ακόλουθο HTML κώδικα στον ιστότοπό σας για να ενθέσετε θέματα. Αντικαταστήστε <b>REPLACE_ME</b> με το κανονικό URL της σελίδας στην οποία θα ενθέσετε το θέμα. "
         title: "Ενσωμάτωση"
         host: "Επιτρεπόμενα hosts"
         class_name: "Class Name"
@@ -4462,15 +4467,13 @@ el:
           replace: "Αντικατάσταση"
   wizard_js:
     wizard:
-      done: "Ολοκληρώθηκε"
-      finish: "Τέλος"
       back: "Πίσω"
       next: "Επόμενο"
+      step-text: "Βήμα"
       step: "%{current} από %{total}"
       upload: "Ανέβασμα"
       uploading: "Ανεβαίνει..."
       upload_error: "Λυπούμαστε, παρουσιάστηκε σφάλμα κατά το ανέβασμα του αρχείου. Προσπάθησε πάλι."
-      quit: "Ίσως αργότερα"
       staff_count:
         one: "Η κοινότητα έχει %{count} συνεργάτη (εσένα). "
         other: "Η κοινότητά σας έχει %{count} συνεργάτες, μαζί με σένα."
@@ -4482,6 +4485,5 @@ el:
           moderator: "Συντονιστής"
           regular: "Τακτικός χρήστης"
       previews:
-        topic_title: "Θέμα συζήτησης"
         share_button: "Κοινοποίηση"
         reply_button: "Απάντηση"

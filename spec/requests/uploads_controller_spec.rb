@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe UploadsController do
+RSpec.describe UploadsController do
   fab!(:user) { Fabricate(:user) }
 
   describe '#create' do
@@ -11,7 +9,7 @@ describe UploadsController do
       expect(response.status).to eq(403)
     end
 
-    context 'logged in' do
+    context 'when logged in' do
       before do
         sign_in(user)
       end
@@ -122,11 +120,11 @@ describe UploadsController do
         expect(response.status).to eq(422)
         expect(Jobs::CreateAvatarThumbnails.jobs.size).to eq(0)
         errors = response.parsed_body["errors"]
-        expect(errors.first).to eq(I18n.t("upload.attachments.too_large", max_size_kb: 1))
+        expect(errors.first).to eq(I18n.t("upload.attachments.too_large_humanized", max_size: "1 KB"))
       end
 
       it 'ensures allow_uploaded_avatars is enabled when uploading an avatar' do
-        SiteSetting.allow_uploaded_avatars = false
+        SiteSetting.allow_uploaded_avatars = 'disabled'
         post "/uploads.json", params: { file: logo, type: "avatar" }
         expect(response.status).to eq(422)
       end
@@ -139,7 +137,7 @@ describe UploadsController do
 
       it 'always allows admins to upload avatars' do
         sign_in(Fabricate(:admin))
-        SiteSetting.allow_uploaded_avatars = false
+        SiteSetting.allow_uploaded_avatars = 'disabled'
 
         post "/uploads.json", params: { file: logo, type: "avatar" }
         expect(response.status).to eq(200)
@@ -310,8 +308,8 @@ describe UploadsController do
         .to eq(%Q|attachment; filename="#{upload.original_filename}"; filename*=UTF-8''#{upload.original_filename}|)
     end
 
-    context "prevent anons from downloading files" do
-      it "returns 404 when an anonymous user tries to download a file" do
+    context "when user is anonymous" do
+      it "returns 404" do
         upload = upload_file("small.pdf", "pdf")
         delete "/session/#{user.username}.json"
 
@@ -401,9 +399,9 @@ describe UploadsController do
         expect(response).to redirect_to(upload.url)
       end
 
-      context "when upload is secure and secure media enabled" do
+      context "when upload is secure and secure uploads enabled" do
         before do
-          SiteSetting.secure_media = true
+          SiteSetting.secure_uploads = true
           upload.update(secure: true)
         end
 
@@ -427,7 +425,7 @@ describe UploadsController do
           sign_in(user)
           get upload.short_path
 
-          expected_max_age = S3Helper::DOWNLOAD_URL_EXPIRES_AFTER_SECONDS - UploadsController::SECURE_REDIRECT_GRACE_SECONDS
+          expected_max_age = SiteSetting.s3_presigned_get_url_expires_after_seconds - UploadsController::SECURE_REDIRECT_GRACE_SECONDS
           expect(expected_max_age).to be > 0 # Sanity check that the constants haven't been set to broken values
 
           expect(response.headers["Cache-Control"]).to eq("max-age=#{expected_max_age}, private")
@@ -450,8 +448,8 @@ describe UploadsController do
     describe "local store" do
       fab!(:image_upload) { upload_file("smallest.png") }
 
-      it "does not return secure media when using local store" do
-        secure_url = image_upload.url.sub("/uploads", "/secure-media-uploads")
+      it "does not return secure uploads when using local store" do
+        secure_url = image_upload.url.sub("/uploads", "/secure-uploads")
         get secure_url
 
         expect(response.status).to eq(404)
@@ -460,12 +458,12 @@ describe UploadsController do
 
     describe "s3 store" do
       let(:upload) { Fabricate(:upload_s3) }
-      let(:secure_url) { upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-media-uploads") }
+      let(:secure_url) { upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-uploads") }
 
       before do
         setup_s3
         SiteSetting.authorized_extensions = "*"
-        SiteSetting.secure_media = true
+        SiteSetting.secure_uploads = true
       end
 
       it "should return 404 for anonymous requests requests" do
@@ -481,7 +479,7 @@ describe UploadsController do
         expect(response.redirect_url).to match("Amz-Expires")
       end
 
-      it "should return secure media URL when looking up urls" do
+      it "should return secure uploads URL when looking up urls" do
         upload.update_column(:secure, true)
         sign_in(user)
 
@@ -489,7 +487,7 @@ describe UploadsController do
         expect(response.status).to eq(200)
 
         result = response.parsed_body
-        expect(result[0]["url"]).to match("secure-media-uploads")
+        expect(result[0]["url"]).to match("secure-uploads")
       end
 
       context "when the upload cannot be found from the URL" do
@@ -573,9 +571,9 @@ describe UploadsController do
         end
       end
 
-      context "when secure media is disabled" do
+      context "when secure uploads is disabled" do
         before do
-          SiteSetting.secure_media = false
+          SiteSetting.secure_uploads = false
         end
 
         context "if the upload is secure false, meaning the ACL is probably public" do
@@ -584,7 +582,7 @@ describe UploadsController do
           end
 
           it "should redirect to the regular show route" do
-            secure_url = upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-media-uploads")
+            secure_url = upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-uploads")
             sign_in(user)
             get secure_url
 
@@ -599,7 +597,7 @@ describe UploadsController do
           end
 
           it "should redirect to the presigned URL still otherwise we will get a 403" do
-            secure_url = upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-media-uploads")
+            secure_url = upload.url.sub(SiteSetting.Upload.absolute_base_url, "/secure-uploads")
             sign_in(user)
             get secure_url
 
@@ -624,23 +622,23 @@ describe UploadsController do
       expect(result[0]["short_path"]).to eq(upload.short_path)
     end
 
-    describe 'secure media' do
+    describe 'secure uploads' do
       let(:upload) { Fabricate(:upload_s3, secure: true) }
 
       before do
         setup_s3
         SiteSetting.authorized_extensions = "pdf|png"
-        SiteSetting.secure_media = true
+        SiteSetting.secure_uploads = true
       end
 
-      it 'returns secure url for a secure media upload' do
+      it 'returns secure url for a secure uploads upload' do
         sign_in(user)
 
         post "/uploads/lookup-urls.json", params: { short_urls: [upload.short_url] }
         expect(response.status).to eq(200)
 
         result = response.parsed_body
-        expect(result[0]["url"]).to match("/secure-media-uploads")
+        expect(result[0]["url"]).to match("/secure-uploads")
         expect(result[0]["short_path"]).to eq(upload.short_path)
       end
 
@@ -652,7 +650,7 @@ describe UploadsController do
         expect(response.status).to eq(200)
 
         result = response.parsed_body
-        expect(result[0]["url"]).to match("/secure-media-uploads")
+        expect(result[0]["url"]).to match("/secure-uploads")
         expect(result[0]["short_path"]).to eq(upload.short_path)
       end
     end
@@ -701,6 +699,763 @@ describe UploadsController do
         expect(result["width"]).to eq(upload.width)
         expect(result["height"]).to eq(upload.height)
         expect(result["human_filesize"]).to eq(upload.human_filesize)
+      end
+    end
+  end
+
+  describe "#generate_presigned_put" do
+    context "when the store is external" do
+      before do
+        sign_in(user)
+        SiteSetting.enable_direct_s3_uploads = true
+        setup_s3
+      end
+
+      it "errors if the correct params are not provided" do
+        post "/uploads/generate-presigned-put.json", params: { file_name: "test.png" }
+        expect(response.status).to eq(400)
+        post "/uploads/generate-presigned-put.json", params: { type: "card_background" }
+        expect(response.status).to eq(400)
+      end
+
+      it "generates a presigned URL and creates an external upload stub" do
+        post "/uploads/generate-presigned-put.json", params: {
+          file_name: "test.png", type: "card_background", file_size: 1024
+        }
+        expect(response.status).to eq(200)
+
+        result = response.parsed_body
+
+        external_upload_stub = ExternalUploadStub.where(
+          unique_identifier: result["unique_identifier"],
+          original_filename: "test.png",
+          created_by: user,
+          upload_type: "card_background",
+          filesize: 1024
+        )
+        expect(external_upload_stub.exists?).to eq(true)
+        expect(result["key"]).to include(FileStore::S3Store::TEMPORARY_UPLOAD_PREFIX)
+        expect(result["url"]).to include(FileStore::S3Store::TEMPORARY_UPLOAD_PREFIX)
+        expect(result["url"]).to include("Amz-Expires")
+      end
+
+      it "includes accepted metadata in the presigned url when provided" do
+        post "/uploads/generate-presigned-put.json", **{
+          params: {
+            file_name: "test.png",
+            file_size: 1024,
+            type: "card_background",
+            metadata: {
+              "sha1-checksum" => "testing",
+              "blah" => "wontbeincluded"
+            }
+          }
+        }
+        expect(response.status).to eq(200)
+
+        result = response.parsed_body
+        expect(result['url']).to include("&x-amz-meta-sha1-checksum=testing")
+        expect(result['url']).not_to include("&x-amz-meta-blah=wontbeincluded")
+      end
+
+      it "rate limits" do
+        RateLimiter.enable
+        RateLimiter.clear_all!
+
+        stub_const(ExternalUploadHelpers, "PRESIGNED_PUT_RATE_LIMIT_PER_MINUTE", 1) do
+          post "/uploads/generate-presigned-put.json", params: { file_name: "test.png", type: "card_background", file_size: 1024 }
+          post "/uploads/generate-presigned-put.json", params: { file_name: "test.png", type: "card_background", file_size: 1024 }
+        end
+        expect(response.status).to eq(429)
+      end
+    end
+
+    context "when the store is not external" do
+      before do
+        sign_in(user)
+      end
+
+      it "returns 404" do
+        post "/uploads/generate-presigned-put.json", params: { file_name: "test.png", type: "card_background", file_size: 1024 }
+        expect(response.status).to eq(404)
+      end
+    end
+  end
+
+  describe "#create_multipart" do
+    context "when the store is external" do
+      let(:mock_multipart_upload_id) { "ibZBv_75gd9r8lH_gqXatLdxMVpAlj6CFTR.OwyF3953YdwbcQnMA2BLGn8Lx12fQNICtMw5KyteFeHw.Sjng--" }
+      let(:test_bucket_prefix) { "test_#{ENV['TEST_ENV_NUMBER'].presence || '0'}" }
+
+      before do
+        sign_in(user)
+        SiteSetting.enable_direct_s3_uploads = true
+        setup_s3
+      end
+
+      it "errors if the correct params are not provided" do
+        post "/uploads/create-multipart.json", params: { file_name: "test.png" }
+        expect(response.status).to eq(400)
+        post "/uploads/create-multipart.json", params: { upload_type: "composer" }
+        expect(response.status).to eq(400)
+      end
+
+      it "returns 422 when the create request errors" do
+        FileStore::S3Store.any_instance.stubs(:create_multipart).raises(Aws::S3::Errors::ServiceError.new({}, "test"))
+        post "/uploads/create-multipart.json", **{
+          params: {
+            file_name: "test.png",
+            file_size: 1024,
+            upload_type: "composer",
+          }
+        }
+        expect(response.status).to eq(422)
+      end
+
+      it "returns 422 when the file is an attachment and it's too big" do
+        SiteSetting.max_attachment_size_kb = 1024
+        post "/uploads/create-multipart.json", **{
+          params: {
+            file_name: "test.zip",
+            file_size: 9999999,
+            upload_type: "composer",
+          }
+        }
+        expect(response.status).to eq(422)
+        expect(response.body).to include(I18n.t("upload.attachments.too_large_humanized", max_size: "1 MB"))
+      end
+
+      it 'returns a sensible error if the file size is 0 bytes' do
+        SiteSetting.authorized_extensions = "*"
+        stub_create_multipart_request
+
+        post "/uploads/create-multipart.json", **{
+          params: {
+            file_name: "test.zip",
+            file_size: 0,
+            upload_type: "composer",
+          }
+        }
+
+        expect(response.status).to eq(422)
+        expect(response.body).to include(I18n.t("upload.size_zero_failure"))
+      end
+
+      def stub_create_multipart_request
+        FileStore::S3Store.any_instance.stubs(:temporary_upload_path).returns(
+          "uploads/default/#{test_bucket_prefix}/temp/28fccf8259bbe75b873a2bd2564b778c/test.png"
+        )
+        create_multipart_result = <<~XML
+        <?xml version=\"1.0\" encoding=\"UTF-8\"?>\n
+        <InitiateMultipartUploadResult>
+           <Bucket>s3-upload-bucket</Bucket>
+           <Key>uploads/default/#{test_bucket_prefix}/temp/28fccf8259bbe75b873a2bd2564b778c/test.png</Key>
+           <UploadId>#{mock_multipart_upload_id}</UploadId>
+        </InitiateMultipartUploadResult>
+        XML
+        stub_request(
+          :post,
+          "https://s3-upload-bucket.s3.us-west-1.amazonaws.com/uploads/default/#{test_bucket_prefix}/temp/28fccf8259bbe75b873a2bd2564b778c/test.png?uploads"
+        ).to_return({ status: 200, body: create_multipart_result })
+      end
+
+      it "creates a multipart upload and creates an external upload stub that is marked as multipart" do
+        stub_create_multipart_request
+        post "/uploads/create-multipart.json", **{
+          params: {
+            file_name: "test.png",
+            file_size: 1024,
+            upload_type: "composer",
+          }
+        }
+
+        expect(response.status).to eq(200)
+        result = response.parsed_body
+
+        external_upload_stub = ExternalUploadStub.where(
+          unique_identifier: result["unique_identifier"],
+          original_filename: "test.png",
+          created_by: user,
+          upload_type: "composer",
+          key: result["key"],
+          external_upload_identifier: mock_multipart_upload_id,
+          multipart: true,
+          filesize: 1024
+        )
+        expect(external_upload_stub.exists?).to eq(true)
+        expect(result["key"]).to include(FileStore::S3Store::TEMPORARY_UPLOAD_PREFIX)
+        expect(result["external_upload_identifier"]).to eq(mock_multipart_upload_id)
+        expect(result["key"]).to eq(external_upload_stub.last.key)
+      end
+
+      it "includes accepted metadata when calling the store to create_multipart, but only allowed keys" do
+        stub_create_multipart_request
+        FileStore::S3Store.any_instance.expects(:create_multipart).with(
+          "test.png", "image/png", metadata: { "sha1-checksum" => "testing" }
+        ).returns({ key: "test" })
+
+        post "/uploads/create-multipart.json", **{
+          params: {
+            file_name: "test.png",
+            file_size: 1024,
+            upload_type: "composer",
+            metadata: {
+              "sha1-checksum" => "testing",
+              "blah" => "wontbeincluded"
+            }
+          }
+        }
+
+        expect(response.status).to eq(200)
+      end
+
+      it "rate limits" do
+        RateLimiter.enable
+        RateLimiter.clear_all!
+
+        stub_create_multipart_request
+        stub_const(ExternalUploadHelpers, "CREATE_MULTIPART_RATE_LIMIT_PER_MINUTE", 1) do
+          post "/uploads/create-multipart.json", params: {
+            file_name: "test.png",
+            upload_type: "composer",
+            file_size: 1024
+          }
+          expect(response.status).to eq(200)
+
+          post "/uploads/create-multipart.json", params: {
+            file_name: "test.png",
+            upload_type: "composer",
+            file_size: 1024
+          }
+          expect(response.status).to eq(429)
+        end
+      end
+    end
+
+    context "when the store is not external" do
+      before do
+        sign_in(user)
+      end
+
+      it "returns 404" do
+        post "/uploads/create-multipart.json", params: {
+          file_name: "test.png",
+          upload_type: "composer",
+          file_size: 1024
+        }
+        expect(response.status).to eq(404)
+      end
+    end
+  end
+
+  describe "#batch_presign_multipart_parts" do
+    fab!(:mock_multipart_upload_id) { "ibZBv_75gd9r8lH_gqXatLdxMVpAlj6CFTR.OwyF3953YdwbcQnMA2BLGn8Lx12fQNICtMw5KyteFeHw.Sjng--" }
+    fab!(:external_upload_stub) do
+      Fabricate(:image_external_upload_stub, created_by: user, multipart: true, external_upload_identifier: mock_multipart_upload_id)
+    end
+
+    context "when the store is external" do
+      before do
+        sign_in(user)
+        SiteSetting.enable_direct_s3_uploads = true
+        setup_s3
+      end
+
+      def stub_list_multipart_request
+        list_multipart_result = <<~XML
+        <?xml version=\"1.0\" encoding=\"UTF-8\"?>\n
+        <ListPartsResult>
+           <Bucket>s3-upload-bucket</Bucket>
+           <Key>#{external_upload_stub.key}</Key>
+           <UploadId>#{mock_multipart_upload_id}</UploadId>
+           <PartNumberMarker>0</PartNumberMarker>
+           <NextPartNumberMarker>0</NextPartNumberMarker>
+           <MaxParts>1</MaxParts>
+           <IsTruncated>false</IsTruncated>
+           <Part>
+              <ETag>test</ETag>
+              <LastModified>#{Time.zone.now}</LastModified>
+              <PartNumber>1</PartNumber>
+              <Size>#{5.megabytes}</Size>
+           </Part>
+           <Initiator>
+              <DisplayName>test-upload-user</DisplayName>
+              <ID>arn:aws:iam::123:user/test-upload-user</ID>
+           </Initiator>
+           <Owner>
+              <DisplayName></DisplayName>
+              <ID>12345</ID>
+           </Owner>
+           <StorageClass>STANDARD</StorageClass>
+        </ListPartsResult>
+        XML
+        stub_request(:get, "https://s3-upload-bucket.s3.us-west-1.amazonaws.com/#{external_upload_stub.key}?max-parts=1&uploadId=#{mock_multipart_upload_id}").to_return({ status: 200, body: list_multipart_result })
+      end
+
+      it "errors if the correct params are not provided" do
+        post "/uploads/batch-presign-multipart-parts.json", params: {}
+        expect(response.status).to eq(400)
+      end
+
+      it "errors if the part_numbers do not contain numbers between 1 and 10000" do
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [-1, 0, 1, 2, 3, 4]
+        }
+        expect(response.status).to eq(400)
+        expect(response.body).to include("You supplied invalid parameters to the request: Each part number should be between 1 and 10000")
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [3, 4, "blah"]
+        }
+        expect(response.status).to eq(400)
+        expect(response.body).to include("You supplied invalid parameters to the request: Each part number should be between 1 and 10000")
+      end
+
+      it "returns 404 when the upload stub does not exist" do
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: "unknown",
+          part_numbers: [1, 2, 3]
+        }
+        expect(response.status).to eq(404)
+      end
+
+      it "returns 404 when the upload stub does not belong to the user" do
+        external_upload_stub.update!(created_by: Fabricate(:user))
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [1, 2, 3]
+        }
+        expect(response.status).to eq(404)
+      end
+
+      it "returns 404 when the multipart upload does not exist" do
+        FileStore::S3Store.any_instance.stubs(:list_multipart_parts).raises(Aws::S3::Errors::NoSuchUpload.new("test", "test"))
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [1, 2, 3]
+        }
+        expect(response.status).to eq(404)
+      end
+
+      it "returns an object with the presigned URLs with the part numbers as keys" do
+        stub_list_multipart_request
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [2, 3, 4]
+        }
+
+        expect(response.status).to eq(200)
+        result = response.parsed_body
+        expect(result["presigned_urls"].keys).to eq(["2", "3", "4"])
+        expect(result["presigned_urls"]["2"]).to include("?partNumber=2&uploadId=#{mock_multipart_upload_id}")
+        expect(result["presigned_urls"]["3"]).to include("?partNumber=3&uploadId=#{mock_multipart_upload_id}")
+        expect(result["presigned_urls"]["4"]).to include("?partNumber=4&uploadId=#{mock_multipart_upload_id}")
+      end
+
+      it "rate limits" do
+        RateLimiter.enable
+        RateLimiter.clear_all!
+        SiteSetting.max_batch_presign_multipart_per_minute = 1
+
+        stub_list_multipart_request
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [1, 2, 3]
+        }
+
+        expect(response.status).to eq(200)
+
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [1, 2, 3]
+        }
+
+        expect(response.status).to eq(429)
+      end
+    end
+
+    context "when the store is not external" do
+      before do
+        sign_in(user)
+      end
+
+      it "returns 404" do
+        post "/uploads/batch-presign-multipart-parts.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          part_numbers: [1, 2, 3]
+        }
+        expect(response.status).to eq(404)
+      end
+    end
+  end
+
+  describe "#complete_multipart" do
+    let(:upload_base_url) { "https://#{SiteSetting.s3_upload_bucket}.s3.#{SiteSetting.s3_region}.amazonaws.com" }
+    let(:mock_multipart_upload_id) { "ibZBv_75gd9r8lH_gqXatLdxMVpAlj6CFTR.OwyF3953YdwbcQnMA2BLGn8Lx12fQNICtMw5KyteFeHw.Sjng--" }
+    let!(:external_upload_stub) do
+      Fabricate(:image_external_upload_stub, created_by: user, multipart: true, external_upload_identifier: mock_multipart_upload_id)
+    end
+
+    context "when the store is external" do
+      before do
+        sign_in(user)
+        SiteSetting.enable_direct_s3_uploads = true
+        setup_s3
+      end
+
+      def stub_list_multipart_request
+        list_multipart_result = <<~XML
+        <?xml version=\"1.0\" encoding=\"UTF-8\"?>\n
+        <ListPartsResult>
+           <Bucket>s3-upload-bucket</Bucket>
+           <Key>#{external_upload_stub.key}</Key>
+           <UploadId>#{mock_multipart_upload_id}</UploadId>
+           <PartNumberMarker>0</PartNumberMarker>
+           <NextPartNumberMarker>0</NextPartNumberMarker>
+           <MaxParts>1</MaxParts>
+           <IsTruncated>false</IsTruncated>
+           <Part>
+              <ETag>test</ETag>
+              <LastModified>#{Time.zone.now}</LastModified>
+              <PartNumber>1</PartNumber>
+              <Size>#{5.megabytes}</Size>
+           </Part>
+           <Initiator>
+              <DisplayName>test-upload-user</DisplayName>
+              <ID>arn:aws:iam::123:user/test-upload-user</ID>
+           </Initiator>
+           <Owner>
+              <DisplayName></DisplayName>
+              <ID>12345</ID>
+           </Owner>
+           <StorageClass>STANDARD</StorageClass>
+        </ListPartsResult>
+        XML
+        stub_request(:get, "#{upload_base_url}/#{external_upload_stub.key}?max-parts=1&uploadId=#{mock_multipart_upload_id}").to_return({ status: 200, body: list_multipart_result })
+      end
+
+      it "errors if the correct params are not provided" do
+        post "/uploads/complete-multipart.json", params: {}
+        expect(response.status).to eq(400)
+      end
+
+      it "errors if the part_numbers do not contain numbers between 1 and 10000" do
+        stub_list_multipart_request
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          parts: [{ part_number: -1, etag: "test1" }]
+        }
+        expect(response.status).to eq(400)
+        expect(response.body).to include("You supplied invalid parameters to the request: Each part number should be between 1 and 10000")
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          parts: [{ part_number: 20001, etag: "test1" }]
+        }
+        expect(response.status).to eq(400)
+        expect(response.body).to include("You supplied invalid parameters to the request: Each part number should be between 1 and 10000")
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          parts: [{ part_number: "blah", etag: "test1" }]
+        }
+        expect(response.status).to eq(400)
+        expect(response.body).to include("You supplied invalid parameters to the request: Each part number should be between 1 and 10000")
+      end
+
+      it "errors if any of the parts objects have missing values" do
+        stub_list_multipart_request
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          parts: [{ part_number: 1 }]
+        }
+        expect(response.status).to eq(400)
+        expect(response.body).to include("All parts must have an etag")
+      end
+
+      it "returns 404 when the upload stub does not exist" do
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: "unknown",
+          parts: [{ part_number: 1, etag: "test1" }]
+        }
+        expect(response.status).to eq(404)
+      end
+
+      it "returns 422 when the complete request errors" do
+        FileStore::S3Store.any_instance.stubs(:complete_multipart).raises(Aws::S3::Errors::ServiceError.new({}, "test"))
+        stub_list_multipart_request
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          parts: [{ part_number: 1, etag: "test1" }]
+        }
+        expect(response.status).to eq(422)
+      end
+
+      it "returns 404 when the upload stub does not belong to the user" do
+        external_upload_stub.update!(created_by: Fabricate(:user))
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          parts: [{ part_number: 1, etag: "test1" }]
+        }
+        expect(response.status).to eq(404)
+      end
+
+      it "returns 404 when the multipart upload does not exist" do
+        FileStore::S3Store.any_instance.stubs(:list_multipart_parts).raises(Aws::S3::Errors::NoSuchUpload.new("test", "test"))
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          parts: [{ part_number: 1, etag: "test1" }]
+        }
+        expect(response.status).to eq(404)
+      end
+
+      it "completes the multipart upload, creates the Upload record, and returns a serialized Upload record" do
+        temp_location = "#{upload_base_url}/#{external_upload_stub.key}"
+        stub_list_multipart_request
+        stub_request(
+          :post,
+          "#{temp_location}?uploadId=#{external_upload_stub.external_upload_identifier}"
+        ).with(
+          body: "<CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Part><ETag>test1</ETag><PartNumber>1</PartNumber></Part><Part><ETag>test2</ETag><PartNumber>2</PartNumber></Part></CompleteMultipartUpload>"
+        ).to_return(status: 200, body: <<~XML)
+          <?xml version="1.0" encoding="UTF-8"?>
+          <CompleteMultipartUploadResult>
+             <Location>#{temp_location}</Location>
+             <Bucket>s3-upload-bucket</Bucket>
+             <Key>#{external_upload_stub.key}</Key>
+             <ETag>testfinal</ETag>
+          </CompleteMultipartUploadResult>
+        XML
+
+        # all the functionality for ExternalUploadManager is already tested along
+        # with stubs to S3 in its own test, we can just stub the response here
+        upload = Fabricate(:upload)
+        ExternalUploadManager.any_instance.stubs(:transform!).returns(upload)
+
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.unique_identifier,
+          parts: [{ part_number: 1, etag: "test1" }, { part_number: 2, etag: "test2" }]
+        }
+
+        expect(response.status).to eq(200)
+        result = response.parsed_body
+        expect(result[:upload]).to eq(JSON.parse(UploadSerializer.new(upload).to_json)[:upload])
+      end
+
+      it "rate limits" do
+        RateLimiter.enable
+        RateLimiter.clear_all!
+
+        stub_const(ExternalUploadHelpers, "COMPLETE_MULTIPART_RATE_LIMIT_PER_MINUTE", 1) do
+          post "/uploads/complete-multipart.json", params: {
+            unique_identifier: "blah",
+            parts: [{ part_number: 1, etag: "test1" }, { part_number: 2, etag: "test2" }]
+          }
+          post "/uploads/complete-multipart.json", params: {
+            unique_identifier: "blah",
+            parts: [{ part_number: 1, etag: "test1" }, { part_number: 2, etag: "test2" }]
+          }
+        end
+        expect(response.status).to eq(429)
+      end
+    end
+
+    context "when the store is not external" do
+      before do
+        sign_in(user)
+      end
+
+      it "returns 404" do
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.external_upload_identifier,
+          parts: [
+            {
+              part_number: 1,
+              etag: "test1"
+            },
+            {
+              part_number: 2,
+              etag: "test2"
+            }
+          ]
+        }
+        expect(response.status).to eq(404)
+      end
+    end
+  end
+
+  describe "#abort_multipart" do
+    let(:upload_base_url) { "https://#{SiteSetting.s3_upload_bucket}.s3.#{SiteSetting.s3_region}.amazonaws.com" }
+    let(:mock_multipart_upload_id) { "ibZBv_75gd9r8lH_gqXatLdxMVpAlj6CFTR.OwyF3953YdwbcQnMA2BLGn8Lx12fQNICtMw5KyteFeHw.Sjng--" }
+    let!(:external_upload_stub) do
+      Fabricate(:image_external_upload_stub, created_by: user, multipart: true, external_upload_identifier: mock_multipart_upload_id)
+    end
+
+    context "when the store is external" do
+      before do
+        sign_in(user)
+        SiteSetting.enable_direct_s3_uploads = true
+        setup_s3
+      end
+
+      def stub_abort_request
+        temp_location = "#{upload_base_url}/#{external_upload_stub.key}"
+        stub_request(
+          :delete,
+          "#{temp_location}?uploadId=#{external_upload_stub.external_upload_identifier}"
+        ).to_return(status: 200, body: "")
+      end
+
+      it "errors if the correct params are not provided" do
+        post "/uploads/abort-multipart.json", params: {}
+        expect(response.status).to eq(400)
+      end
+
+      it "returns 200 when the stub does not exist, assumes it has already been deleted" do
+        FileStore::S3Store.any_instance.expects(:abort_multipart).never
+        post "/uploads/abort-multipart.json", params: {
+          external_upload_identifier: "unknown",
+        }
+        expect(response.status).to eq(200)
+      end
+
+      it "returns 404 when the upload stub does not belong to the user" do
+        external_upload_stub.update!(created_by: Fabricate(:user))
+        post "/uploads/abort-multipart.json", params: {
+          external_upload_identifier: external_upload_stub.external_upload_identifier
+        }
+        expect(response.status).to eq(404)
+      end
+
+      it "aborts the multipart upload and deletes the stub" do
+        stub_abort_request
+
+        post "/uploads/abort-multipart.json", params: {
+          external_upload_identifier: external_upload_stub.external_upload_identifier
+        }
+
+        expect(response.status).to eq(200)
+        expect(ExternalUploadStub.exists?(id: external_upload_stub.id)).to eq(false)
+      end
+
+      it "returns 422 when the abort request errors" do
+        FileStore::S3Store.any_instance.stubs(:abort_multipart).raises(Aws::S3::Errors::ServiceError.new({}, "test"))
+        post "/uploads/abort-multipart.json", params: {
+          external_upload_identifier: external_upload_stub.external_upload_identifier
+        }
+        expect(response.status).to eq(422)
+      end
+    end
+
+    context "when the store is not external" do
+      before do
+        sign_in(user)
+      end
+
+      it "returns 404" do
+        post "/uploads/complete-multipart.json", params: {
+          unique_identifier: external_upload_stub.external_upload_identifier,
+          parts: [
+            {
+              part_number: 1,
+              etag: "test1"
+            },
+            {
+              part_number: 2,
+              etag: "test2"
+            }
+          ]
+        }
+        expect(response.status).to eq(404)
+      end
+    end
+  end
+
+  describe "#complete_external_upload" do
+    before do
+      sign_in(user)
+    end
+
+    context "when the store is external" do
+      fab!(:external_upload_stub) { Fabricate(:image_external_upload_stub, created_by: user) }
+      let(:upload) { Fabricate(:upload) }
+
+      before do
+        SiteSetting.enable_direct_s3_uploads = true
+        SiteSetting.enable_upload_debug_mode = true
+        setup_s3
+      end
+
+      it "returns 404 when the upload stub does not exist" do
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: "unknown" }
+        expect(response.status).to eq(404)
+      end
+
+      it "returns 404 when the upload stub does not belong to the user" do
+        external_upload_stub.update!(created_by: Fabricate(:user))
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(response.status).to eq(404)
+      end
+
+      it "handles ChecksumMismatchError" do
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(ExternalUploadManager::ChecksumMismatchError)
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
+      end
+
+      it "handles SizeMismatchError" do
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(ExternalUploadManager::SizeMismatchError.new("expected: 10, actual: 1000"))
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
+      end
+
+      it "handles CannotPromoteError" do
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(ExternalUploadManager::CannotPromoteError)
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
+      end
+
+      it "handles DownloadFailedError and Aws::S3::Errors::NotFound" do
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(ExternalUploadManager::DownloadFailedError)
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(Aws::S3::Errors::NotFound.new("error", "not found"))
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
+      end
+
+      it "handles a generic upload failure" do
+        ExternalUploadManager.any_instance.stubs(:transform!).raises(StandardError)
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"].first).to eq(I18n.t("upload.failed"))
+      end
+
+      it "handles validation errors on the upload" do
+        upload.errors.add(:base, "test error")
+        ExternalUploadManager.any_instance.stubs(:transform!).returns(upload)
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(response.status).to eq(422)
+        expect(response.parsed_body["errors"]).to eq(["test error"])
+      end
+
+      it "deletes the stub and returns the serialized upload when complete" do
+        ExternalUploadManager.any_instance.stubs(:transform!).returns(upload)
+        post "/uploads/complete-external-upload.json", params: { unique_identifier: external_upload_stub.unique_identifier }
+        expect(ExternalUploadStub.exists?(id: external_upload_stub.id)).to eq(false)
+        expect(response.status).to eq(200)
+        expect(response.parsed_body).to eq(UploadsController.serialize_upload(upload))
+      end
+    end
+
+    context "when the store is not external" do
+      it "returns 404" do
+        post "/uploads/generate-presigned-put.json", params: { file_name: "test.png", type: "card_background" }
+        expect(response.status).to eq(404)
       end
     end
   end

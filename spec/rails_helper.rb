@@ -13,22 +13,16 @@ if ENV['COVERAGE']
 end
 
 require 'rubygems'
-require 'rbtrace'
-
+require 'rbtrace' if RUBY_ENGINE == "ruby"
 require 'pry'
 require 'pry-byebug'
 require 'pry-rails'
-
-# Loading more in this block will cause your tests to run faster. However,
-# if you change any configuration or code from libraries loaded here, you'll
-# need to restart spork for it take effect.
 require 'fabrication'
 require 'mocha/api'
 require 'certified'
 require 'webmock/rspec'
 
 class RspecErrorTracker
-
   def self.last_exception=(ex)
     @ex = ex
   end
@@ -44,7 +38,11 @@ class RspecErrorTracker
   def call(env)
     begin
       @app.call(env)
-    rescue => e
+
+    # This is a little repetitive, but since WebMock::NetConnectNotAllowedError
+    # and also Mocha::ExpectationError inherit from Exception instead of StandardError
+    # they do not get captured by the rescue => e shorthand :(
+    rescue WebMock::NetConnectNotAllowedError, Mocha::ExpectationError, StandardError => e
       RspecErrorTracker.last_exception = e
       raise e
     end
@@ -59,6 +57,9 @@ require 'shoulda-matchers'
 require 'sidekiq/testing'
 require 'test_prof/recipes/rspec/let_it_be'
 require 'test_prof/before_all/adapters/active_record'
+require 'webdrivers'
+require 'selenium-webdriver'
+require 'capybara/rails'
 
 # The shoulda-matchers gem no longer detects the test framework
 # you're using or mixes itself into that framework automatically.
@@ -73,11 +74,25 @@ end
 # Requires supporting ruby files with custom matchers and macros, etc,
 # in spec/support/ and its subdirectories.
 Dir[Rails.root.join("spec/support/**/*.rb")].each { |f| require f }
+
+require Rails.root.join("spec/system/page_objects/pages/base.rb")
+require Rails.root.join("spec/system/page_objects/modals/base.rb")
+Dir[Rails.root.join("spec/system/page_objects/**/*.rb")].each { |f| require f }
+
 Dir[Rails.root.join("spec/fabricators/*.rb")].each { |f| require f }
+require_relative './helpers/redis_snapshot_helper'
 
 # Require plugin helpers at plugin/[plugin]/spec/plugin_helper.rb (includes symlinked plugins).
 if ENV['LOAD_PLUGINS'] == "1"
   Dir[Rails.root.join("plugins/*/spec/plugin_helper.rb")].each do |f|
+    require f
+  end
+
+  Dir[Rails.root.join("plugins/*/spec/fabricators/**/*.rb")].each do |f|
+    require f
+  end
+
+  Dir[Rails.root.join("plugins/*/spec/system/page_objects/**/*.rb")].each do |f|
     require f
   end
 end
@@ -96,22 +111,13 @@ ENV['DISCOURSE_DEV_ALLOW_ANON_TO_IMPERSONATE'] = '1'
 module TestSetup
   # This is run before each test and before each before_all block
   def self.test_setup(x = nil)
-    # TODO not sure about this, we could use a mock redis implementation here:
-    #   this gives us really clean "flush" semantics, however the side-effect is that
-    #   we are no longer using a clean redis implementation, a preferable solution may
-    #   be simply flushing before tests, trouble is that redis may be reused with dev
-    #   so that would mean the dev would act weird
-    #
-    #   perf benefit seems low (shaves 20 secs off a 4 minute test suite)
-    #
-    # Discourse.redis = DiscourseMockRedis.new
-
     RateLimiter.disable
     PostActionNotifier.disable
     SearchIndexer.disable
     UserActionManager.disable
     NotificationEmailer.disable
     SiteIconManager.disable
+    WordWatcher.disable_cache
 
     SiteSetting.provider.all.each do |setting|
       SiteSetting.remove_override!(setting.name)
@@ -145,6 +151,14 @@ module TestSetup
 
     # Don't queue badge grant in test mode
     BadgeGranter.disable_queue
+
+    # Make sure the default Post and Topic bookmarkables are registered
+    Bookmark.reset_bookmarkables
+
+    # Make sure only the default category and tag hashtag data sources are registered.
+    HashtagAutocompleteService.clear_data_sources
+
+    OmniAuth.config.test_mode = false
   end
 end
 
@@ -173,15 +187,18 @@ end
 RSpec.configure do |config|
   config.fail_fast = ENV['RSPEC_FAIL_FAST'] == "1"
   config.silence_filter_announcements = ENV['RSPEC_SILENCE_FILTER_ANNOUNCEMENTS'] == "1"
+  config.extend RedisSnapshotHelper
   config.include Helpers
   config.include MessageBus
   config.include RSpecHtmlMatchers
   config.include IntegrationHelpers, type: :request
+  config.include SystemHelpers, type: :system
   config.include WebauthnIntegrationHelpers
   config.include SiteSettingsHelpers
   config.include SidekiqHelpers
   config.include UploadsHelpers
   config.include OneboxHelpers
+  config.include FastImageHelpers
   config.mock_framework = :mocha
   config.order = 'random'
   config.infer_spec_type_from_file_location!
@@ -197,6 +214,8 @@ RSpec.configure do |config|
   config.infer_base_class_for_anonymous_controllers = true
 
   config.before(:suite) do
+    CachedCounting.disable
+
     begin
       ActiveRecord::Migration.check_pending!
     rescue ActiveRecord::PendingMigrationError
@@ -225,7 +244,47 @@ RSpec.configure do |config|
 
     SiteSetting.provider = TestLocalProcessProvider.new
 
-    WebMock.disable_net_connect!
+    WebMock.disable_net_connect!(
+      allow_localhost: true,
+      allow: [Webdrivers::Chromedriver.base_url]
+    )
+
+    Capybara.configure do |capybara_config|
+      capybara_config.server_host = "localhost"
+      capybara_config.server_port = 31337
+    end
+
+    chrome_browser_options = Selenium::WebDriver::Chrome::Options.new(
+      logging_prefs: { "browser" => "ALL", "driver" => "ALL" }
+    ).tap do |options|
+      options.add_argument("--window-size=1400,1400")
+      options.add_argument("--no-sandbox")
+      options.add_argument("--disable-dev-shm-usage")
+    end
+
+    Capybara.register_driver :selenium_chrome do |app|
+      Capybara::Selenium::Driver.new(
+        app,
+        browser: :chrome,
+        capabilities: chrome_browser_options,
+      )
+    end
+
+    Capybara.register_driver :selenium_chrome_headless do |app|
+      chrome_browser_options.add_argument("--headless")
+
+      Capybara::Selenium::Driver.new(
+        app,
+        browser: :chrome,
+        capabilities: chrome_browser_options,
+      )
+    end
+
+    if ENV['ELEVATED_UPLOADS_ID']
+      DB.exec "SELECT setval('uploads_id_seq', 10000)"
+    else
+      DB.exec "SELECT setval('uploads_id_seq', 1)"
+    end
   end
 
   class TestLocalProcessProvider < SiteSettings::LocalProcessProvider
@@ -237,24 +296,14 @@ RSpec.configure do |config|
     end
   end
 
-  class DiscourseMockRedis < MockRedis
-    def without_namespace
-      self
-    end
-
-    def delete_prefixed(prefix)
-      keys("#{prefix}*").each { |k| del(k) }
-    end
-  end
-
-  config.after :each do |x|
-    if x.exception && ex = RspecErrorTracker.last_exception
+  config.after :each do |example|
+    if example.exception && ex = RspecErrorTracker.last_exception
       # magic in a cause if we have none
-      unless x.exception.cause
-        class << x.exception
+      unless example.exception.cause
+        class << example.exception
           attr_accessor :cause
         end
-        x.exception.cause = ex
+        example.exception.cause = ex
       end
     end
 
@@ -284,6 +333,55 @@ RSpec.configure do |config|
   config.before :each do
     # This allows DB.transaction_open? to work in tests. See lib/mini_sql_multisite_connection.rb
     DB.test_transaction = ActiveRecord::Base.connection.current_transaction
+  end
+
+  # Match the request hostname to the value in `database.yml`
+  config.before(:all, type: [:request, :multisite, :system]) { host! "test.localhost" }
+  config.before(:each, type: [:request, :multisite, :system]) { host! "test.localhost" }
+
+  last_driven_by = nil
+  config.before(:each, type: :system) do |example|
+    if example.metadata[:js]
+      driver = "selenium_chrome"
+      driver += "_headless" unless ENV["SELENIUM_HEADLESS"] == "0"
+      driven_by driver.to_sym
+    end
+    setup_system_test
+  end
+
+  config.after(:each, type: :system) do |example|
+    # This is disabled by default because it is super verbose,
+    # if you really need to dig into how selenium is communicating
+    # for system tests then enable it.
+    if ENV["SELENIUM_VERBOSE_DRIVER_LOGS"]
+      puts "~~~~~~ DRIVER LOGS: ~~~~~~~"
+      page.driver.browser.logs.get(:driver).each do |log|
+        puts log.message
+      end
+    end
+
+    # Recommended that this is not disabled, since it makes debugging
+    # failed system tests a lot trickier.
+    if ENV["SELENIUM_DISABLE_VERBOSE_JS_LOGS"].blank?
+      if example.exception
+        skip_js_errors = false
+        if example.exception.kind_of?(RSpec::Core::MultipleExceptionError)
+          puts "~~~~~~ SYSTEM TEST ERRORS: ~~~~~~~"
+          example.exception.all_exceptions.each do |ex|
+            puts ex.message
+          end
+
+          skip_js_errors = true
+        end
+
+        if !skip_js_errors
+          puts "~~~~~~ JS ERRORS: ~~~~~~~"
+          page.driver.browser.logs.get(:browser).each do |log|
+            puts log.message
+          end
+        end
+      end
+    end
   end
 
   config.before(:each, type: :multisite) do
@@ -402,7 +500,7 @@ end
 
 def file_from_fixtures(filename, directory = "images")
   SpecSecureRandom.value ||= SecureRandom.hex
-  FileUtils.mkdir_p(file_from_fixtures_tmp_folder) unless Dir.exists?(file_from_fixtures_tmp_folder)
+  FileUtils.mkdir_p(file_from_fixtures_tmp_folder) unless Dir.exist?(file_from_fixtures_tmp_folder)
   tmp_file_path = File.join(file_from_fixtures_tmp_folder, SecureRandom.hex << filename)
   FileUtils.cp("#{Rails.root}/spec/fixtures/#{directory}/#{filename}", tmp_file_path)
   File.new(tmp_file_path)
@@ -427,27 +525,53 @@ ensure
   STDOUT.unstub(:write)
 end
 
-class TrackingLogger < ::Logger
-  attr_reader :messages
-  def initialize(level: nil)
-    super(nil)
-    @messages = []
-    @level = level
-  end
-  def add(*args, &block)
-    if !level || args[0].to_i >= level
-      @messages << args
-    end
-  end
-end
-
-def track_log_messages(level: nil)
+def track_log_messages
   old_logger = Rails.logger
-  logger = Rails.logger = TrackingLogger.new(level: level)
-  yield logger.messages
-  logger.messages
+  logger = Rails.logger = FakeLogger.new
+  yield logger
+  logger
 ensure
   Rails.logger = old_logger
+end
+
+# this takes a string and returns a copy where 2 different
+# characters are swapped.
+# e.g.
+#   swap_2_different_characters("abc") => "bac"
+#   swap_2_different_characters("aac") => "caa"
+def swap_2_different_characters(str)
+  swap1 = 0
+  swap2 = str.split("").find_index { |c| c != str[swap1] }
+  # if the string is made up of 1 character
+  return str if !swap2
+  str = str.dup
+  str[swap1], str[swap2] = str[swap2], str[swap1]
+  str
+end
+
+def create_request_env(path: nil)
+  env = Rails.application.env_config.dup
+  env.merge!(Rack::MockRequest.env_for(path)) if path
+  env
+end
+
+def create_auth_cookie(token:, user_id: nil, trust_level: nil, issued_at: Time.current)
+  data = {
+    token: token,
+    user_id: user_id,
+    trust_level: trust_level,
+    issued_at: issued_at.to_i
+  }
+  jar = ActionDispatch::Cookies::CookieJar.build(ActionDispatch::TestRequest.create, {})
+  jar.encrypted[:_t] = { value: data }
+  CGI.escape(jar[:_t])
+end
+
+def decrypt_auth_cookie(cookie)
+  ActionDispatch::Cookies::CookieJar
+    .build(ActionDispatch::TestRequest.create, { _t: cookie })
+    .encrypted[:_t]
+    .with_indifferent_access
 end
 
 class SpecSecureRandom

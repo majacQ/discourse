@@ -7,6 +7,8 @@ class Draft < ActiveRecord::Base
 
   belongs_to :user
 
+  after_commit :update_draft_count, on: [:create, :destroy]
+
   class OutOfSequence < StandardError; end
 
   def self.set(user, key, sequence, data, owner = nil, force_save: false)
@@ -80,7 +82,7 @@ class Draft < ActiveRecord::Base
         owner: owner
       }
 
-      DB.exec(<<~SQL, opts)
+      draft_id = DB.query_single(<<~SQL, opts).first
         INSERT INTO drafts (user_id, draft_key, data, sequence, owner, created_at, updated_at)
         VALUES (:user_id, :draft_key, :data, :sequence, :owner, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT (user_id, draft_key) DO
@@ -91,8 +93,17 @@ class Draft < ActiveRecord::Base
           revisions = drafts.revisions + 1,
           owner = :owner,
           updated_at = CURRENT_TIMESTAMP
+        RETURNING id
       SQL
+
+      UserStat.update_draft_count(user.id)
     end
+
+    UploadReference.ensure_exist!(
+      upload_ids: Upload.extract_upload_ids(data),
+      target_type: 'Draft',
+      target_id: draft_id
+    )
 
     sequence
   end
@@ -157,7 +168,11 @@ class Draft < ActiveRecord::Base
   end
 
   def parsed_data
-    JSON.parse(data)
+    begin
+      JSON.parse(data)
+    rescue JSON::ParserError
+      {}
+    end
   end
 
   def topic_id
@@ -250,6 +265,8 @@ class Draft < ActiveRecord::Base
     # remove old drafts
     delete_drafts_older_than_n_days = SiteSetting.delete_drafts_older_than_n_days.days.ago
     Draft.where("updated_at < ?", delete_drafts_older_than_n_days).destroy_all
+
+    UserStat.update_draft_count
   end
 
   def self.backup_draft(user, key, sequence, data)
@@ -338,6 +355,9 @@ class Draft < ActiveRecord::Base
 
   end
 
+  def update_draft_count
+    UserStat.update_draft_count(self.user_id)
+  end
 end
 
 # == Schema Information

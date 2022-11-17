@@ -11,6 +11,8 @@ const rule = {
     let username,
       postNumber,
       topicId,
+      chatChannelId,
+      chatMessageId,
       avatarImg,
       primaryGroupName,
       full,
@@ -22,18 +24,45 @@ const rule = {
 
       let i;
       for (i = 1; i < split.length; i++) {
-        if (split[i].indexOf("post:") === 0) {
-          postNumber = parseInt(split[i].substr(5), 10);
+        if (split[i].startsWith("post:")) {
+          postNumber = parseInt(split[i].slice(5), 10);
           continue;
         }
 
-        if (split[i].indexOf("topic:") === 0) {
-          topicId = parseInt(split[i].substr(6), 10);
+        if (split[i].startsWith("topic:")) {
+          topicId = parseInt(split[i].slice(6), 10);
+          continue;
+        }
+
+        if (split[i].indexOf("chat_channel:") === 0) {
+          chatChannelId = parseInt(split[i].substr(13), 10);
+          continue;
+        }
+
+        if (split[i].indexOf("chat_message:") === 0) {
+          chatMessageId = parseInt(split[i].substr(13), 10);
           continue;
         }
 
         if (/full:\s*true/.test(split[i])) {
           full = true;
+          continue;
+        }
+
+        // if we have the additional attribute of username: because we are prioritizing full name
+        // then assign the name to be the displayName
+        if (split[i].startsWith("username:")) {
+          // return users name by selecting all values from the first index to the post
+          // this protects us from when a user has a `,` in their name
+          displayName = split.slice(0, split.indexOf(`post:${postNumber}`));
+
+          // preserve `,` in a users name if they exist
+          if (displayName.length > 1) {
+            displayName = displayName.join(", ");
+          }
+
+          // strip key of 'username:' and return username
+          username = split[i].slice(9);
           continue;
         }
       }
@@ -59,18 +88,19 @@ const rule = {
     }
 
     if (options.formatUsername) {
-      displayName = options.formatUsername(username);
+      displayName = displayName || options.formatUsername(username);
     } else {
-      displayName = username;
+      displayName = displayName || username;
     }
 
     let token = state.push("bbcode_open", "aside", 1);
     token.attrs = [];
 
+    let classNames = ["quote"];
     if (primaryGroupName && primaryGroupName.length !== 0) {
-      token.attrs.push(["class", `quote group-${primaryGroupName}`]);
+      classNames.push(`group-${primaryGroupName}`);
     } else {
-      token.attrs.push(["class", "quote no-group"]);
+      classNames.push("no-group");
     }
 
     if (username) {
@@ -85,16 +115,24 @@ const rule = {
       token.attrs.push(["data-topic", topicId]);
     }
 
+    if (chatChannelId && chatMessageId) {
+      token.attrs.push(["data-chat-channel", chatChannelId]);
+      token.attrs.push(["data-chat-message", chatMessageId]);
+      classNames.push("chat-quote");
+    }
+
     if (full) {
       token.attrs.push(["data-full", "true"]);
     }
 
+    token.attrs.push(["class", classNames.join(" ")]);
+
     if (username) {
+      let forOtherTopic = options.topicId && topicId !== options.topicId;
       let offTopicQuote =
-        options.topicId &&
         postNumber &&
         options.getTopicInfo &&
-        topicId !== options.topicId;
+        (forOtherTopic || options.forceQuoteLink);
 
       // on topic quote
       token = state.push("quote_header_open", "div", 1);
@@ -127,6 +165,7 @@ const rule = {
               emojiCDNUrl: options.emojiCDNUrl,
               enableEmojiShortcuts: options.enableEmojiShortcuts,
               inlineEmoji: options.inlineEmoji,
+              lazy: true,
             });
           }
 
@@ -151,7 +190,7 @@ const rule = {
     state.push("bbcode_open", "blockquote", 1);
   },
 
-  after: function (state) {
+  after(state) {
     state.push("bbcode_close", "blockquote", -1);
     state.push("bbcode_close", "aside", -1);
   },
@@ -170,12 +209,14 @@ export function setup(helper) {
     md.block.bbcode.ruler.push("quotes", rule);
   });
 
-  helper.allowList(["img[class=avatar]"]);
+  helper.allowList(["img[class=avatar]", "img[loading=lazy]"]);
   helper.allowList({
     custom(tag, name, value) {
       if (tag === "aside" && name === "class") {
         return (
-          value === "quote no-group" || !!/^quote group\-(.+)$/.exec(value)
+          value === "quote no-group" ||
+          value === "quote no-group chat-quote" ||
+          !!/^quote group\-(.+)$/.exec(value)
         );
       }
     },

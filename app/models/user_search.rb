@@ -12,6 +12,7 @@ class UserSearch
     @topic_allowed_users = opts[:topic_allowed_users]
     @searching_user = opts[:searching_user]
     @include_staged_users = opts[:include_staged_users] || false
+    @last_seen_users = opts[:last_seen_users] || false
     @limit = opts[:limit] || 20
     @groups = opts[:groups]
 
@@ -82,7 +83,7 @@ class UserSearch
     # 2. in topic
     if @topic_id
       in_topic = filtered_by_term_users
-        .where('users.id IN (SELECT user_id FROM posts WHERE topic_id = ?)', @topic_id)
+        .where('users.id IN (SELECT user_id FROM posts WHERE topic_id = ? AND post_type = ? AND deleted_at IS NULL)', @topic_id, Post.types[:regular])
 
       if @searching_user.present?
         in_topic = in_topic.where('users.id <> ?', @searching_user.id)
@@ -162,6 +163,15 @@ class UserSearch
         .each { |id| users << id }
     end
 
+    # 5. last seen users (for search auto-suggestions)
+    if @last_seen_users
+      scoped_users
+        .order('last_seen_at DESC NULLS LAST')
+        .limit(@limit - users.size)
+        .pluck(:id)
+        .each { |id| users << id }
+    end
+
     users.to_a
   end
 
@@ -169,10 +179,16 @@ class UserSearch
     ids = search_ids
     return User.where("0=1") if ids.empty?
 
-    User.joins("JOIN (SELECT unnest uid, row_number() OVER () AS rn
+    results = User.joins("JOIN (SELECT unnest uid, row_number() OVER () AS rn
       FROM unnest('{#{ids.join(",")}}'::int[])
     ) x on uid = users.id")
       .order("rn")
+
+    if SiteSetting.enable_user_status
+      results = results.includes(:user_status)
+    end
+
+    results
   end
 
 end

@@ -7,6 +7,7 @@ require 'faker'
 module DiscourseDev
   class Record
     DEFAULT_COUNT = 30.freeze
+    AUTO_POPULATED = "auto_populated"
 
     attr_reader :model, :type
 
@@ -24,12 +25,17 @@ module DiscourseDev
 
     def create!
       record = model.create!(data)
+      record.custom_fields[AUTO_POPULATED] = true if record.respond_to?(:custom_fields)
       yield(record) if block_given?
       DiscourseEvent.trigger(:after_create_dev_record, record, type)
       record
     end
 
     def populate!(ignore_current_count: false)
+      unless Discourse.allow_dev_populate?
+        raise 'To run this rake task in a production site, set the value of `ALLOW_DEV_POPULATE` environment variable to "1"'
+      end
+
       unless ignore_current_count
         if current_count >= @count
           puts "Already have #{current_count} #{type} records"
@@ -63,12 +69,16 @@ module DiscourseDev
       model.count
     end
 
-    def self.populate!
-      self.new.populate!
+    def self.populate!(*args)
+      self.new(*args).populate!
     end
 
-    def self.random(model)
-      offset = Faker::Number.between(from: 0, to: model.count - 1)
+    def self.random(model, use_existing_records: true)
+      model.joins(:_custom_fields).where("#{:type}_custom_fields.name = '#{AUTO_POPULATED}'") if !use_existing_records && model.new.respond_to?(:custom_fields)
+      count = model.count
+      raise "#{:type} records are not yet populated" if count == 0
+
+      offset = Faker::Number.between(from: 0, to: count - 1)
       model.offset(offset).first
     end
   end

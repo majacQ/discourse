@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 class CategoriesController < ApplicationController
+  include TopicQueryParams
 
-  requires_login except: [:index, :categories_and_latest, :categories_and_top, :show, :redirect, :find_by_slug]
+  requires_login except: [:index, :categories_and_latest, :categories_and_top, :show, :redirect, :find_by_slug, :visible_groups]
 
-  before_action :fetch_category, only: [:show, :update, :destroy]
+  before_action :fetch_category, only: [:show, :update, :destroy, :visible_groups]
   before_action :initialize_staff_action_logger, only: [:create, :update, :destroy]
   skip_before_action :check_xhr, only: [:index, :categories_and_latest, :categories_and_top, :redirect]
 
@@ -23,10 +24,15 @@ class CategoriesController < ApplicationController
 
     parent_category = Category.find_by_slug(params[:parent_category_id]) || Category.find_by(id: params[:parent_category_id].to_i)
 
+    include_subcategories = SiteSetting.desktop_category_page_style == "subcategories_with_featured_topics" ||
+      params[:include_subcategories] == "true"
+
     category_options = {
       is_homepage: current_homepage == "categories",
       parent_category_id: params[:parent_category_id],
-      include_topics: include_topics(parent_category)
+      include_topics: include_topics(parent_category),
+      include_subcategories: include_subcategories,
+      tag: params[:tag]
     }
 
     @category_list = CategoryList.new(guardian, category_options)
@@ -44,10 +50,14 @@ class CategoriesController < ApplicationController
         style = SiteSetting.desktop_category_page_style
         topic_options = {
           per_page: CategoriesController.topics_per_page,
-          no_definitions: true
+          no_definitions: true,
         }
 
-        if style == "categories_and_latest_topics"
+        if style == "categories_and_latest_topics_created_date"
+          topic_options[:order] = 'created'
+          @topic_list = TopicQuery.new(current_user, topic_options).list_latest
+          @topic_list.more_topics_url = url_for(public_send("latest_path", sort: :created))
+        elsif style == "categories_and_latest_topics"
           @topic_list = TopicQuery.new(current_user, topic_options).list_latest
           @topic_list.more_topics_url = url_for(public_send("latest_path"))
         elsif style == "categories_and_top_topics"
@@ -116,6 +126,7 @@ class CategoriesController < ApplicationController
     if Category.topic_create_allowed(guardian).where(id: @category.id).exists?
       @category.permission = CategoryGroup.permission_types[:full]
     end
+
     render_serialized(@category, CategorySerializer)
   end
 
@@ -147,9 +158,22 @@ class CategoriesController < ApplicationController
     guardian.ensure_can_edit!(@category)
 
     json_result(@category, serializer: CategorySerializer) do |cat|
+      old_category_params = category_params.dup
 
       cat.move_to(category_params[:position].to_i) if category_params[:position]
       category_params.delete(:position)
+
+      old_custom_fields = cat.custom_fields.dup
+      if category_params[:custom_fields]
+        category_params[:custom_fields].each do |key, value|
+          if value.present?
+            cat.custom_fields[key] = value
+          else
+            cat.custom_fields.delete(key)
+          end
+        end
+      end
+      category_params.delete(:custom_fields)
 
       # properly null the value so the database constraint doesn't catch us
       category_params[:email_in] = nil if category_params[:email_in]&.blank?
@@ -159,7 +183,12 @@ class CategoriesController < ApplicationController
 
       if result = cat.update(category_params)
         Scheduler::Defer.later "Log staff action change category settings" do
-          @staff_action_logger.log_category_settings_change(@category, category_params, old_permissions)
+          @staff_action_logger.log_category_settings_change(
+            @category,
+            old_category_params,
+            old_permissions: old_permissions,
+            old_custom_fields: old_custom_fields
+          )
         end
       end
 
@@ -192,7 +221,7 @@ class CategoriesController < ApplicationController
     notification_level = params[:notification_level].to_i
 
     CategoryUser.set_notification_level_for_category(current_user, notification_level, category_id)
-    render json: success_json
+    render json: success_json.merge({ indirectly_muted_category_ids: CategoryUser.indirectly_muted_category_ids(current_user) })
   end
 
   def destroy
@@ -230,6 +259,16 @@ class CategoriesController < ApplicationController
     render_serialized(@category, CategorySerializer)
   end
 
+  def visible_groups
+    @guardian.ensure_can_see!(@category)
+
+    groups = if !@category.groups.exists?(id: Group::AUTO_GROUPS[:everyone])
+      @category.groups.merge(Group.visible_groups(current_user)).pluck("name")
+    end
+
+    render json: success_json.merge(groups: groups || [])
+  end
+
   private
 
   def self.topics_per_page
@@ -251,8 +290,12 @@ class CategoriesController < ApplicationController
 
     topic_options = {
       per_page: CategoriesController.topics_per_page,
-      no_definitions: true
+      no_definitions: true,
     }
+
+    topic_options.merge!(build_topic_list_options)
+    style = SiteSetting.desktop_category_page_style
+    topic_options[:order] = 'created' if style == "categories_and_latest_topics_created_date"
 
     result = CategoryAndTopicLists.new
     result.category_list = CategoryList.new(guardian, category_options)
@@ -260,7 +303,9 @@ class CategoriesController < ApplicationController
     if topics_filter == :latest
       result.topic_list = TopicQuery.new(current_user, topic_options).list_latest
     elsif topics_filter == :top
-      result.topic_list = TopicQuery.new(nil, topic_options).list_top_for(SiteSetting.top_page_default_timeframe.to_sym)
+      result.topic_list = TopicQuery.new(current_user, topic_options).list_top_for(
+        SiteSetting.top_page_default_timeframe.to_sym
+      )
     end
 
     render_serialized(result, CategoryAndTopicListsSerializer, root: false)
@@ -286,9 +331,13 @@ class CategoriesController < ApplicationController
       end
 
       if SiteSetting.tagging_enabled
-        params[:allowed_tags] ||= []
-        params[:allowed_tag_groups] ||= []
-        params[:required_tag_group_name] ||= ''
+        params[:allowed_tags] = params[:allowed_tags].presence || [] if params[:allowed_tags]
+        params[:allowed_tag_groups] = params[:allowed_tag_groups].presence || [] if params[:allowed_tag_groups]
+        params[:required_tag_groups] = params[:required_tag_groups].presence || [] if params[:required_tag_groups]
+      end
+
+      if SiteSetting.enable_category_group_moderation?
+        params[:reviewable_by_group_id] = Group.where(name: params[:reviewable_by_group_name]).pluck_first(:id) if params[:reviewable_by_group_name]
       end
 
       result = params.permit(
@@ -302,10 +351,12 @@ class CategoriesController < ApplicationController
         :mailinglist_mirror,
         :all_topics_wiki,
         :allow_unlimited_owner_edits_on_first_post,
+        :default_slow_mode_seconds,
         :parent_category_id,
         :auto_close_hours,
         :auto_close_based_on_last_post,
         :uploaded_logo_id,
+        :uploaded_logo_dark_id,
         :uploaded_background_id,
         :slug,
         :allow_badges,
@@ -322,25 +373,36 @@ class CategoriesController < ApplicationController
         :navigate_to_first_post_after_read,
         :search_priority,
         :allow_global_tags,
-        :required_tag_group_name,
-        :min_tags_from_required_group,
         :read_only_banner,
         :default_list_filter,
-        custom_fields: [params[:custom_fields].try(:keys)],
+        :reviewable_by_group_id,
+        custom_fields: [custom_field_params],
         permissions: [*p.try(:keys)],
         allowed_tags: [],
-        allowed_tag_groups: []
+        allowed_tag_groups: [],
+        required_tag_groups: [:name, :min_count]
       )
-      if SiteSetting.enable_category_group_moderation?
-        result[:reviewable_by_group_id] = Group.find_by(name: params[:reviewable_by_group_name])&.id
+
+      if result[:required_tag_groups] && !result[:required_tag_groups].is_a?(Array)
+        raise Discourse::InvalidParameters.new(:required_tag_groups)
       end
 
       result
     end
   end
 
+  def custom_field_params
+    keys = params[:custom_fields].try(:keys)
+    return if keys.blank?
+
+    keys.map do |key|
+      params[:custom_fields][key].is_a?(Array) ? { key => [] } : key
+    end
+  end
+
   def fetch_category
     @category = Category.find_by_slug(params[:id]) || Category.find_by(id: params[:id].to_i)
+    raise Discourse::NotFound if @category.blank?
   end
 
   def initialize_staff_action_logger
@@ -353,6 +415,7 @@ class CategoriesController < ApplicationController
       params[:include_topics] ||
       (parent_category && parent_category.subcategory_list_includes_topics?) ||
       style == "categories_with_featured_topics" ||
+      style == "subcategories_with_featured_topics" ||
       style == "categories_boxes_with_topics" ||
       style == "categories_with_top_topics"
   end

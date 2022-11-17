@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
 require 'file_store/s3_store'
 
 RSpec.describe UploadCreator do
@@ -32,7 +31,7 @@ RSpec.describe UploadCreator do
 
         expect do
           UploadCreator.new(file, "utf-8\n.txt").create_for(user2.id)
-        end.to change { Upload.count }.by(0)
+        end.not_to change { Upload.count }
 
         expect(user.user_uploads.count).to eq(1)
         expect(user2.user_uploads.count).to eq(1)
@@ -111,6 +110,21 @@ RSpec.describe UploadCreator do
           expect(File.extname(upload.url)).to eq('.bin')
           expect(upload.original_filename).to eq('tiff_as.bin')
         end
+      end
+    end
+
+    context "when image is too big" do
+      let(:filename) { 'logo.png' }
+      let(:file) { file_from_fixtures(filename) }
+
+      it "adds an error to the upload" do
+        SiteSetting.max_image_size_kb = 1
+        upload = UploadCreator.new(
+          file, filename, force_optimize: true
+        ).create_for(Discourse.system_user.id)
+        expect(upload.errors.full_messages.first).to eq(
+          "#{I18n.t("upload.images.too_large_humanized", max_size: "1 KB")}"
+        )
       end
     end
 
@@ -201,7 +215,7 @@ RSpec.describe UploadCreator do
         expect(upload.original_filename).to eq('large_and_unoptimized.png')
       end
 
-      context "jpeg image quality settings" do
+      context "with jpeg image quality settings" do
         before do
           SiteSetting.png_to_jpg_quality = 75
           SiteSetting.recompress_original_jpg_quality = 40
@@ -233,7 +247,7 @@ RSpec.describe UploadCreator do
           expect(upload.original_filename).to eq('animated.gif')
         end
 
-        context "png image quality settings" do
+        context "with png image quality settings" do
           before do
             SiteSetting.png_to_jpg_quality = 100
             SiteSetting.recompress_original_jpg_quality = 90
@@ -291,7 +305,7 @@ RSpec.describe UploadCreator do
         setup_s3
         stub_s3_store
 
-        SiteSetting.secure_media = true
+        SiteSetting.secure_uploads = true
         SiteSetting.authorized_extensions = 'pdf|svg|jpg'
       end
 
@@ -308,9 +322,18 @@ RSpec.describe UploadCreator do
 
         expect(upload.secure?).to eq(false)
       end
+
+      it "sets a reason for the security" do
+        upload = UploadCreator.new(file, filename, opts).create_for(user.id)
+        stored_upload = Upload.last
+
+        expect(stored_upload.secure?).to eq(true)
+        expect(stored_upload.security_last_changed_at).not_to eq(nil)
+        expect(stored_upload.security_last_changed_reason).to eq("uploading via the composer | source: upload creator")
+      end
     end
 
-    context 'uploading to s3' do
+    context 'when uploading to s3' do
       let(:filename) { "should_be_jpeg.png" }
       let(:file) { file_from_fixtures(filename) }
       let(:pdf_filename) { "small.pdf" }
@@ -334,7 +357,7 @@ RSpec.describe UploadCreator do
 
       it 'should return signed URL for secure attachments in S3' do
         SiteSetting.authorized_extensions = 'pdf'
-        SiteSetting.secure_media = true
+        SiteSetting.secure_uploads = true
 
         upload = UploadCreator.new(pdf_file, pdf_filename, opts).create_for(user.id)
         stored_upload = Upload.last
@@ -376,12 +399,12 @@ RSpec.describe UploadCreator do
         end
       end
 
-      context "when SiteSetting.secure_media is enabled" do
+      context "when SiteSetting.secure_uploads is enabled" do
         before do
           setup_s3
           stub_s3_store
 
-          SiteSetting.secure_media = true
+          SiteSetting.secure_uploads = true
         end
 
         it "does not return the existing upload, as duplicate uploads are allowed" do
@@ -390,18 +413,18 @@ RSpec.describe UploadCreator do
       end
     end
 
-    context "secure media functionality" do
+    context "with secure uploads functionality" do
       let(:filename) { "logo.jpg" }
       let(:file) { file_from_fixtures(filename) }
       let(:opts) { {} }
       let(:result) { UploadCreator.new(file, filename, opts).create_for(user.id) }
 
-      context "when SiteSetting.secure_media enabled" do
+      context "when SiteSetting.secure_uploads enabled" do
         before do
           setup_s3
           stub_s3_store
 
-          SiteSetting.secure_media = true
+          SiteSetting.secure_uploads = true
         end
 
         it "sets an original_sha1 on the upload created because the sha1 column is securerandom in this case" do
@@ -490,7 +513,7 @@ RSpec.describe UploadCreator do
       end
     end
 
-    context 'custom emojis' do
+    context 'with custom emojis' do
       let(:animated_filename) { "animated.gif" }
       let(:animated_file) { file_from_fixtures(animated_filename) }
 
@@ -532,6 +555,23 @@ RSpec.describe UploadCreator do
     end
   end
 
+  describe '#convert_favicon_to_png!' do
+    let(:filename) { "smallest.ico" }
+    let(:file) { file_from_fixtures(filename, "images") }
+
+    before do
+      SiteSetting.authorized_extensions = 'png|jpg|ico'
+    end
+
+    it 'converts to png' do
+      upload = UploadCreator.new(file, filename).create_for(user.id)
+
+      expect(upload.persisted?).to eq(true)
+      expect(upload.extension).to eq('png')
+    end
+
+  end
+
   describe '#clean_svg!' do
     let(:b64) do
       Base64.encode64('<svg onmouseover="alert(alert)" />')
@@ -546,10 +586,10 @@ RSpec.describe UploadCreator do
             <path id="pathdef" d="m0 0h100v100h-77z" stroke="#000" />
           </defs>
           <g>
-            <use id="valid-use" x="123" xlink:href="#pathdef" />
+            <use id="valid-use" x="123" href="#pathdef" />
           </g>
           <use id="invalid-use1" href="https://svg.example.com/evil.svg" />
-          <use id="invalid-use2" xlink:href="data:image/svg+xml;base64,#{b64}" />
+          <use id="invalid-use2" href="data:image/svg+xml;base64,#{b64}" />
         </svg>
       XML
       file.rewind
@@ -618,7 +658,7 @@ RSpec.describe UploadCreator do
   end
 
   describe '#should_downsize?' do
-    context "GIF image" do
+    context "with GIF image" do
       let(:gif_file) { file_from_fixtures("animated.gif") }
 
       before do

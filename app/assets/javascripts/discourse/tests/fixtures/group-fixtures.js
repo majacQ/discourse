@@ -28,8 +28,8 @@ export default {
       is_group_user: true,
       is_group_owner: true,
       mentionable: false,
-      messageable: true
-    }
+      messageable: true,
+    },
   },
   "/groups/discourse.json": {
     group: {
@@ -49,14 +49,36 @@ export default {
       can_see_members: true,
       has_messages: true,
       message_count: 2,
-      imap_mailboxes: [
-        "All Mail",
-        "Important"
-      ]
+      imap_mailboxes: ["All Mail", "Important"],
     },
     extras: {
-      visible_group_names: ["discourse"]
-    }
+      visible_group_names: ["discourse"],
+    },
+  },
+  "/groups/support.json": {
+    group: {
+      id: 55,
+      automatic: false,
+      name: "support",
+      full_name: "Awesome Support",
+      user_count: 8,
+      alias_level: 99,
+      visible: true,
+      public_admission: true,
+      public_exit: false,
+      flair_url: "fa-adjust",
+      is_group_owner: true,
+      mentionable: true,
+      messageable: true,
+      can_see_members: true,
+      has_messages: true,
+      message_count: 2,
+      default_notification_level: 2,
+      imap_mailboxes: ["All Mail", "Important"],
+    },
+    extras: {
+      visible_group_names: ["support"],
+    },
   },
   "/topics/groups/discourse.json": {
     users: [
@@ -64,14 +86,14 @@ export default {
         id: 2,
         username: "bruce1",
         avatar_template:
-          "/user_avatar/meta.discourse.org/bruce1/{size}/5245.png"
+          "/user_avatar/meta.discourse.org/bruce1/{size}/5245.png",
       },
       {
         id: 1,
         username: "bruce0",
         avatar_template:
-          "/user_avatar/meta.discourse.org/bruce0/{size}/5245.png"
-      }
+          "/user_avatar/meta.discourse.org/bruce0/{size}/5245.png",
+      },
     ],
     primary_groups: [],
     topic_list: {
@@ -115,9 +137,9 @@ export default {
               extras: "latest single",
               description: "Original Poster, Most Recent Poster",
               user_id: 2,
-              primary_group_id: null
-            }
-          ]
+              primary_group_id: null,
+            },
+          ],
         },
         {
           id: 12073,
@@ -153,18 +175,18 @@ export default {
               extras: "latest single",
               description: "Original Poster, Most Recent Poster",
               user_id: 1,
-              primary_group_id: null
-            }
-          ]
-        }
-      ]
-    }
+              primary_group_id: null,
+            },
+          ],
+        },
+      ],
+    },
   },
   "/groups/discourse/counts.json": {
     counts: {
       posts: 17829,
-      members: 7
-    }
+      members: 7,
+    },
   },
   "/groups/discourse/members.json": {
     owners: [],
@@ -176,7 +198,7 @@ export default {
         avatar_template:
           "/user_avatar/meta.discourse.org/awesomerobot/{size}/33872.png",
         name: "",
-        last_seen_at: "2015-01-23T15:53:17.844Z"
+        last_seen_at: "2015-01-23T15:53:17.844Z",
       },
       {
         id: 32,
@@ -185,7 +207,7 @@ export default {
         avatar_template:
           "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
         name: "Jeff Atwood",
-        last_seen_at: "2015-01-23T06:05:25.457Z"
+        last_seen_at: "2015-01-23T06:05:25.457Z",
       },
       {
         id: 19,
@@ -194,7 +216,7 @@ export default {
         avatar_template:
           "/user_avatar/meta.discourse.org/eviltrout/{size}/5275.png",
         name: "Robin Ward",
-        last_seen_at: "2015-01-23T16:03:45.098Z"
+        last_seen_at: "2015-01-23T16:03:45.098Z",
       },
       {
         id: 2,
@@ -202,7 +224,7 @@ export default {
         uploaded_avatar_id: 5245,
         avatar_template: "/user_avatar/meta.discourse.org/neil/{size}/5245.png",
         name: "Neil Lalonde",
-        last_seen_at: "2015-01-23T15:22:10.244Z"
+        last_seen_at: "2015-01-23T15:22:10.244Z",
       },
       {
         id: 1,
@@ -210,7 +232,7 @@ export default {
         uploaded_avatar_id: 5243,
         avatar_template: "/user_avatar/meta.discourse.org/sam/{size}/5243.png",
         name: "Sam Saffron",
-        last_seen_at: "2015-01-23T11:07:06.233Z"
+        last_seen_at: "2015-01-23T11:07:06.233Z",
       },
       {
         id: 3,
@@ -219,7 +241,7 @@ export default {
         avatar_template:
           "/user_avatar/meta.discourse.org/supermathie/{size}/34097.png",
         name: "Michael Brown",
-        last_seen_at: "2015-01-22T05:16:42.254Z"
+        last_seen_at: "2015-01-22T05:16:42.254Z",
       },
       {
         id: 1995,
@@ -228,14 +250,14 @@ export default {
         avatar_template:
           "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png",
         name: "Régis Hanol",
-        last_seen_at: "2015-01-23T15:45:34.196Z"
-      }
+        last_seen_at: "2015-01-23T15:45:34.196Z",
+      },
     ],
     meta: {
       total: 7,
       limit: 50,
-      offset: 0
-    }
+      offset: 0,
+    },
   },
   "/groups/discourse/posts.json": [
     {
@@ -279,15 +301,15 @@ export default {
         posts_day: 28,
         allow_badges: true,
         name_lower: "ux",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 2770,
         username: "awesomerobot",
         uploaded_avatar_id: 33872,
         avatar_template:
-          "/user_avatar/meta.discourse.org/awesomerobot/{size}/33872.png"
-      }
+          "/user_avatar/meta.discourse.org/awesomerobot/{size}/33872.png",
+      },
     },
     {
       id: 94603,
@@ -330,15 +352,15 @@ export default {
         posts_day: 28,
         allow_badges: true,
         name_lower: "ux",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 2770,
         username: "awesomerobot",
         uploaded_avatar_id: 33872,
         avatar_template:
-          "/user_avatar/meta.discourse.org/awesomerobot/{size}/33872.png"
-      }
+          "/user_avatar/meta.discourse.org/awesomerobot/{size}/33872.png",
+      },
     },
     {
       id: 94601,
@@ -381,15 +403,15 @@ export default {
         posts_day: 28,
         allow_badges: true,
         name_lower: "ux",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 2770,
         username: "awesomerobot",
         uploaded_avatar_id: 33872,
         avatar_template:
-          "/user_avatar/meta.discourse.org/awesomerobot/{size}/33872.png"
-      }
+          "/user_avatar/meta.discourse.org/awesomerobot/{size}/33872.png",
+      },
     },
     {
       id: 94577,
@@ -433,15 +455,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "feature",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 1995,
         username: "zogstrip",
         uploaded_avatar_id: 8630,
         avatar_template:
-          "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png"
-      }
+          "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png",
+      },
     },
     {
       id: 94574,
@@ -485,15 +507,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "feature",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 1995,
         username: "zogstrip",
         uploaded_avatar_id: 8630,
         avatar_template:
-          "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png"
-      }
+          "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png",
+      },
     },
     {
       id: 94572,
@@ -537,15 +559,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "translations",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 1995,
         username: "zogstrip",
         uploaded_avatar_id: 8630,
         avatar_template:
-          "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png"
-      }
+          "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png",
+      },
     },
     {
       id: 94555,
@@ -554,8 +576,7 @@ export default {
       created_at: "2015-01-23T08:17:31.700Z",
       title:
         "Introducing Discette - a minimal ember-cli front end to Discourse",
-      url:
-        "/t/introducing-discette-a-minimal-ember-cli-front-end-to-discourse/24321/3",
+      url: "/t/introducing-discette-a-minimal-ember-cli-front-end-to-discourse/24321/3",
       user_title: "team",
       user_long_name: "Régis Hanol",
       category: {
@@ -591,15 +612,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "dev",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 1995,
         username: "zogstrip",
         uploaded_avatar_id: 8630,
         avatar_template:
-          "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png"
-      }
+          "/user_avatar/meta.discourse.org/zogstrip/{size}/8630.png",
+      },
     },
     {
       id: 94544,
@@ -643,15 +664,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "ux",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94543,
@@ -695,15 +716,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "feature",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94542,
@@ -747,15 +768,15 @@ export default {
         background_url: "",
         allow_badges: true,
         name_lower: "support",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94522,
@@ -799,15 +820,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "bug",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94521,
@@ -851,15 +872,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "ux",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94519,
@@ -903,15 +924,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "meta",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94518,
@@ -955,15 +976,15 @@ export default {
         background_url: "",
         allow_badges: true,
         name_lower: "support",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94517,
@@ -1007,15 +1028,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "bug",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94516,
@@ -1059,15 +1080,15 @@ export default {
         background_url: "",
         allow_badges: true,
         name_lower: "support",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94515,
@@ -1076,8 +1097,7 @@ export default {
       created_at: "2015-01-23T02:38:29.185Z",
       title:
         "Introducing Discette - a minimal ember-cli front end to Discourse",
-      url:
-        "/t/introducing-discette-a-minimal-ember-cli-front-end-to-discourse/24321/2",
+      url: "/t/introducing-discette-a-minimal-ember-cli-front-end-to-discourse/24321/2",
       user_title: "co-founder",
       user_long_name: "Jeff Atwood",
       category: {
@@ -1113,15 +1133,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "dev",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94514,
@@ -1165,15 +1185,15 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "extensibility",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94512,
@@ -1217,15 +1237,15 @@ export default {
         background_url: "",
         allow_badges: true,
         name_lower: "support",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
     },
     {
       id: 94511,
@@ -1269,16 +1289,16 @@ export default {
         background_url: null,
         allow_badges: true,
         name_lower: "feature",
-        auto_close_based_on_last_post: false
+        auto_close_based_on_last_post: false,
       },
       user: {
         id: 32,
         username: "codinghorror",
         uploaded_avatar_id: 5297,
         avatar_template:
-          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png"
-      }
-    }
+          "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
+      },
+    },
   ],
   "/groups/alternative-group.json": {
     group: {
@@ -1289,6 +1309,7 @@ export default {
       user_count: 8,
       alias_level: 99,
       visible: true,
+      has_messages: true,
       public_admission: true,
       public_exit: false,
       flair_url: "fa-adjust",
@@ -1296,11 +1317,12 @@ export default {
       mentionable: true,
       messageable: true,
       can_see_members: true,
-      can_admin_group: true
+      can_admin_group: true,
+      default_notification_level: 0,
     },
     extras: {
-      visible_group_names: ["alternative-group"]
-    }
+      visible_group_names: ["alternative-group"],
+    },
   },
   "/groups/alternative-group/members.json": {
     owners: [],
@@ -1312,7 +1334,7 @@ export default {
         avatar_template:
           "/user_avatar/meta.discourse.org/awesomerobot/{size}/33872.png",
         name: "",
-        last_seen_at: "2015-01-23T15:53:17.844Z"
+        last_seen_at: "2015-01-23T15:53:17.844Z",
       },
       {
         id: 32,
@@ -1321,13 +1343,13 @@ export default {
         avatar_template:
           "/user_avatar/meta.discourse.org/codinghorror/{size}/5297.png",
         name: "Jeff Atwood",
-        last_seen_at: "2015-01-23T06:05:25.457Z"
+        last_seen_at: "2015-01-23T06:05:25.457Z",
       },
     ],
     meta: {
       total: 2,
       limit: 50,
-      offset: 0
-    }
-  }
+      offset: 0,
+    },
+  },
 };

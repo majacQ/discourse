@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe WebHookUserSerializer do
   let(:user) do
     user = Fabricate(:user)
@@ -42,6 +40,7 @@ RSpec.describe WebHookUserSerializer do
       :recent_time_read,
       :primary_group_id,
       :primary_group_name,
+      :flair_group_id,
       :flair_name,
       :flair_url,
       :flair_bg_color,

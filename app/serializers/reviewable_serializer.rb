@@ -6,7 +6,6 @@ class ReviewableSerializer < ApplicationSerializer
 
   attributes(
     :id,
-    :status,
     :type,
     :topic_id,
     :topic_url,
@@ -19,6 +18,8 @@ class ReviewableSerializer < ApplicationSerializer
     :version,
     :target_created_by_trust_level
   )
+
+  attribute :status_for_database, key: :status
 
   has_one :created_by, serializer: UserWithCustomFieldsSerializer, root: 'users'
   has_one :target_created_by, serializer: UserWithCustomFieldsSerializer, root: 'users'
@@ -59,7 +60,7 @@ class ReviewableSerializer < ApplicationSerializer
   def self.create_attribute(name, field)
     attribute(name)
 
-    class_eval <<~GETTER
+    class_eval <<~RUBY
       def #{name}
         #{field}
       end
@@ -67,7 +68,7 @@ class ReviewableSerializer < ApplicationSerializer
       def include_#{name}?
         #{name}.present?
       end
-    GETTER
+    RUBY
   end
 
   # This is easier than creating an AMS method for each attribute

@@ -31,6 +31,7 @@ ja:
           format_title: 日付のフォーマット
           timezone: タイムゾーン
           until: 終了日...
+          current_timezone: "現在のタイムゾーン:"
           recurring:
             every_day: "毎日"
             every_week: "毎週"
@@ -38,5 +39,6 @@ ja:
             every_month: "毎月"
             every_two_months: "隔月"
             every_three_months: "3 か月ごと"
-            every_six_months: "半年ごと"
+            every_six_months: "6 か月毎"
             every_year: "毎年"
+      default_title: "%{site_name} のイベント"

@@ -65,10 +65,14 @@ Discourse::Application.configure do
       s.set_regardless_of_locale(:min_post_length, 5)
       s.set_regardless_of_locale(:min_first_post_length, 5)
       s.set_regardless_of_locale(:min_personal_message_post_length, 10)
-      s.set_regardless_of_locale(:crawl_images, false)
       s.set_regardless_of_locale(:download_remote_images_to_local, false)
       s.set_regardless_of_locale(:unique_posts_mins, 0)
       s.set_regardless_of_locale(:max_consecutive_replies, 0)
+
+      # Most existing tests were written assuming allow_uncategorized_topics
+      # was enabled, so we should set it to true.
+      s.set_regardless_of_locale(:allow_uncategorized_topics, true)
+
       # disable plugins
       if ENV['LOAD_PLUGINS'] == '1'
         s.set_regardless_of_locale(:discourse_narrative_bot_enabled, false)

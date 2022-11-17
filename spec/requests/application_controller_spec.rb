@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe ApplicationController do
   describe '#redirect_to_login_if_required' do
     let(:admin) { Fabricate(:admin) }
@@ -119,6 +117,14 @@ RSpec.describe ApplicationController do
       expect(response.status).to eq(200)
       expect(response.body).not_to include("data-authentication-data=")
       expect(response.headers["Set-Cookie"]).to include("authentication_data=;") # Delete cookie
+    end
+
+    it "returns a 403 for json requests" do
+      get '/latest'
+      expect(response.status).to eq(302)
+
+      get '/latest.json'
+      expect(response.status).to eq(403)
     end
   end
 
@@ -369,7 +375,6 @@ RSpec.describe ApplicationController do
       end
 
       describe 'no logspam' do
-
         before do
           @orig_logger = Rails.logger
           Rails.logger = @fake_logger = FakeLogger.new
@@ -380,7 +385,6 @@ RSpec.describe ApplicationController do
         end
 
         it 'should handle 404 to a css file' do
-
           Discourse.cache.delete("page_not_found_topics:#{I18n.locale}")
 
           topic1 = Fabricate(:topic)
@@ -394,10 +398,9 @@ RSpec.describe ApplicationController do
           expect(response.body).to include(topic1.title)
           expect(response.body).to_not include(topic2.title)
 
-          expect(Rails.logger.fatals.length).to eq(0)
-          expect(Rails.logger.errors.length).to eq(0)
-          expect(Rails.logger.warnings.length).to eq(0)
-
+          expect(@fake_logger.fatals.length).to eq(0)
+          expect(@fake_logger.errors.length).to eq(0)
+          expect(@fake_logger.warnings.length).to eq(0)
         end
       end
 
@@ -526,6 +529,28 @@ RSpec.describe ApplicationController do
     end
   end
 
+  describe "splash_screen" do
+    let(:admin) { Fabricate(:admin) }
+
+    before do
+      admin
+    end
+
+    it 'adds a preloader splash screen when enabled' do
+      get '/'
+
+      expect(response.status).to eq(200)
+      expect(response.body).to include("d-splash")
+
+      SiteSetting.splash_screen = false
+
+      get '/'
+
+      expect(response.status).to eq(200)
+      expect(response.body).not_to include("d-splash")
+    end
+  end
+
   describe 'Delegated auth' do
     let :public_key do
       <<~TXT
@@ -640,6 +665,19 @@ RSpec.describe ApplicationController do
       expect(response.body).to include(nonce)
     end
 
+    it 'when splash screen is enabled it adds the fingerprint to the policy' do
+      SiteSetting.content_security_policy = true
+      SiteSetting.splash_screen = true
+
+      get '/latest'
+      fingerprint = SplashScreenHelper.fingerprint
+      expect(response.headers).to include('Content-Security-Policy')
+
+      script_src = parse(response.headers['Content-Security-Policy'])['script-src']
+      expect(script_src.to_s).to include(fingerprint)
+      expect(response.body).to include(SplashScreenHelper.inline_splash_screen_script)
+    end
+
     def parse(csp_string)
       csp_string.split(';').map do |policy|
         directive, *sources = policy.split
@@ -668,7 +706,34 @@ RSpec.describe ApplicationController do
     expect(response.body).to have_tag("link", with: { rel: "canonical", href: "http://test.localhost/t/#{topic.slug}/#{topic.id}" })
   end
 
-  context "default locale" do
+  it "adds a noindex header if non-canonical indexing is disabled" do
+    SiteSetting.allow_indexing_non_canonical_urls = false
+    get '/'
+    expect(response.headers['X-Robots-Tag']).to be_nil
+
+    get '/latest'
+    expect(response.headers['X-Robots-Tag']).to be_nil
+
+    get '/categories'
+    expect(response.headers['X-Robots-Tag']).to be_nil
+
+    topic = create_post.topic
+    get "/t/#{topic.slug}/#{topic.id}"
+    expect(response.headers['X-Robots-Tag']).to be_nil
+    post = create_post(topic_id: topic.id)
+    get "/t/#{topic.slug}/#{topic.id}/2"
+    expect(response.headers['X-Robots-Tag']).to eq('noindex')
+
+    20.times do
+      create_post(topic_id: topic.id)
+    end
+    get "/t/#{topic.slug}/#{topic.id}/21"
+    expect(response.headers['X-Robots-Tag']).to eq('noindex')
+    get "/t/#{topic.slug}/#{topic.id}?page=2"
+    expect(response.headers['X-Robots-Tag']).to be_nil
+  end
+
+  context "with default locale" do
     before do
       SiteSetting.default_locale = :fr
       sign_in(Fabricate(:user))
@@ -728,8 +793,8 @@ RSpec.describe ApplicationController do
       { HTTP_ACCEPT_LANGUAGE: locale }
     end
 
-    context "allow_user_locale disabled" do
-      context "accept-language header differs from default locale" do
+    context "with allow_user_locale disabled" do
+      context "when accept-language header differs from default locale" do
         before do
           SiteSetting.allow_user_locale = false
           SiteSetting.default_locale = "en"
@@ -756,8 +821,8 @@ RSpec.describe ApplicationController do
       end
     end
 
-    context "set_locale_from_accept_language_header enabled" do
-      context "accept-language header differs from default locale" do
+    context "with set_locale_from_accept_language_header enabled" do
+      context "when accept-language header differs from default locale" do
         before do
           SiteSetting.allow_user_locale = true
           SiteSetting.set_locale_from_accept_language_header = true
@@ -807,7 +872,7 @@ RSpec.describe ApplicationController do
         end
       end
 
-      context "the preferred locale includes a region" do
+      context "when the preferred locale includes a region" do
         it "returns the locale and region separated by an underscore" do
           SiteSetting.allow_user_locale = true
           SiteSetting.set_locale_from_accept_language_header = true
@@ -819,7 +884,7 @@ RSpec.describe ApplicationController do
         end
       end
 
-      context 'accept-language header is not set' do
+      context 'when accept-language header is not set' do
         it 'uses the site default locale' do
           SiteSetting.allow_user_locale = true
           SiteSetting.default_locale = 'en'
@@ -828,6 +893,268 @@ RSpec.describe ApplicationController do
           expect(response.status).to eq(200)
           expect(response.parsed_body['bootstrap']['locale_script']).to end_with("en.js")
         end
+      end
+    end
+
+    context "with set_locale_from_cookie enabled" do
+      context "when cookie locale differs from default locale" do
+        before do
+          SiteSetting.allow_user_locale = true
+          SiteSetting.set_locale_from_cookie = true
+          SiteSetting.default_locale = "en"
+        end
+
+        context "with an anonymous user" do
+          it "uses the locale from the cookie" do
+            get "/bootstrap.json", headers: { Cookie: "locale=es" }
+            expect(response.status).to eq(200)
+            expect(response.parsed_body['bootstrap']['locale_script']).to end_with("es.js")
+            expect(I18n.locale.to_s).to eq(SiteSettings::DefaultsProvider::DEFAULT_LOCALE) # doesn't leak after requests
+          end
+        end
+
+        context "when the preferred locale includes a region" do
+          it "returns the locale and region separated by an underscore" do
+            get "/bootstrap.json", headers: { Cookie: "locale=zh-CN" }
+            expect(response.status).to eq(200)
+            expect(response.parsed_body['bootstrap']['locale_script']).to end_with("zh_CN.js")
+          end
+        end
+      end
+
+      context 'when locale cookie is not set' do
+        it 'uses the site default locale' do
+          SiteSetting.allow_user_locale = true
+          SiteSetting.default_locale = 'en'
+
+          get "/bootstrap.json", headers: { Cookie: "" }
+          expect(response.status).to eq(200)
+          expect(response.parsed_body['bootstrap']['locale_script']).to end_with("en.js")
+        end
+      end
+    end
+  end
+
+  describe 'vary header' do
+    it 'includes Vary:Accept on all requests where format is not explicit' do
+      # Rails default behaviour - include Vary:Accept when Accept is supplied
+      get "/latest", headers: { "Accept" => "application/json" }
+      expect(response.status).to eq(200)
+      expect(response.headers["Vary"]).to eq("Accept")
+
+      # Discourse additional behaviour (see lib/vary_header.rb)
+      # Include Vary:Accept even when Accept is not supplied
+      get "/latest"
+      expect(response.status).to eq(200)
+      expect(response.headers["Vary"]).to eq("Accept")
+
+      # Not needed, because the path 'format' parameter overrides the Accept header
+      get "/latest.json"
+      expect(response.status).to eq(200)
+      expect(response.headers["Vary"]).to eq(nil)
+    end
+  end
+
+  describe "Discourse-Rate-Limit-Error-Code header" do
+    fab!(:admin) { Fabricate(:admin) }
+
+    before do
+      RateLimiter.clear_all!
+      RateLimiter.enable
+    end
+
+    it "is included when API key is rate limited" do
+      global_setting :max_admin_api_reqs_per_minute, 1
+      api_key = ApiKey.create!(user_id: admin.id).key
+      get "/latest.json", headers: {
+        "Api-Key": api_key,
+        "Api-Username": admin.username
+      }
+      expect(response.status).to eq(200)
+
+      get "/latest.json", headers: {
+        "Api-Key": api_key,
+        "Api-Username": admin.username
+      }
+      expect(response.status).to eq(429)
+      expect(response.headers["Discourse-Rate-Limit-Error-Code"]).to eq("admin_api_key_rate_limit")
+    end
+
+    it "is included when user API key is rate limited" do
+      global_setting :max_user_api_reqs_per_minute, 1
+      user_api_key = UserApiKey.create!(
+        user_id: admin.id,
+        client_id: "",
+        application_name: "discourseapp"
+      )
+      user_api_key.scopes = UserApiKeyScope.all_scopes.keys.map do |name|
+        UserApiKeyScope.create!(name: name, user_api_key_id: user_api_key.id)
+      end
+      user_api_key.save!
+
+      get "/session/current.json", headers: {
+        "User-Api-Key": user_api_key.key,
+      }
+      expect(response.status).to eq(200)
+
+      get "/session/current.json", headers: {
+        "User-Api-Key": user_api_key.key,
+      }
+      expect(response.status).to eq(429)
+      expect(
+        response.headers["Discourse-Rate-Limit-Error-Code"]
+      ).to eq("user_api_key_limiter_60_secs")
+
+      global_setting :max_user_api_reqs_per_minute, 100
+      global_setting :max_user_api_reqs_per_day, 1
+
+      get "/session/current.json", headers: {
+        "User-Api-Key": user_api_key.key,
+      }
+      expect(response.status).to eq(429)
+      expect(
+        response.headers["Discourse-Rate-Limit-Error-Code"]
+      ).to eq("user_api_key_limiter_1_day")
+    end
+  end
+
+  describe "crawlers in slow_down_crawler_user_agents site setting" do
+    before do
+      RateLimiter.enable
+      RateLimiter.clear_all!
+    end
+
+    it "are rate limited" do
+      SiteSetting.slow_down_crawler_rate = 128
+      SiteSetting.slow_down_crawler_user_agents = "badcrawler|problematiccrawler"
+      now = Time.zone.now
+      freeze_time now
+
+      get "/", headers: {
+        "HTTP_USER_AGENT" => "iam badcrawler"
+      }
+      expect(response.status).to eq(200)
+      get "/", headers: {
+        "HTTP_USER_AGENT" => "iam badcrawler"
+      }
+      expect(response.status).to eq(429)
+      expect(response.headers["Retry-After"]).to eq("128")
+
+      get "/", headers: {
+        "HTTP_USER_AGENT" => "iam problematiccrawler"
+      }
+      expect(response.status).to eq(200)
+      get "/", headers: {
+        "HTTP_USER_AGENT" => "iam problematiccrawler"
+      }
+      expect(response.status).to eq(429)
+      expect(response.headers["Retry-After"]).to eq("128")
+
+      freeze_time now + 100.seconds
+      get "/", headers: {
+        "HTTP_USER_AGENT" => "iam badcrawler"
+      }
+      expect(response.status).to eq(429)
+      expect(response.headers["Retry-After"]).to eq("28")
+
+      get "/", headers: {
+        "HTTP_USER_AGENT" => "iam problematiccrawler"
+      }
+      expect(response.status).to eq(429)
+      expect(response.headers["Retry-After"]).to eq("28")
+
+      freeze_time now + 150.seconds
+      get "/", headers: {
+        "HTTP_USER_AGENT" => "iam badcrawler"
+      }
+      expect(response.status).to eq(200)
+
+      get "/", headers: {
+        "HTTP_USER_AGENT" => "iam problematiccrawler"
+      }
+      expect(response.status).to eq(200)
+    end
+  end
+
+  describe "#banner_json" do
+    let(:admin) { Fabricate(:admin) }
+    let(:user) { Fabricate(:user) }
+    fab!(:banner_topic) { Fabricate(:banner_topic) }
+    fab!(:p1) { Fabricate(:post, topic: banner_topic, raw: "A banner topic") }
+
+    before do
+      admin # to skip welcome wizard at home page `/`
+    end
+
+    context "with login_required" do
+      before do
+        SiteSetting.login_required = true
+      end
+      it "does not include banner info for anonymous users" do
+        get "/login"
+
+        expect(response.body).to have_tag("div#data-preloaded") do |element|
+          json = JSON.parse(element.current_scope.attribute('data-preloaded').value)
+          expect(json['banner']).to eq("{}")
+        end
+      end
+
+      it "includes banner info for logged-in users" do
+        sign_in(user)
+        get "/"
+
+        expect(response.body).to have_tag("div#data-preloaded") do |element|
+          json = JSON.parse(element.current_scope.attribute('data-preloaded').value)
+          expect(JSON.parse(json['banner'])["html"]).to eq("<p>A banner topic</p>")
+        end
+      end
+    end
+
+    context "with login not required" do
+      before do
+        SiteSetting.login_required = false
+      end
+      it "does include banner info for anonymous users" do
+        get "/login"
+
+        expect(response.body).to have_tag("div#data-preloaded") do |element|
+          json = JSON.parse(element.current_scope.attribute('data-preloaded').value)
+          expect(JSON.parse(json['banner'])["html"]).to eq("<p>A banner topic</p>")
+        end
+      end
+    end
+  end
+
+  describe 'preload Link header' do
+    context "with GlobalSetting.preload_link_header" do
+      before do
+        global_setting :preload_link_header, true
+      end
+
+      it "should have the Link header with assets on full page requests" do
+        get("/latest")
+        expect(response.headers).to include('Link')
+      end
+
+      it "shouldn't have the Link header on xhr api requests" do
+        get("/latest.json")
+        expect(response.headers).not_to include('Link')
+      end
+    end
+
+    context "without GlobalSetting.preload_link_header" do
+      before do
+        global_setting :preload_link_header, false
+      end
+
+      it "shouldn't have the Link header with assets on full page requests" do
+        get("/latest")
+        expect(response.headers).not_to include('Link')
+      end
+
+      it "shouldn't have the Link header on xhr api requests" do
+        get("/latest.json")
+        expect(response.headers).not_to include('Link')
       end
     end
   end

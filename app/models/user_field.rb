@@ -3,6 +3,7 @@
 class UserField < ActiveRecord::Base
 
   include AnonCacheInvalidator
+  include HasSanitizableFields
 
   validates_presence_of :description, :field_type
   validates_presence_of :name, unless: -> { field_type == "confirm" }
@@ -10,7 +11,10 @@ class UserField < ActiveRecord::Base
   has_one :directory_column, dependent: :destroy
   accepts_nested_attributes_for :user_field_options
 
+  before_save :sanitize_description
   after_save :queue_index_search
+
+  scope :public_fields, -> { where(show_on_profile: true).or(where(show_on_user_card: true)) }
 
   def self.max_length
     2048
@@ -18,6 +22,14 @@ class UserField < ActiveRecord::Base
 
   def queue_index_search
     SearchIndexer.queue_users_reindex(UserCustomField.where(name: "user_field_#{self.id}").pluck(:user_id))
+  end
+
+  private
+
+  def sanitize_description
+    if description_changed?
+      self.description = sanitize_field(self.description)
+    end
   end
 end
 

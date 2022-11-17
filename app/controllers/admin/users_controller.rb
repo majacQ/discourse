@@ -1,12 +1,11 @@
 # frozen_string_literal: true
 
-class Admin::UsersController < Admin::AdminController
+class Admin::UsersController < Admin::StaffController
 
   before_action :fetch_user, only: [:suspend,
                                     :unsuspend,
                                     :log_out,
                                     :revoke_admin,
-                                    :grant_admin,
                                     :revoke_moderation,
                                     :grant_moderation,
                                     :approve,
@@ -127,7 +126,7 @@ class Admin::UsersController < Admin::AdminController
     if message.present?
       Jobs.enqueue(
         :critical_user_email,
-        type: :account_suspended,
+        type: "account_suspended",
         user_id: @user.id,
         user_history_id: user_history.id
       )
@@ -151,7 +150,8 @@ class Admin::UsersController < Admin::AdminController
         suspend_reason: params[:reason],
         full_suspend_reason: user_history.try(:details),
         suspended_till: @user.suspended_till,
-        suspended_at: @user.suspended_at
+        suspended_at: @user.suspended_at,
+        suspended_by: BasicUserSerializer.new(current_user, root: false).as_json
       }
     )
   end
@@ -187,33 +187,38 @@ class Admin::UsersController < Admin::AdminController
     guardian.ensure_can_revoke_admin!(@user)
     @user.revoke_admin!
     StaffActionLogger.new(current_user).log_revoke_admin(@user)
-    render body: nil
+    render_serialized(@user, AdminDetailedUserSerializer, root: false)
   end
 
   def grant_admin
-    AdminConfirmation.new(@user, current_user).create_confirmation
-    render json: success_json
+    result = run_second_factor!(SecondFactor::Actions::GrantAdmin)
+    if result.no_second_factors_enabled?
+      render json: success_json.merge(email_confirmation_required: true)
+    else
+      render json: success_json
+    end
   end
 
   def revoke_moderation
     guardian.ensure_can_revoke_moderation!(@user)
     @user.revoke_moderation!
     StaffActionLogger.new(current_user).log_revoke_moderation(@user)
-    render body: nil
+    render_serialized(@user, AdminDetailedUserSerializer, root: false)
   end
 
   def grant_moderation
     guardian.ensure_can_grant_moderation!(@user)
     @user.grant_moderation!
     StaffActionLogger.new(current_user).log_grant_moderation(@user)
-    render_serialized(@user, AdminUserSerializer)
+    render_serialized(@user, AdminDetailedUserSerializer, root: false)
   end
 
   def add_group
     group = Group.find(params[:group_id].to_i)
-
     raise Discourse::NotFound unless group
+
     return render_json_error(I18n.t('groups.errors.can_not_modify_automatic')) if group.automatic
+    guardian.ensure_can_edit!(group)
 
     group.add(@user)
     GroupActionLogger.new(current_user, group).log_add_user_to_group(@user)
@@ -223,22 +228,24 @@ class Admin::UsersController < Admin::AdminController
 
   def remove_group
     group = Group.find(params[:group_id].to_i)
-
     raise Discourse::NotFound unless group
-    return render_json_error(I18n.t('groups.errors.can_not_modify_automatic')) if group.automatic
 
-    group.remove(@user)
-    GroupActionLogger.new(current_user, group).log_remove_user_from_group(@user)
+    return render_json_error(I18n.t('groups.errors.can_not_modify_automatic')) if group.automatic
+    guardian.ensure_can_edit!(group)
+
+    if group.remove(@user)
+      GroupActionLogger.new(current_user, group).log_remove_user_from_group(@user)
+    end
 
     render body: nil
   end
 
   def primary_group
-    guardian.ensure_can_change_primary_group!(@user)
-
     if params[:primary_group_id].present?
       primary_group_id = params[:primary_group_id].to_i
       if group = Group.find(primary_group_id)
+        guardian.ensure_can_change_primary_group!(@user, group)
+
         if group.user_ids.include?(@user.id)
           @user.primary_group_id = primary_group_id
         end
@@ -308,7 +315,7 @@ class Admin::UsersController < Admin::AdminController
   def activate
     guardian.ensure_can_activate!(@user)
     # ensure there is an active email token
-    @user.email_tokens.create(email: @user.email) unless @user.email_tokens.active.exists?
+    @user.email_tokens.create!(email: @user.email, scope: EmailToken.scopes[:signup]) if !@user.email_tokens.active.exists?
     @user.activate
     StaffActionLogger.new(current_user).log_user_activate(@user, I18n.t('user.activated_by_staff'))
     render json: success_json
@@ -348,7 +355,7 @@ class Admin::UsersController < Admin::AdminController
     if silencer.silence
       Jobs.enqueue(
         :critical_user_email,
-        type: :account_silenced,
+        type: "account_silenced",
         user_id: @user.id,
         user_history_id: silencer.user_history.id
       )
@@ -392,7 +399,7 @@ class Admin::UsersController < Admin::AdminController
 
     Jobs.enqueue(
       :critical_user_email,
-      type: :account_second_factor_disabled,
+      type: "account_second_factor_disabled",
       user_id: @user.id
     )
 
@@ -403,8 +410,10 @@ class Admin::UsersController < Admin::AdminController
     user = User.find_by(id: params[:id].to_i)
     guardian.ensure_can_delete_user!(user)
 
-    options = params.slice(:block_email, :block_urls, :block_ip, :context, :delete_as_spammer)
-    options[:delete_posts] = ActiveModel::Type::Boolean.new.cast(params[:delete_posts])
+    options = params.slice(:context, :delete_as_spammer)
+    [:delete_posts, :block_email, :block_urls, :block_ip].each do |param_name|
+      options[param_name] = ActiveModel::Type::Boolean.new.cast(params[param_name])
+    end
     options[:prepare_for_destroy] = true
 
     hijack do
@@ -442,17 +451,18 @@ class Admin::UsersController < Admin::AdminController
     return render body: nil, status: 404 unless SiteSetting.enable_discourse_connect
 
     begin
-      sso = DiscourseSingleSignOn.parse("sso=#{params[:sso]}&sig=#{params[:sig]}", secure_session: secure_session)
-    rescue DiscourseSingleSignOn::ParseError
+      sso = DiscourseConnect.parse("sso=#{params[:sso]}&sig=#{params[:sig]}", secure_session: secure_session)
+    rescue DiscourseConnect::ParseError
       return render json: failed_json.merge(message: I18n.t("discourse_connect.login_error")), status: 422
     end
 
     begin
       user = sso.lookup_or_create_user
+      DiscourseEvent.trigger(:sync_sso, user)
       render_serialized(user, AdminDetailedUserSerializer, root: false)
     rescue ActiveRecord::RecordInvalid => ex
       render json: failed_json.merge(message: ex.message), status: 403
-    rescue DiscourseSingleSignOn::BlankExternalId => ex
+    rescue DiscourseConnect::BlankExternalId => ex
       render json: failed_json.merge(message: I18n.t('discourse_connect.blank_id_error')), status: 422
     end
   end

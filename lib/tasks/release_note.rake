@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-DATE_REGEX = /\A\d{4}-\d{2}-\d{2}/
+DATE_REGEX ||= /\A\d{4}-\d{2}-\d{2}/
 
-CHANGE_TYPES = [
+CHANGE_TYPES ||= [
   { pattern: /^FEATURE:/, heading: "New Features" },
   { pattern: /^FIX:/, heading: "Bug Fixes" },
   { pattern: /^UX:/, heading: "UX Changes" },
@@ -17,7 +17,7 @@ task "release_note:generate", :from, :to, :repo do |t, args|
   changes = find_changes(repo, args[:from], args[:to])
 
   CHANGE_TYPES.each do |ct|
-    print_changes(ct[:heading], changes[ct])
+    print_changes(ct[:heading], changes[ct], "###")
   end
 
   if changes.values.all?(&:empty?)
@@ -37,7 +37,7 @@ task "release_note:plugins:generate", :from, :to, :plugin_glob, :org do |t, args
   plugin_glob = args[:plugin_glob] || "./plugins/*"
   git_org = args[:org]
 
-  all_repos = Dir.glob(plugin_glob).filter { |f| File.directory?(f) && File.exists?("#{f}/.git")  }
+  all_repos = Dir.glob(plugin_glob).filter { |f| File.directory?(f) && File.exist?("#{f}/.git")  }
 
   if git_org
     all_repos = all_repos.filter { |dir| `git -C #{dir} remote get-url origin`.match?(/github.com[\/:]#{git_org}\//) }
@@ -54,11 +54,10 @@ task "release_note:plugins:generate", :from, :to, :plugin_glob, :org do |t, args
       next
     end
 
-    puts "## #{name}\n\n"
+    puts "### #{name}\n\n"
     CHANGE_TYPES.each do |ct|
-      print_changes(ct[:heading], changes[ct])
+      print_changes_plugin(ct[:heading], changes[ct])
     end
-    puts "---", ""
   end
 
   puts "(No changes found in #{no_changes_repos.join(", ")})"
@@ -99,11 +98,19 @@ def find_changes(repo, from, to)
   changes
 end
 
-def print_changes(heading, changes)
+def print_changes(heading, changes, importance)
   return if changes.length == 0
 
-  puts "### #{heading}", ""
+  puts "#{importance} #{heading}", ""
   puts changes.to_a, ""
+end
+
+def print_changes_plugin(heading, changes)
+  return if changes.length == 0
+
+  puts "[details=\"#{heading}\"]\n", ""
+  puts changes.to_a, ""
+  puts "[/details]\n", ""
 end
 
 def better(line)

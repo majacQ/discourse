@@ -14,7 +14,7 @@ module ImportExport
                    :public_admission, :membership_request_template, :messageable_level, :mentionable_level,
                    :members_visibility_level, :publish_read_state]
 
-    USER_ATTRS = [:id, :email, :username, :name, :created_at, :trust_level, :active, :last_emailed_at]
+    USER_ATTRS = [:id, :email, :username, :name, :created_at, :trust_level, :active, :last_emailed_at, :custom_fields]
 
     TOPIC_ATTRS = [:id, :title, :created_at, :views, :category_id, :closed, :archived, :archetype]
 
@@ -176,6 +176,12 @@ module ImportExport
       end
 
       data
+    end
+
+    def export_translation_overrides
+      @export_data[:translation_overrides] = TranslationOverride.all.select(:locale, :translation_key, :value)
+
+      self
     end
 
     def default_filename_prefix

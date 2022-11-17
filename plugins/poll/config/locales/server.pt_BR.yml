@@ -6,11 +6,11 @@
 
 pt_BR:
   site_settings:
-    poll_enabled: "Permitir votações?"
-    poll_maximum_options: "Número máximo de opções permitidas em uma votação."
-    poll_edit_window_mins: "Número de minutos após a criação de uma postagem durante os quais votações podem ser editadas."
+    poll_enabled: "Permitir enquetes?"
+    poll_maximum_options: "Quantidade máxima de opções permitidas em uma enquete."
+    poll_edit_window_mins: "Quantidade de minutos após a criação de uma postagem pelos quais as enquetes podem ser editadas."
     poll_minimum_trust_level_to_create: "Defina o nível de confiança mínimo necessário para criar votações."
-    poll_groupable_user_fields: "Um conjunto de nomes de campo de usuário que podem ser usados para agrupar e filtrar os resultados da pesquisa."
+    poll_groupable_user_fields: "Um conjunto de nomes para o campo do(a) usuário(a) que podem ser usados para agrupar e filtrar os resultados da enquete."
     poll_export_data_explorer_query_id: "ID da consulta do Data Explorer para usar para exportar resultados de enquetes (0 para desativar)."
   poll:
     poll: "enquete"
@@ -40,6 +40,13 @@ pt_BR:
     user_cant_post_in_topic: "Você não pode votar porque você não pode postar neste tópico."
     topic_must_be_open_to_vote: "O tópico precisa estar aberto para votar."
     poll_must_be_open_to_vote: "A enquete precisa estar aberta para votar."
+    one_vote_per_user: "Apenas um voto é permitido nesta enquete."
+    max_vote_per_user:
+      one: Apenas %{count} voto é permitido para esta enquete.
+      other: No máximo %{count} votos são permitidos para esta enquete.
+    min_vote_per_user:
+      one: No mínimo %{count} voto é permitido para esta enquete.
+      other: No mínimo %{count} votos são permitidos para esta enquete.
     topic_must_be_open_to_toggle_status: "O tópico precisar estar aberto para mudar seu status."
     only_staff_or_op_can_toggle_status: "Somente um membro da equipe ou o autor(a) original pode mudar o status da enquete."
     insufficient_rights_to_create: "Você não tem permissão para criar enquetes."

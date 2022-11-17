@@ -8,11 +8,6 @@ class QunitController < ApplicationController
   }
   layout false
 
-  # only used in test / dev
-  def index
-    raise Discourse::InvalidAccess.new if Rails.env.production?
-  end
-
   def theme
     raise Discourse::NotFound.new if !can_see_theme_qunit?
 
@@ -30,7 +25,7 @@ class QunitController < ApplicationController
     end
 
     if param_key && theme.blank?
-      return render plain: "Can't find theme with #{param_key} #{params[param_key].inspect}", status: :not_found
+      return render plain: "Can't find theme with #{param_key} #{get_param(param_key).inspect}", status: :not_found
     end
 
     if !param_key

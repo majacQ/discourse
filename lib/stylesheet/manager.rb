@@ -1,15 +1,15 @@
 # frozen_string_literal: true
 
-require_dependency 'distributed_cache'
-require_dependency 'stylesheet/compiler'
+require 'distributed_cache'
+require 'stylesheet/compiler'
 
 module Stylesheet; end
 
 class Stylesheet::Manager
+  BASE_COMPILER_VERSION = 1
 
   CACHE_PATH ||= 'tmp/stylesheet-cache'
   MANIFEST_DIR ||= "#{Rails.root}/tmp/cache/assets/#{Rails.env}"
-  MANIFEST_FULL_PATH ||= "#{MANIFEST_DIR}/stylesheet-manifest"
   THEME_REGEX ||= /_theme$/
   COLOR_SCHEME_STYLESHEET ||= "color_definitions"
 
@@ -105,37 +105,70 @@ class Stylesheet::Manager
     nil
   end
 
-  def self.last_file_updated
-    if Rails.env.production?
-      @last_file_updated ||= if File.exists?(MANIFEST_FULL_PATH)
-        File.readlines(MANIFEST_FULL_PATH, 'r')[0]
+  def self.fs_asset_cachebuster
+    if use_file_hash_for_cachebuster?
+      @cachebuster ||= if File.exist?(manifest_full_path)
+        File.readlines(manifest_full_path, 'r')[0]
       else
-        mtime = max_file_mtime
+        cachebuster = "#{BASE_COMPILER_VERSION}:#{fs_assets_hash}"
         FileUtils.mkdir_p(MANIFEST_DIR)
-        File.open(MANIFEST_FULL_PATH, "w") { |f| f.print(mtime) }
-        mtime
+        File.open(manifest_full_path, "w") { |f| f.print(cachebuster) }
+        cachebuster
       end
     else
-      max_file_mtime
+      "#{BASE_COMPILER_VERSION}:#{max_file_mtime}"
     end
   end
 
-  def self.max_file_mtime
-    globs = ["#{Rails.root}/app/assets/stylesheets/**/*.*css",
-             "#{Rails.root}/app/assets/images/**/*.*"]
+  def self.recalculate_fs_asset_cachebuster!
+    File.delete(manifest_full_path) if File.exist?(manifest_full_path)
+    @cachebuster = nil
+    fs_asset_cachebuster
+  end
 
-    Discourse.plugins.map { |plugin| File.dirname(plugin.path) }.each do |path|
+  def self.manifest_full_path
+    path = "#{MANIFEST_DIR}/stylesheet-manifest"
+    return path if !Rails.env.test?
+    "#{path}-test_#{ENV['TEST_ENV_NUMBER'].presence || '0'}"
+  end
+  private_class_method :manifest_full_path
+
+  def self.use_file_hash_for_cachebuster?
+    Rails.env.production?
+  end
+  private_class_method :use_file_hash_for_cachebuster?
+
+  def self.list_files
+    globs = [
+      "#{Rails.root}/app/assets/stylesheets/**/*.*css",
+      "#{Rails.root}/app/assets/images/**/*.*"
+    ]
+
+    Discourse.plugins.each do |plugin|
+      path = File.dirname(plugin.path)
       globs << "#{path}/plugin.rb"
       globs << "#{path}/assets/stylesheets/**/*.*css"
     end
 
-    globs.map do |pattern|
-      Dir.glob(pattern).map { |x| File.mtime(x) }.max
-    end.compact.max.to_i
+    globs.flat_map { |g| Dir.glob(g) }.compact
   end
+  private_class_method :list_files
+
+  def self.max_file_mtime
+    list_files.map { |x| File.mtime(x) }.compact.max.to_i
+  end
+  private_class_method :max_file_mtime
+
+  def self.fs_assets_hash
+    hashes = list_files.sort.map { |x| Digest::SHA1.hexdigest("#{x}: #{File.read(x)}") }
+    Digest::SHA1.hexdigest(hashes.join("|"))
+  end
+  private_class_method :fs_assets_hash
 
   def self.cache_fullpath
-    "#{Rails.root}/#{CACHE_PATH}"
+    path = "#{Rails.root}/#{CACHE_PATH}"
+    return path if !Rails.env.test?
+    File.join(path, "test_#{ENV['TEST_ENV_NUMBER'].presence || '0'}")
   end
 
   attr_reader :theme_ids
@@ -186,14 +219,23 @@ class Stylesheet::Manager
     stylesheet_details(target, "all")
   end
 
-  def stylesheet_link_tag(target = :desktop, media = 'all')
+  def stylesheet_preload_tag(target = :desktop, media = 'all')
     stylesheets = stylesheet_details(target, media)
     stylesheets.map do |stylesheet|
       href = stylesheet[:new_href]
+      %[<link href="#{href}" rel="preload" as="style"/>]
+    end.join("\n").html_safe
+  end
+
+  def stylesheet_link_tag(target = :desktop, media = 'all', preload_callback = nil)
+    stylesheets = stylesheet_details(target, media)
+    stylesheets.map do |stylesheet|
+      href = stylesheet[:new_href]
+      preload_callback.call(href, 'style') if preload_callback
       theme_id = stylesheet[:theme_id]
       data_theme_id = theme_id ? "data-theme-id=\"#{theme_id}\"" : ""
       theme_name = stylesheet[:theme_name]
-      data_theme_name = theme_name ? "data-theme-name=\"#{theme_name}\"" : ""
+      data_theme_name = theme_name ? "data-theme-name=\"#{CGI.escapeHTML(theme_name)}\"" : ""
       %[<link href="#{href}" media="#{media}" rel="stylesheet" data-target="#{target}" #{data_theme_id} #{data_theme_name}/>]
     end.join("\n").html_safe
   end
@@ -222,14 +264,14 @@ class Stylesheet::Manager
           builder = Builder.new(target: target, theme: theme, manager: self)
 
           next if builder.theme&.component && !scss_checker.has_scss(theme_id)
-          builder.compile unless File.exists?(builder.stylesheet_fullpath)
-          href = builder.stylesheet_path(current_hostname)
+          builder.compile unless File.exist?(builder.stylesheet_fullpath)
+          href = builder.stylesheet_absolute_url
 
           data[:new_href] = href
           stylesheets << data
         end
 
-        if SiteSetting.order_stylesheets && stylesheets.size > 1
+        if stylesheets.size > 1
           stylesheets = stylesheets.sort_by do |s|
             [
               s[:remote] ? 0 : 1,
@@ -240,8 +282,8 @@ class Stylesheet::Manager
         end
       else
         builder = Builder.new(target: target, manager: self)
-        builder.compile unless File.exists?(builder.stylesheet_fullpath)
-        href = builder.stylesheet_path(current_hostname)
+        builder.compile unless File.exist?(builder.stylesheet_fullpath)
+        href = builder.stylesheet_absolute_url
 
         data = { target: target, new_href: href }
         stylesheets << data
@@ -283,20 +325,31 @@ class Stylesheet::Manager
       manager: self
     )
 
-    builder.compile unless File.exists?(builder.stylesheet_fullpath)
+    builder.compile unless File.exist?(builder.stylesheet_fullpath)
 
-    href = builder.stylesheet_path(current_hostname)
+    href = builder.stylesheet_absolute_url
     stylesheet[:new_href] = href
     cache.defer_set(cache_key, stylesheet.freeze)
     stylesheet
   end
 
-  def color_scheme_stylesheet_link_tag(color_scheme_id = nil, media = 'all')
+  def color_scheme_stylesheet_preload_tag(color_scheme_id = nil, media = 'all')
     stylesheet = color_scheme_stylesheet_details(color_scheme_id, media)
 
     return '' if !stylesheet
 
     href = stylesheet[:new_href]
+
+    %[<link href="#{href}" rel="preload" as="style"/>].html_safe
+  end
+
+  def color_scheme_stylesheet_link_tag(color_scheme_id = nil, media = 'all', preload_callback = nil)
+    stylesheet = color_scheme_stylesheet_details(color_scheme_id, media)
+
+    return '' if !stylesheet
+
+    href = stylesheet[:new_href]
+    preload_callback.call(href, 'style') if preload_callback
 
     css_class = media == 'all' ? "light-scheme" : "dark-scheme"
 

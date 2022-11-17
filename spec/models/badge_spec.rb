@@ -1,9 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe Badge do
-
+RSpec.describe Badge do
   it 'has a valid system attribute for new badges' do
     expect(Badge.create!(name: "test", badge_type_id: 1).system?).to be false
   end
@@ -49,6 +46,15 @@ describe Badge do
 
     b.reload
     expect(b.grant_count).to eq(1)
+  end
+
+  it 'sanitizes the description' do
+    xss = "<b onmouseover=alert('Wufff!')>click me!</b><script>alert('TEST');</script>"
+    badge = Fabricate(:badge)
+
+    badge.update!(description: xss)
+
+    expect(badge.description).to eq("<b>click me!</b>alert('TEST');")
   end
 
   describe '#manually_grantable?' do
@@ -133,7 +139,7 @@ describe Badge do
     end
   end
 
-  context "First Quote" do
+  describe "First Quote" do
     let(:quoted_post_badge) do
       Badge.find(Badge::FirstQuote)
     end
@@ -158,12 +164,10 @@ describe Badge do
       user_badge = post2.user.user_badges.find_by(badge_id: quoted_post_badge.id)
 
       expect(user_badge.granted_at).to eq_time(post2.created_at)
-
     end
   end
 
-  context "WikiEditor badge" do
-
+  describe "WikiEditor badge" do
     it "is awarded" do
       wiki_editor_badge = Badge.find(Badge::WikiEditor)
       post = Fabricate(:post, wiki: true)
@@ -174,11 +178,9 @@ describe Badge do
 
       expect(UserBadge.where(user_id: post.user.id, badge_id: Badge::WikiEditor).count).to eq(1)
     end
-
   end
 
-  context "PopularLink badge" do
-
+  describe "PopularLink badge" do
     let(:popular_link_badge) do
       Badge.find(Badge::PopularLink)
     end
@@ -214,8 +216,7 @@ describe Badge do
     end
   end
 
-  context "#seed" do
-
+  describe "#seed" do
     let(:regular_badge) do
       Badge.find(Badge::Regular)
     end

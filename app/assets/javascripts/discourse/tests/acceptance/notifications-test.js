@@ -1,12 +1,14 @@
-import { visit } from "@ember/test-helpers";
+import { click, visit } from "@ember/test-helpers";
 import {
   acceptance,
   count,
+  exists,
   publishToMessageBus,
   query,
   queryAll,
 } from "discourse/tests/helpers/qunit-helpers";
 import { test } from "qunit";
+import User from "discourse/models/user";
 
 acceptance("User Notifications", function (needs) {
   needs.user();
@@ -17,7 +19,7 @@ acceptance("User Notifications", function (needs) {
 
     // set older notifications to read
 
-    publishToMessageBus("/notification/19", {
+    await publishToMessageBus("/notification/19", {
       unread_notifications: 5,
       unread_private_messages: 0,
       unread_high_priority_notifications: 0,
@@ -33,13 +35,11 @@ acceptance("User Notifications", function (needs) {
       seen_notification_id: null,
     });
 
-    await visit("/"); // wait for re-render
-
-    assert.equal(count("#quick-access-notifications li"), 5);
+    assert.strictEqual(count("#quick-access-notifications li"), 6);
 
     // high priority, unread notification - should be first
 
-    publishToMessageBus("/notification/19", {
+    await publishToMessageBus("/notification/19", {
       unread_notifications: 6,
       unread_private_messages: 0,
       unread_high_priority_notifications: 1,
@@ -49,7 +49,6 @@ acceptance("User Notifications", function (needs) {
           id: 42,
           user_id: 1,
           notification_type: 5,
-          high_priority: true,
           read: false,
           high_priority: true,
           created_at: "2021-01-01 12:00:00 UTC",
@@ -78,17 +77,15 @@ acceptance("User Notifications", function (needs) {
       seen_notification_id: null,
     });
 
-    await visit("/"); // wait for re-render
-
-    assert.equal(count("#quick-access-notifications li"), 6);
-    assert.equal(
+    assert.strictEqual(count("#quick-access-notifications li"), 6);
+    assert.strictEqual(
       query("#quick-access-notifications li span[data-topic-id]").innerText,
       "First notification"
     );
 
     // high priority, read notification - should be second
 
-    publishToMessageBus("/notification/19", {
+    await publishToMessageBus("/notification/19", {
       unread_notifications: 7,
       unread_private_messages: 0,
       unread_high_priority_notifications: 1,
@@ -98,7 +95,6 @@ acceptance("User Notifications", function (needs) {
           id: 43,
           user_id: 1,
           notification_type: 5,
-          high_priority: true,
           read: true,
           high_priority: false,
           created_at: "2021-01-01 12:00:00 UTC",
@@ -128,10 +124,8 @@ acceptance("User Notifications", function (needs) {
       seen_notification_id: null,
     });
 
-    await visit("/"); // wait for re-render
-
-    assert.equal(count("#quick-access-notifications li"), 7);
-    assert.equal(
+    assert.strictEqual(count("#quick-access-notifications li"), 7);
+    assert.strictEqual(
       queryAll("#quick-access-notifications li span[data-topic-id]")[1]
         .innerText,
       "Second notification"
@@ -139,7 +133,7 @@ acceptance("User Notifications", function (needs) {
 
     // updates existing notifications
 
-    publishToMessageBus("/notification/19", {
+    await publishToMessageBus("/notification/19", {
       unread_notifications: 8,
       unread_private_messages: 0,
       unread_high_priority_notifications: 1,
@@ -149,7 +143,6 @@ acceptance("User Notifications", function (needs) {
           id: 44,
           user_id: 1,
           notification_type: 5,
-          high_priority: true,
           read: true,
           high_priority: false,
           created_at: "2021-01-01 12:00:00 UTC",
@@ -180,12 +173,11 @@ acceptance("User Notifications", function (needs) {
       seen_notification_id: null,
     });
 
-    await visit("/"); // wait for re-render
-    assert.equal(count("#quick-access-notifications li"), 8);
+    assert.strictEqual(count("#quick-access-notifications li"), 8);
     const texts = [];
-    queryAll("#quick-access-notifications li").each((_, el) =>
-      texts.push(el.innerText.trim())
-    );
+    [...queryAll("#quick-access-notifications li")].forEach((element) => {
+      texts.push(element.innerText.trim());
+    });
     assert.deepEqual(texts, [
       "foo First notification",
       "foo Third notification",
@@ -198,3 +190,64 @@ acceptance("User Notifications", function (needs) {
     ]);
   });
 });
+
+acceptance("Category Notifications", function (needs) {
+  needs.user({ muted_category_ids: [1], indirectly_muted_category_ids: [2] });
+
+  test("New category is muted when parent category is muted", async function (assert) {
+    await visit("/");
+    const user = User.current();
+    await publishToMessageBus("/categories", {
+      categories: [
+        {
+          id: 3,
+          parent_category_id: 99,
+        },
+        {
+          id: 4,
+        },
+      ],
+    });
+    assert.deepEqual(user.indirectly_muted_category_ids, [2]);
+
+    await publishToMessageBus("/categories", {
+      categories: [
+        {
+          id: 4,
+          parent_category_id: 1,
+        },
+        {
+          id: 5,
+          parent_category_id: 2,
+        },
+      ],
+    });
+    assert.deepEqual(user.indirectly_muted_category_ids, [2, 4, 5]);
+  });
+});
+
+acceptance(
+  "User Notifications - there is no notifications yet",
+  function (needs) {
+    needs.user();
+
+    needs.pretender((server, helper) => {
+      server.get("/notifications", () => {
+        return helper.response({
+          notifications: [],
+        });
+      });
+    });
+
+    test("It renders the empty state panel", async function (assert) {
+      await visit("/u/eviltrout/notifications");
+      assert.ok(exists("div.empty-state"));
+    });
+
+    test("It does not render filter", async function (assert) {
+      await visit("/u/eviltrout/notifications");
+
+      assert.notOk(exists("div.user-notifications-filter"));
+    });
+  }
+);

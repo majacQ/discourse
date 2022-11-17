@@ -62,11 +62,20 @@ class CategoryList
 
     category_featured_topics = CategoryFeaturedTopic.select([:category_id, :topic_id]).order(:rank)
 
-    @all_topics = Topic.where(id: category_featured_topics.map(&:topic_id))
-    @all_topics = @all_topics.includes(:last_poster) if @options[:include_topics]
+    @all_topics = Topic.where(id: category_featured_topics.map(&:topic_id)).includes(:shared_draft, :category)
+
+    @all_topics = @all_topics.joins(:tags).where(tags: { name: @options[:tag] }) if @options[:tag].present?
+
+    if @guardian.authenticated?
+      @all_topics = @all_topics
+        .joins("LEFT JOIN topic_users tu ON topics.id = tu.topic_id AND tu.user_id = #{@guardian.user.id.to_i}")
+        .where('COALESCE(tu.notification_level,1) > :muted', muted: TopicUser.notification_levels[:muted])
+    end
+
+    @all_topics = TopicQuery.remove_muted_tags(@all_topics, @guardian.user).includes(:last_poster)
     @all_topics.each do |t|
       # hint for the serializer
-      t.include_last_poster = true if @options[:include_topics]
+      t.include_last_poster = true
       t.dismissed = dismissed_topic?(t)
       @topics_by_id[t.id] = t
     end
@@ -90,6 +99,7 @@ class CategoryList
     @categories = Category.includes(
       :uploaded_background,
       :uploaded_logo,
+      :uploaded_logo_dark,
       :topic_only_relative_url,
       subcategories: [:topic_only_relative_url]
     ).secured(@guardian)
@@ -100,32 +110,44 @@ class CategoryList
 
     @categories = @categories.to_a
 
+    include_subcategories = @options[:include_subcategories] == true
+
     notification_levels = CategoryUser.notification_levels_for(@guardian.user)
     default_notification_level = CategoryUser.default_notification_level
 
+    if @options[:parent_category_id].blank?
+      subcategory_ids = {}
+      subcategory_list = {}
+      to_delete = Set.new
+      @categories.each do |c|
+        if c.parent_category_id.present?
+          subcategory_ids[c.parent_category_id] ||= []
+          subcategory_ids[c.parent_category_id] << c.id
+          if include_subcategories
+            subcategory_list[c.parent_category_id] ||= []
+            subcategory_list[c.parent_category_id] << c
+          end
+          to_delete << c
+        end
+      end
+      @categories.each do |c|
+        c.subcategory_ids = subcategory_ids[c.id] || []
+        if include_subcategories
+          c.subcategory_list = subcategory_list[c.id] || []
+        end
+      end
+      @categories.delete_if { |c| to_delete.include?(c) }
+    end
+
     allowed_topic_create = Set.new(Category.topic_create_allowed(@guardian).pluck(:id))
-    @categories.each do |category|
+    categories_with_descendants.each do |category|
       category.notification_level = notification_levels[category.id] || default_notification_level
       category.permission = CategoryGroup.permission_types[:full] if allowed_topic_create.include?(category.id)
       category.has_children = category.subcategories.present?
     end
 
-    if @options[:parent_category_id].blank?
-      subcategories = {}
-      to_delete = Set.new
-      @categories.each do |c|
-        if c.parent_category_id.present?
-          subcategories[c.parent_category_id] ||= []
-          subcategories[c.parent_category_id] << c.id
-          to_delete << c
-        end
-      end
-      @categories.each { |c| c.subcategory_ids = subcategories[c.id] || [] }
-      @categories.delete_if { |c| to_delete.include?(c) }
-    end
-
     if @topics_by_category_id
-      @categories.each do |c|
+      categories_with_descendants.each do |c|
         topics_in_cat = @topics_by_category_id[c.id]
         if topics_in_cat.present?
           c.displayable_topics = []
@@ -158,7 +180,7 @@ class CategoryList
   # Put unpinned topics at the end of the list
   def sort_unpinned
     if @guardian.current_user && @all_topics.present?
-      @categories.each do |c|
+      categories_with_descendants.each do |c|
         next if c.displayable_topics.blank? || c.displayable_topics.size <= c.num_featured_topics
         unpinned = []
         c.displayable_topics.each do |t|
@@ -178,10 +200,22 @@ class CategoryList
   end
 
   def trim_results
-    @categories.each do |c|
+    categories_with_descendants.each do |c|
       next if c.displayable_topics.blank?
       c.displayable_topics = c.displayable_topics[0, c.num_featured_topics]
     end
   end
 
+  def categories_with_descendants(categories = @categories)
+    return @categories_with_children if @categories_with_children && (categories == @categories)
+    return nil if categories.nil?
+
+    result = categories.flat_map do |c|
+      [c, *categories_with_descendants(c.subcategory_list)]
+    end
+
+    @categories_with_children = result if categories == @categories
+
+    result
+  end
 end

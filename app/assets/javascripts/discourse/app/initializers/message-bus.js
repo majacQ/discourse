@@ -40,13 +40,13 @@ export default {
       return;
     }
 
-    const messageBus = container.lookup("message-bus:main"),
-      user = container.lookup("current-user:main"),
-      siteSettings = container.lookup("site-settings:main");
+    const messageBus = container.lookup("service:message-bus"),
+      user = container.lookup("service:current-user"),
+      siteSettings = container.lookup("service:site-settings");
 
     messageBus.alwaysLongPoll = !isProduction();
     messageBus.shouldLongPollCallback = () =>
-      userPresent(LONG_POLL_AFTER_UNSEEN_TIME);
+      userPresent({ userUnseenTime: LONG_POLL_AFTER_UNSEEN_TIME });
 
     // we do not want to start anything till document is complete
     messageBus.stop();
@@ -56,8 +56,8 @@ export default {
     // When 20 minutes pass we stop long polling due to "shouldLongPollCallback".
     onPresenceChange({
       unseenTime: LONG_POLL_AFTER_UNSEEN_TIME,
-      callback: () => {
-        if (messageBus.onVisibilityChange) {
+      callback: (present) => {
+        if (present && messageBus.onVisibilityChange) {
           messageBus.onVisibilityChange();
         }
       },

@@ -2,6 +2,7 @@
 
 module SiteSettingExtension
   include SiteSettings::DeprecatedSettings
+  include HasSanitizableFields
 
   # support default_locale being set via global settings
   # this also adds support for testing the extension and global settings
@@ -212,16 +213,12 @@ module SiteSettingExtension
       value = value.to_s if type == :upload
       value = value.map(&:to_s).join("|") if type == :uploaded_image_list
 
-      if should_sanitize?(value, type)
-        value = sanitize(value)
-      end
-
       [name, value]
     end.flatten])
   end
 
   # Retrieve all settings
-  def all_settings(include_hidden: false, sanitize_plain_text_settings: false)
+  def all_settings(include_hidden: false)
 
     locale_setting_hash =
     {
@@ -237,38 +234,42 @@ module SiteSettingExtension
     }
 
     defaults.all(default_locale)
-      .reject { |s, _| !include_hidden && hidden_settings.include?(s) }
-      .map do |s, v|
+      .reject do |setting_name, _|
+        if !include_hidden && hidden_settings.include?(setting_name)
+          true
+        elsif categories[setting_name].to_s == "sidebar" && !SiteSetting.enable_experimental_sidebar_hamburger
+          true
+        else
+          false
+        end
+      end.map do |s, v|
+        type_hash = type_supervisor.type_hash(s)
+        default = defaults.get(s, default_locale).to_s
 
-      type_hash = type_supervisor.type_hash(s)
-      default = defaults.get(s, default_locale).to_s
+        value = public_send(s)
+        value = value.map(&:to_s).join("|") if type_hash[:type].to_s == "uploaded_image_list"
 
-      value = public_send(s)
-      value = value.map(&:to_s).join("|") if type_hash[:type].to_s == "uploaded_image_list"
+        if type_hash[:type].to_s == "upload" &&
+          default.to_i < Upload::SEEDED_ID_THRESHOLD
 
-      if type_hash[:type].to_s == "upload" &&
-         default.to_i < Upload::SEEDED_ID_THRESHOLD
+          default = default_uploads[default.to_i]
+        end
 
-        default = default_uploads[default.to_i]
-      elsif sanitize_plain_text_settings && should_sanitize?(value, type_hash[:type].to_s)
-        value = sanitize(value)
-      end
+        opts = {
+          setting: s,
+          description: description(s),
+          default: default,
+          value: value.to_s,
+          category: categories[s],
+          preview: previews[s],
+          secret: secret_settings.include?(s),
+          placeholder: placeholder(s)
+        }.merge!(type_hash)
 
-      opts = {
-        setting: s,
-        description: description(s),
-        default: default,
-        value: value.to_s,
-        category: categories[s],
-        preview: previews[s],
-        secret: secret_settings.include?(s),
-        placeholder: placeholder(s)
-      }.merge!(type_hash)
+        opts[:plugin] = plugins[s] if plugins[s]
 
-      opts[:plugin] = plugins[s] if plugins[s]
-
-      opts
-    end.unshift(locale_setting_hash)
+        opts
+      end.unshift(locale_setting_hash)
   end
 
   def description(setting)
@@ -360,6 +361,9 @@ module SiteSettingExtension
     old_val = current[name]
     provider.destroy(name)
     current[name] = defaults.get(name, default_locale)
+
+    return if current[name] == old_val
+
     clear_uploads_cache(name)
     clear_cache!
     DiscourseEvent.trigger(:site_setting_changed, name, old_val, current[name]) if old_val != current[name]
@@ -368,8 +372,15 @@ module SiteSettingExtension
   def add_override!(name, val)
     old_val = current[name]
     val, type = type_supervisor.to_db_value(name, val)
-    provider.save(name, val, type)
-    current[name] = type_supervisor.to_rb_value(name, val)
+
+    sanitize_override = val.is_a?(String) && client_settings.include?(name)
+
+    sanitized_val = sanitize_override ? sanitize_field(val) : val
+    provider.save(name, sanitized_val, type)
+    current[name] = type_supervisor.to_rb_value(name, sanitized_val)
+
+    return if current[name] == old_val
+
     clear_uploads_cache(name)
     notify_clients!(name) if client_settings.include? name
     clear_cache!
@@ -503,6 +514,8 @@ module SiteSettingExtension
           value = current[name]
         end
 
+        return [] if value.empty?
+
         value = value.split("|").map(&:to_i)
         uploads_list = Upload.where(id: value).to_a
         uploads[name] = uploads_list if uploads_list
@@ -532,6 +545,15 @@ module SiteSettingExtension
         else
           c
         end
+      end
+    end
+
+    # Any group_list setting, e.g. personal_message_enabled_groups, will have
+    # a getter defined with _map on the end, e.g. personal_message_enabled_groups_map,
+    # to avoid having to manually split and convert to integer for these settings.
+    if type_supervisor.get_type(name) == :group_list
+      define_singleton_method("#{clean_name}_map") do
+        self.public_send(clean_name).to_s.split("|").map(&:to_i)
       end
     end
 
@@ -582,16 +604,7 @@ module SiteSettingExtension
     end
   end
 
-  def should_sanitize?(value, type)
-    value.is_a?(String) && type.to_s != 'html'
-  end
-
-  def sanitize(value)
-    CGI.unescapeHTML(Loofah.scrub_fragment(value, :strip).to_s)
-  end
-
   def logger
     Rails.logger
   end
-
 end

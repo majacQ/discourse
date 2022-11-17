@@ -58,7 +58,7 @@ ja:
         footer_message:
           title: "フッターメッセージ"
         signup_cta:
-          title: "サインアップ CTA"
+          title: "アカウント登録 CTA"
         topic_timer_info:
           title: "トピックタイマー"
         topic_footer_buttons:
@@ -80,8 +80,15 @@ ja:
           header: "モーダルタイトル"
           footer: "モーダルフッター"
         user_about:
-          title: "ユーザープロフィールボックス"
+          title: "ユーザープロファイルボックス"
         header_icons:
           title: "ヘッダーアイコン"
         spinners:
           title: "スピナー"
+        empty_state:
+          title: "エンプティステート"
+        rich_tooltip:
+          title: "リッチツールヒント"
+          description: "説明"
+          header: "ヘッダー"
+          hover_to_see: "マウスを合わせるとツールヒントを表示"

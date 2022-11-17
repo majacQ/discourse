@@ -2,15 +2,14 @@ import Controller, { inject as controller } from "@ember/controller";
 import EmberObject from "@ember/object";
 import I18n from "I18n";
 import { alias } from "@ember/object/computed";
-import bootbox from "bootbox";
 import discourseComputed from "discourse-common/utils/decorators";
-import { extractDomainFromUrl } from "discourse/lib/utilities";
-import { isAbsoluteURL } from "discourse-common/lib/get-url";
 import { isEmpty } from "@ember/utils";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import { inject as service } from "@ember/service";
 
 export default Controller.extend({
   adminWebHooks: controller(),
+  dialog: service(),
   eventTypes: alias("adminWebHooks.eventTypes"),
   defaultEventTypes: alias("adminWebHooks.defaultEventTypes"),
   contentTypes: alias("adminWebHooks.contentTypes"),
@@ -42,7 +41,7 @@ export default Controller.extend({
   @discourseComputed("model.secret")
   secretValidation(secret) {
     if (!isEmpty(secret)) {
-      if (secret.indexOf(" ") !== -1) {
+      if (secret.includes(" ")) {
         return EmberObject.create({
           failed: true,
           reason: I18n.t("admin.web_hooks.secret_invalid"),
@@ -88,64 +87,35 @@ export default Controller.extend({
   actions: {
     save() {
       this.set("saved", false);
-      const url = this.get("model.payload_url");
-      const domain = extractDomainFromUrl(url);
       const model = this.model;
       const isNew = model.get("isNew");
 
-      const saveWebHook = () => {
-        return model
-          .save()
-          .then(() => {
-            this.set("saved", true);
-            this.adminWebHooks.get("model").addObject(model);
+      return model
+        .save()
+        .then(() => {
+          this.set("saved", true);
+          this.adminWebHooks.get("model").addObject(model);
 
-            if (isNew) {
-              this.transitionToRoute("adminWebHooks.show", model.get("id"));
-            }
-          })
-          .catch(popupAjaxError);
-      };
-
-      if (
-        domain === "localhost" ||
-        domain.match(/192\.168\.\d+\.\d+/) ||
-        domain.match(/127\.\d+\.\d+\.\d+/) ||
-        isAbsoluteURL(url)
-      ) {
-        return bootbox.confirm(
-          I18n.t("admin.web_hooks.warn_local_payload_url"),
-          I18n.t("no_value"),
-          I18n.t("yes_value"),
-          (result) => {
-            if (result) {
-              return saveWebHook();
-            }
+          if (isNew) {
+            this.transitionToRoute("adminWebHooks.show", model.get("id"));
           }
-        );
-      }
-
-      return saveWebHook();
+        })
+        .catch(popupAjaxError);
     },
 
     destroy() {
-      return bootbox.confirm(
-        I18n.t("admin.web_hooks.delete_confirm"),
-        I18n.t("no_value"),
-        I18n.t("yes_value"),
-        (result) => {
-          if (result) {
-            const model = this.model;
-            model
-              .destroyRecord()
-              .then(() => {
-                this.adminWebHooks.get("model").removeObject(model);
-                this.transitionToRoute("adminWebHooks");
-              })
-              .catch(popupAjaxError);
-          }
-        }
-      );
+      return this.dialog.yesNoConfirm({
+        message: I18n.t("admin.web_hooks.delete_confirm"),
+        didConfirm: () => {
+          this.model
+            .destroyRecord()
+            .then(() => {
+              this.adminWebHooks.get("model").removeObject(this.model);
+              this.transitionToRoute("adminWebHooks");
+            })
+            .catch(popupAjaxError);
+        },
+      });
     },
   },
 });

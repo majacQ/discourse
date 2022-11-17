@@ -10,7 +10,6 @@ class UserAction < ActiveRecord::Base
 
   LIKE = 1
   WAS_LIKED = 2
-  BOOKMARK = 3
   NEW_TOPIC = 4
   REPLY = 5
   RESPONSE = 6
@@ -32,17 +31,19 @@ class UserAction < ActiveRecord::Base
     WAS_LIKED,
     MENTION,
     QUOTE,
-    BOOKMARK,
     EDIT,
     SOLVED,
     ASSIGNED,
   ].each_with_index.to_a.flatten]
 
+  USER_ACTED_TYPES = [LIKE, NEW_TOPIC, REPLY, NEW_PRIVATE_MESSAGE]
+
   def self.types
     @types ||= Enum.new(
       like: 1,
       was_liked: 2,
-      bookmark: 3,
+      # NOTE: Previously type 3 was bookmark but this was removed when we
+      # changed to using the Bookmark model.
       new_topic: 4,
       reply: 5,
       response: 6,
@@ -53,6 +54,16 @@ class UserAction < ActiveRecord::Base
       got_private_message: 13,
       solved: 15,
       assigned: 16)
+  end
+
+  def self.private_types
+    @private_types ||= [
+      WAS_LIKED,
+      RESPONSE,
+      MENTION,
+      QUOTE,
+      EDIT
+    ]
   end
 
   def self.last_action_in_topic(user_id, topic_id)
@@ -128,7 +139,7 @@ class UserAction < ActiveRecord::Base
   def self.count_daily_engaged_users(start_date = nil, end_date = nil)
     result = select(:user_id)
       .distinct
-      .where(action_type: [LIKE, NEW_TOPIC, REPLY, NEW_PRIVATE_MESSAGE])
+      .where(action_type: USER_ACTED_TYPES)
 
     if start_date && end_date
       result = result.group('date(created_at)')
@@ -160,6 +171,7 @@ class UserAction < ActiveRecord::Base
     action_type
     action_code
     action_code_who
+    action_code_path
     topic_closed
     topic_id
     topic_archived
@@ -208,6 +220,7 @@ class UserAction < ActiveRecord::Base
         p.post_type,
         p.action_code,
         pc.value AS action_code_who,
+        pc2.value AS action_code_path,
         p.edit_reason,
         t.category_id
       FROM user_actions as a
@@ -219,6 +232,7 @@ class UserAction < ActiveRecord::Base
       JOIN users au on au.id = a.user_id
       LEFT JOIN categories c on c.id = t.category_id
       LEFT JOIN post_custom_fields pc ON pc.post_id = a.target_post_id AND pc.name = 'action_code_who'
+      LEFT JOIN post_custom_fields pc2 ON pc2.post_id = a.target_post_id AND pc2.name = 'action_code_path'
       /*where*/
       /*order_by*/
       /*offset*/
@@ -403,10 +417,11 @@ class UserAction < ActiveRecord::Base
       builder.where("t.visible")
     end
 
-    unless guardian.can_see_notifications?(User.where(id: user_id).first)
-      builder.where("a.action_type not in (#{BOOKMARK})")
-    end
+    filter_private_messages(builder, user_id, guardian, ignore_private_messages)
+    filter_categories(builder, guardian)
+  end
 
+  def self.filter_private_messages(builder, user_id, guardian, ignore_private_messages = false)
     if !guardian.can_see_private_messages?(user_id) || ignore_private_messages || !guardian.user
       builder.where("t.archetype <> :private_message", private_message: Archetype::private_message)
     else
@@ -426,7 +441,10 @@ class UserAction < ActiveRecord::Base
         builder.where(sql, private_message: Archetype::private_message, current_user_id: guardian.user.id)
       end
     end
+    builder
+  end
 
+  def self.filter_categories(builder, guardian)
     unless guardian.is_admin?
       allowed = guardian.secure_category_ids
       if allowed.present?
@@ -437,6 +455,7 @@ class UserAction < ActiveRecord::Base
         builder.where("(c.read_restricted IS NULL OR NOT c.read_restricted)")
       end
     end
+    builder
   end
 
   def self.require_parameters(data, *params)

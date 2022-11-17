@@ -13,13 +13,6 @@
     "avatar_template": {
       "type": "string"
     },
-    "email": {
-      "type": "string"
-    },
-    "secondary_emails": {
-      "type": "array",
-      "items": []
-    },
     "active": {
       "type": "boolean"
     },
@@ -39,13 +32,13 @@
       "type": "string"
     },
     "last_seen_age": {
-      "type": ""
+      "type": ["number", "null"]
     },
     "last_emailed_age": {
-      "type": ""
+      "type": ["number", "null"]
     },
     "created_at_age": {
-      "type": ""
+      "type": ["number", "null"]
     },
     "trust_level": {
       "type": "integer"
@@ -79,7 +72,7 @@
     },
     "associated_accounts": {
       "type": "array",
-      "items": []
+      "items": {}
     },
     "can_send_activation_email": {
       "type": "boolean"
@@ -147,6 +140,12 @@
     "silence_reason": {
       "type": ["string", "null"]
     },
+    "post_edits_count": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "primary_group_id": {
       "type": ["string", "null"]
     },
@@ -157,7 +156,7 @@
       "type": "integer"
     },
     "bounce_score": {
-      "type": ""
+      "type": ["integer", "null"]
     },
     "reset_bounce_score_after": {
       "type": ["string", "null"]
@@ -361,7 +360,7 @@
     },
     "groups": {
       "type": "array",
-      "items": [
+      "items":
         {
           "type": "object",
           "additionalProperties": false,
@@ -486,7 +485,9 @@
             "publish_read_state"
           ]
         }
-      ]
+    },
+    "external_ids": {
+      "type": "object"
     }
   },
   "required": [
@@ -548,6 +549,7 @@
     "approved_by",
     "suspended_by",
     "silenced_by",
-    "groups"
+    "groups",
+    "external_ids"
   ]
 }

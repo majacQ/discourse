@@ -13,16 +13,12 @@
   $hover-bg-color: var(--primary-medium),
   $hover-icon-color: var(--primary-low)
 ) {
-  box-sizing: border-box;
+  @include form-item-sizing;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   margin: 0;
-  padding: 0.53em 0.8em;
-  border: none;
   font-weight: normal;
-  font-size: $font-0;
-  line-height: normal;
   color: $text-color;
   background: $bg-color;
   cursor: pointer;
@@ -31,11 +27,18 @@
     color: $icon-color;
     margin-right: 0.45em;
     transition: color 0.25s;
+    // For Windows High Contrast (see whcm.scss for more)
+    @media (forced-colors: active) {
+      color: ButtonText;
+    }
+  }
+  .d-button-label + .d-icon {
+    margin-left: 0.45em;
+    margin-right: 0;
   }
   &.no-text {
     .d-icon {
       margin-right: 0;
-      min-height: 17px;
     }
   }
   @include hover {
@@ -43,6 +46,10 @@
     color: $hover-text-color;
     .d-icon {
       color: $hover-icon-color;
+      // For Windows High Contrast (see whcm.scss for more)
+      @media (forced-colors: active) {
+        color: Highlight;
+      }
     }
   }
   &:focus {
@@ -51,6 +58,9 @@
     color: $hover-text-color;
     .d-icon {
       color: $hover-icon-color;
+      @media (forced-colors: active) {
+        color: Highlight;
+      }
     }
   }
   &[href] {
@@ -59,10 +69,13 @@
   &:active,
   &.btn-active {
     @include linear-gradient($hover-bg-color 0%, $bg-color 100%);
+    border-bottom-color: $bg-color;
   }
   &[disabled],
   &.disabled {
-    opacity: 0.4;
+    &:not(.is-loading) {
+      opacity: 0.4;
+    }
     &:hover {
       color: $text-color;
       background: $bg-color;
@@ -81,19 +94,18 @@
   &.is-loading {
     &.btn-text {
       .d-button-label {
-        font-size: $font-down-2;
+        font-size: var(--font-down-2);
       }
 
       &.btn-small {
         .loading-icon {
-          font-size: $font-down-1;
+          font-size: var(--font-down-1);
           margin-right: 0.2em;
         }
       }
     }
 
     .loading-icon {
-      -webkit-animation: rotate-forever 1s infinite linear, fadein 1s;
       animation: rotate-forever 1s infinite linear, fadein 1s;
     }
   }
@@ -176,7 +188,11 @@
   }
   &:before {
     margin-right: 9px;
-    font-size: $font-0;
+    font-size: var(--font-0);
+  }
+  .d-icon,
+  &.btn:hover .d-icon {
+    color: #000;
   }
   &.google_oauth2 {
     background: var(--google);
@@ -191,16 +207,6 @@
     }
   }
 
-  &.facebook {
-    .d-icon {
-      color: $facebook;
-    }
-    &:hover {
-      .d-icon {
-        color: $facebook;
-      }
-    }
-  }
   &.cas {
     .d-icon {
       color: var(--cas);
@@ -249,20 +255,14 @@
 // Small
 
 .btn-small {
-  padding: 6px;
-  font-size: $font-down-1;
+  font-size: var(--font-down-1);
   min-height: 20px;
-  .d-icon {
-    max-height: 0.87em;
-  }
 }
 
 // Large
 
 .btn-large {
-  padding: 9px 18px;
-  font-size: $font-up-1;
-  line-height: $line-height-small;
+  font-size: var(--font-up-1);
 }
 
 // Bonus Buttons
@@ -271,21 +271,22 @@
 .btn-flat {
   background: transparent;
   border: 0;
-  line-height: $line-height-small;
+  line-height: var(--line-height-small);
   transition: color 0.25s, background 0.25s;
   .d-icon {
     color: var(--primary-low-mid);
   }
   @include hover {
+    background: transparent;
+    color: var(--primary);
     .d-icon {
       color: var(--primary);
     }
   }
   &.close {
     padding: 0;
-    min-height: unset;
     background: transparent;
-    font-size: $font-up-3;
+    font-size: var(--font-up-3);
     .d-icon {
       color: var(--primary-high);
     }
@@ -296,7 +297,32 @@
       }
     }
   }
+  &.btn-text {
+    color: var(--tertiary);
+    &[disabled] {
+      &,
+      &:hover,
+      &.btn-hover,
+      &:focus {
+        color: var(--primary);
+      }
+    }
+    &:not([disabled]) {
+      &:hover,
+      &.btn-hover,
+      &:focus {
+        color: var(--tertiary-hover);
+      }
 
+      &:active,
+      &.btn-active {
+        @include linear-gradient(
+          var(--primary-low-mid) 0%,
+          var(--primary-very-low) 100%
+        );
+      }
+    }
+  }
   &:focus {
     outline: none;
     background: var(--primary-low);

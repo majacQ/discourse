@@ -1,6 +1,7 @@
 import I18n from "I18n";
-import bootbox from "bootbox";
+import deprecated from "discourse-common/lib/deprecated";
 import { isAppleDevice } from "discourse/lib/utilities";
+import { getOwner } from "discourse-common/lib/get-owner";
 
 function isGUID(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -8,8 +9,16 @@ function isGUID(value) {
   );
 }
 
+// This wrapper simplifies unit testing the dialog service
+export const dialog = {
+  alert(msg) {
+    const dg = getOwner(this).lookup("service:dialog");
+    dg.alert(msg);
+  },
+};
+
 export function markdownNameFromFileName(fileName) {
-  let name = fileName.substr(0, fileName.lastIndexOf("."));
+  let name = fileName.slice(0, fileName.lastIndexOf("."));
 
   if (isAppleDevice() && isGUID(name)) {
     name = I18n.t("upload_selector.default_image_alt_text");
@@ -24,7 +33,7 @@ export function validateUploadedFiles(files, opts) {
   }
 
   if (files.length > 1) {
-    bootbox.alert(I18n.t("post.errors.too_many_uploads"));
+    dialog.alert(I18n.t("post.errors.too_many_uploads"));
     return false;
   }
 
@@ -73,7 +82,7 @@ export function validateUploadedFile(file, opts) {
 
   if (opts.imagesOnly) {
     if (!isImage(name) && !isAuthorizedImage(name, staff, opts.siteSettings)) {
-      bootbox.alert(
+      dialog.alert(
         I18n.t("post.errors.upload_not_authorized", {
           authorized_extensions: authorizedImagesExtensions(
             staff,
@@ -85,7 +94,7 @@ export function validateUploadedFile(file, opts) {
     }
   } else if (opts.csvOnly) {
     if (!/\.csv$/i.test(name)) {
-      bootbox.alert(I18n.t("user.invited.bulk_invite.error"));
+      dialog.alert(I18n.t("user.invited.bulk_invite.error"));
       return false;
     }
   } else {
@@ -93,7 +102,7 @@ export function validateUploadedFile(file, opts) {
       !authorizesAllExtensions(staff, opts.siteSettings) &&
       !isAuthorizedFile(name, staff, opts.siteSettings)
     ) {
-      bootbox.alert(
+      dialog.alert(
         I18n.t("post.errors.upload_not_authorized", {
           authorized_extensions: authorizedExtensions(
             staff,
@@ -108,25 +117,30 @@ export function validateUploadedFile(file, opts) {
   if (!opts.bypassNewUserRestriction) {
     // ensures that new users can upload a file
     if (user && !user.isAllowedToUploadAFile(opts.type)) {
-      bootbox.alert(
+      dialog.alert(
         I18n.t(`post.errors.${opts.type}_upload_not_allowed_for_new_user`)
       );
       return false;
     }
   }
 
+  if (file.size === 0) {
+    /* eslint-disable no-console */
+    console.warn("File with a 0 byte size detected, cancelling upload.", file);
+    dialog.alert(I18n.t("post.errors.file_size_zero"));
+    return false;
+  }
+
   // everything went fine
   return true;
 }
-
-const IMAGES_EXTENSIONS_REGEX = /(png|jpe?g|gif|svg|ico|heic|heif|webp)/i;
 
 function extensionsToArray(exts) {
   return exts
     .toLowerCase()
     .replace(/[\s\.]+/g, "")
     .split("|")
-    .filter((ext) => ext.indexOf("*") === -1);
+    .filter((ext) => !ext.includes("*"));
 }
 
 function extensions(siteSettings) {
@@ -138,12 +152,10 @@ function staffExtensions(siteSettings) {
 }
 
 function imagesExtensions(staff, siteSettings) {
-  let exts = extensions(siteSettings).filter((ext) =>
-    IMAGES_EXTENSIONS_REGEX.test(ext)
-  );
+  let exts = extensions(siteSettings).filter((ext) => isImage(`.${ext}`));
   if (staff) {
     const staffExts = staffExtensions(siteSettings).filter((ext) =>
-      IMAGES_EXTENSIONS_REGEX.test(ext)
+      isImage(`.${ext}`)
     );
     exts = exts.concat(staffExts);
   }
@@ -189,8 +201,8 @@ function authorizedImagesExtensions(staff, siteSettings) {
 
 export function authorizesAllExtensions(staff, siteSettings) {
   return (
-    siteSettings.authorized_extensions.indexOf("*") >= 0 ||
-    (siteSettings.authorized_extensions_for_staff.indexOf("*") >= 0 && staff)
+    siteSettings.authorized_extensions.includes("*") ||
+    (siteSettings.authorized_extensions_for_staff.includes("*") && staff)
   );
 }
 
@@ -201,7 +213,11 @@ export function authorizesOneOrMoreExtensions(staff, siteSettings) {
 
   return (
     siteSettings.authorized_extensions.split("|").filter((ext) => ext).length >
-    0
+      0 ||
+    (siteSettings.authorized_extensions_for_staff
+      .split("|")
+      .filter((ext) => ext).length > 0 &&
+      staff)
   );
 }
 
@@ -213,11 +229,11 @@ export function authorizesOneOrMoreImageExtensions(staff, siteSettings) {
 }
 
 export function isImage(path) {
-  return /\.(png|webp|jpe?g|gif|svg|ico)$/i.test(path);
+  return /\.(png|webp|jpe?g|gif|svg|ico|heic|heif)$/i.test(path);
 }
 
 export function isVideo(path) {
-  return /\.(mov|mp4|webm|m4v|3gp|ogv|avi|mpeg|ogv)$/i.test(path);
+  return /\.(mov|mp4|webm|m4v|3gp|ogv|avi|mpeg)$/i.test(path);
 }
 
 export function isAudio(path) {
@@ -231,9 +247,7 @@ function uploadTypeFromFileName(fileName) {
 export function allowsImages(staff, siteSettings) {
   return (
     authorizesAllExtensions(staff, siteSettings) ||
-    IMAGES_EXTENSIONS_REGEX.test(
-      authorizedExtensions(staff, siteSettings).join()
-    )
+    authorizedExtensions(staff, siteSettings).some((ext) => isImage(`.${ext}`))
   );
 }
 
@@ -279,67 +293,81 @@ export function getUploadMarkdown(upload) {
   }
 }
 
-export function displayErrorForUpload(data, siteSettings) {
+export function displayErrorForUpload(data, siteSettings, fileName) {
+  if (!fileName) {
+    deprecated(
+      "Calling displayErrorForUpload without a fileName is deprecated and will be removed in a future version."
+    );
+    fileName = data.files[0].name;
+  }
+
   if (data.jqXHR) {
     const didError = displayErrorByResponseStatus(
       data.jqXHR.status,
       data.jqXHR.responseJSON,
-      data.files[0].name,
-      siteSettings
-    );
-    if (didError) {
-      return;
-    }
-  } else if (data.errors && data.errors.length > 0) {
-    bootbox.alert(data.errors.join("\n"));
-    return;
-  }
-  // otherwise, display a generic error message
-  bootbox.alert(I18n.t("post.errors.upload"));
-}
-
-export function displayErrorForUppyUpload(response, fileName, siteSettings) {
-  if (response.body.errors && response.body.errors.length > 0) {
-    bootbox.alert(response.body.errors.join("\n"));
-    return;
-  } else {
-    const didError = displayErrorByResponseStatus(
-      response.status,
-      response.body,
       fileName,
       siteSettings
     );
     if (didError) {
       return;
     }
+  } else if (data.body && data.status) {
+    const didError = displayErrorByResponseStatus(
+      data.status,
+      data.body,
+      fileName,
+      siteSettings
+    );
+    if (didError) {
+      return;
+    }
+  } else if (data.errors && data.errors.length > 0) {
+    dialog.alert(data.errors.join("\n"));
+    return;
   }
+
   // otherwise, display a generic error message
-  bootbox.alert(I18n.t("post.errors.upload"));
+  dialog.alert(I18n.t("post.errors.upload"));
 }
 
 function displayErrorByResponseStatus(status, body, fileName, siteSettings) {
   switch (status) {
     // didn't get headers from server, or browser refuses to tell us
     case 0:
-      bootbox.alert(I18n.t("post.errors.upload"));
+      dialog.alert(I18n.t("post.errors.upload"));
       return true;
 
     // entity too large, usually returned from the web server
     case 413:
       const type = uploadTypeFromFileName(fileName);
       const max_size_kb = siteSettings[`max_${type}_size_kb`];
-      bootbox.alert(I18n.t("post.errors.file_too_large", { max_size_kb }));
+      dialog.alert(
+        I18n.t("post.errors.file_too_large_humanized", {
+          max_size: I18n.toHumanSize(max_size_kb * 1024),
+        })
+      );
       return true;
 
     // the error message is provided by the server
     case 422:
       if (body.message) {
-        bootbox.alert(body.message);
+        dialog.alert(body.message);
       } else {
-        bootbox.alert(body.errors.join("\n"));
+        dialog.alert(body.errors.join("\n"));
       }
       return true;
   }
 
   return;
+}
+
+export function bindFileInputChangeListener(element, fileCallbackFn) {
+  function changeListener(event) {
+    const files = Array.from(event.target.files);
+    files.forEach((file) => {
+      fileCallbackFn(file);
+    });
+  }
+  element.addEventListener("change", changeListener);
+  return changeListener;
 }

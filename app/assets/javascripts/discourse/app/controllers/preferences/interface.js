@@ -1,11 +1,6 @@
 import Controller, { inject as controller } from "@ember/controller";
 import Session from "discourse/models/session";
-import {
-  iOSWithVisualViewport,
-  isiPad,
-  safariHacksDisabled,
-  setDefaultHomepage,
-} from "discourse/lib/utilities";
+import { setDefaultHomepage } from "discourse/lib/utilities";
 import {
   listColorSchemes,
   loadColorSchemeStylesheet,
@@ -18,6 +13,7 @@ import { computed } from "@ember/object";
 import discourseComputed from "discourse-common/utils/decorators";
 import { popupAjaxError } from "discourse/lib/ajax-error";
 import { reload } from "discourse/helpers/page-reloader";
+import { propertyEqual } from "discourse/lib/computed";
 
 const USER_HOMES = {
   1: "latest",
@@ -26,6 +22,7 @@ const USER_HOMES = {
   4: "new",
   5: "top",
   6: "bookmarks",
+  7: "unseen",
 };
 
 const TEXT_SIZES = ["smallest", "smaller", "normal", "larger", "largest"];
@@ -37,6 +34,7 @@ export default Controller.extend({
   selectedDarkColorSchemeId: null,
   preferencesController: controller("preferences"),
   makeColorSchemeDefault: true,
+  canPreviewColorScheme: propertyEqual("model.id", "currentUser.id"),
 
   init() {
     this._super(...arguments);
@@ -60,6 +58,7 @@ export default Controller.extend({
       "text_size",
       "title_count_mode",
       "skip_new_user_tips",
+      "seen_popups",
       "color_scheme_id",
       "dark_scheme_id",
     ];
@@ -69,18 +68,6 @@ export default Controller.extend({
     }
 
     return attrs;
-  },
-
-  @discourseComputed()
-  isiPad() {
-    // TODO: remove this preference checkbox when iOS adoption > 90%
-    // (currently only applies to iOS 12 and below)
-    return isiPad() && !iOSWithVisualViewport();
-  },
-
-  @discourseComputed()
-  disableSafariHacks() {
-    return safariHacksDisabled();
   },
 
   @discourseComputed()
@@ -238,7 +225,25 @@ export default Controller.extend({
       return value;
     },
     get() {
-      return this.session.userColorSchemeId;
+      if (!this.session.userColorSchemeId) {
+        return;
+      }
+
+      const theme = this.userSelectableThemes?.findBy("id", this.themeId);
+
+      // we don't want to display the numeric ID of a scheme
+      // when it is set by the theme but not marked as user selectable
+      if (
+        theme?.color_scheme_id === this.session.userColorSchemeId &&
+        !this.userSelectableColorSchemes.findBy(
+          "id",
+          this.session.userColorSchemeId
+        )
+      ) {
+        return;
+      } else {
+        return this.session.userColorSchemeId;
+      }
     },
   }),
 
@@ -323,16 +328,6 @@ export default Controller.extend({
 
           this.homeChanged();
 
-          if (this.isiPad) {
-            if (safariHacksDisabled() !== this.disableSafariHacks) {
-              this.session.requiresRefresh = true;
-            }
-            localStorage.setItem(
-              "safari-hacks-disabled",
-              this.disableSafariHacks.toString()
-            );
-          }
-
           if (this.themeId !== this.currentThemeId) {
             reload();
           }
@@ -360,8 +355,12 @@ export default Controller.extend({
     loadColorScheme(colorSchemeId) {
       this.setProperties({
         selectedColorSchemeId: colorSchemeId,
-        previewingColorScheme: true,
+        previewingColorScheme: this.canPreviewColorScheme,
       });
+
+      if (!this.canPreviewColorScheme) {
+        return;
+      }
 
       if (colorSchemeId < 0) {
         const defaultTheme = this.userSelectableThemes.findBy(
@@ -383,8 +382,12 @@ export default Controller.extend({
     loadDarkColorScheme(colorSchemeId) {
       this.setProperties({
         selectedDarkColorSchemeId: colorSchemeId,
-        previewingColorScheme: true,
+        previewingColorScheme: this.canPreviewColorScheme,
       });
+
+      if (!this.canPreviewColorScheme) {
+        return;
+      }
 
       if (colorSchemeId === -1) {
         // load preview of regular scheme when dark scheme is disabled
@@ -415,6 +418,14 @@ export default Controller.extend({
       if (lightStylesheet) {
         lightStylesheet.remove();
       }
+    },
+
+    resetSeenUserTips() {
+      this.model.set("skip_new_user_tips", false);
+      this.model.set("seen_popups", null);
+      this.model.set("user_option.skip_new_user_tips", false);
+      this.model.set("user_option.seen_popups", null);
+      return this.model.save(["skip_new_user_tips", "seen_popups"]);
     },
   },
 });

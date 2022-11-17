@@ -20,7 +20,8 @@ class CategorySerializer < SiteCategorySerializer
              :custom_fields,
              :topic_featured_link_allowed,
              :search_priority,
-             :reviewable_by_group_name
+             :reviewable_by_group_name,
+             :default_slow_mode_seconds
 
   def reviewable_by_group_name
     object.reviewable_by_group.name
@@ -32,17 +33,28 @@ class CategorySerializer < SiteCategorySerializer
 
   def group_permissions
     @group_permissions ||= begin
-      perms = object.category_groups.joins(:group).includes(:group).order("groups.name").map do |cg|
-        {
-          permission_type: cg.permission_type,
-          group_name: cg.group.name
-        }
-      end
+      perms = object
+        .category_groups
+        .joins(:group)
+        .includes(:group)
+        .merge(Group.visible_groups(scope&.user, "groups.name ASC", include_everyone: true))
+        .map do |cg|
+          {
+            permission_type: cg.permission_type,
+            group_name: cg.group.name
+          }
+        end
+
       if perms.length == 0 && !object.read_restricted
         perms << { permission_type: CategoryGroup.permission_types[:full], group_name: Group[:everyone]&.name.presence || :everyone }
       end
+
       perms
     end
+  end
+
+  def include_group_permissions?
+    scope&.can_edit?(object)
   end
 
   def include_available_groups?
@@ -70,11 +82,7 @@ class CategorySerializer < SiteCategorySerializer
     scope && scope.can_delete?(object)
   end
 
-  def cannot_delete_reason
-    scope && scope.cannot_delete_category_reason(object)
-  end
-
-  def include_cannot_delete_reason
+  def include_cannot_delete_reason?
     !include_can_delete? && scope && scope.can_edit?(object)
   end
 

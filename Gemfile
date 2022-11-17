@@ -18,13 +18,14 @@ else
   # this allows us to include the bits of rails we use without pieces we do not.
   #
   # To issue a rails update bump the version number here
-  gem 'actionmailer', '6.1.3.2'
-  gem 'actionpack', '6.1.3.2'
-  gem 'actionview', '6.1.3.2'
-  gem 'activemodel', '6.1.3.2'
-  gem 'activerecord', '6.1.3.2'
-  gem 'activesupport', '6.1.3.2'
-  gem 'railties', '6.1.3.2'
+  rails_version = '7.0.3.1'
+  gem 'actionmailer', rails_version
+  gem 'actionpack', rails_version
+  gem 'actionview', rails_version
+  gem 'activemodel', rails_version
+  gem 'activerecord', rails_version
+  gem 'activesupport', rails_version
+  gem 'railties', rails_version
   gem 'sprockets-rails'
 end
 
@@ -38,9 +39,9 @@ gem 'sprockets', '3.7.2'
 # allows us to precompile all our templates in the unicorn master
 gem 'actionview_precompiler', require: false
 
-gem 'seed-fu'
+gem 'discourse-seed-fu'
 
-gem 'mail', git: 'https://github.com/discourse/mail.git', require: false
+gem 'mail', git: 'https://github.com/discourse/mail.git'
 gem 'mini_mime'
 gem 'mini_suffix'
 
@@ -67,7 +68,7 @@ gem 'http_accept_language', require: false
 gem 'discourse-ember-rails', '0.18.6', require: 'ember-rails'
 gem 'discourse-ember-source', '~> 3.12.2'
 gem 'ember-handlebars-template', '0.8.0'
-gem 'discourse-fonts'
+gem 'discourse-fonts', require: 'discourse_fonts'
 
 gem 'barber'
 
@@ -104,7 +105,9 @@ gem 'omniauth-oauth2', require: false
 
 gem 'omniauth-google-oauth2'
 
-gem 'oj'
+# pending: https://github.com/ohler55/oj/issues/789
+gem 'oj', '3.13.14'
+
 gem 'pg'
 gem 'mini_sql'
 gem 'pry-rails', require: false
@@ -131,24 +134,30 @@ gem 'cose', require: false
 gem 'addressable'
 gem 'json_schemer'
 
+gem "net-smtp", require: false
+gem "net-imap", require: false
+gem "net-pop", require: false
+gem "digest", require: false
+
 # Gems used only for assets and not required in production environments by default.
 # Allow everywhere for now cause we are allowing asset debugging in production
 group :assets do
   gem 'uglifier'
-  gem 'rtlit', require: false # for css rtling
 end
 
 group :test do
+  gem 'capybara', require: false
   gem 'webmock', require: false
   gem 'fakeweb', require: false
   gem 'minitest', require: false
   gem 'simplecov', require: false
+  gem 'selenium-webdriver', require: false
   gem "test-prof"
+  gem 'webdrivers', require: false
 end
 
 group :test, :development do
   gem 'rspec'
-  gem 'mock_redis'
   gem 'listen', require: false
   gem 'certified', require: false
   gem 'fabrication', require: false
@@ -161,7 +170,7 @@ group :test, :development do
   gem 'shoulda-matchers', require: false
   gem 'rspec-html-matchers'
   gem 'byebug', require: ENV['RM_INFO'].nil?, platform: :mri
-  gem "rubocop-discourse", require: false
+  gem 'rubocop-discourse', require: false
   gem 'parallel_tests'
 
   gem 'rswag-specs'
@@ -175,8 +184,16 @@ group :development do
   gem 'better_errors', platform: :mri, require: !!ENV['BETTER_ERRORS']
   gem 'binding_of_caller'
   gem 'yaml-lint'
+end
+
+if ENV["ALLOW_DEV_POPULATE"] == "1"
   gem 'discourse_dev_assets'
   gem 'faker', "~> 2.16"
+else
+  group :development, :test do
+    gem 'discourse_dev_assets'
+    gem 'faker', "~> 2.16"
+  end
 end
 
 # this is an optional gem, it provides a high performance replacement
@@ -202,6 +219,9 @@ gem 'gc_tracer', require: false, platform: :mri
 
 # required for feed importing and embedding
 gem 'ruby-readability', require: false
+
+# rss gem is a bundled gem from Ruby 3 onwards
+gem 'rss', require: false
 
 gem 'stackprof', require: false, platform: :mri
 gem 'memory_profiler', require: false, platform: :mri
@@ -248,3 +268,10 @@ gem 'colored2', require: false
 gem 'maxminddb'
 
 gem 'rails_failover', require: false
+
+gem 'faraday'
+gem 'faraday-retry'
+
+# workaround for faraday-net_http, see
+# https://github.com/ruby/net-imap/issues/16#issuecomment-803086765
+gem 'net-http'

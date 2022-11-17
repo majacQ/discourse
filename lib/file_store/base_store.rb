@@ -3,8 +3,9 @@
 module FileStore
 
   class BaseStore
-    UPLOAD_PATH_REGEX = %r|/(original/\d+X/.*)|
-    OPTIMIZED_IMAGE_PATH_REGEX = %r|/(optimized/\d+X/.*)|
+    UPLOAD_PATH_REGEX ||= %r|/(original/\d+X/.*)|
+    OPTIMIZED_IMAGE_PATH_REGEX ||= %r|/(optimized/\d+X/.*)|
+    TEMPORARY_UPLOAD_PREFIX ||= "temp/"
 
     def store_upload(file, upload, content_type = nil)
       upload.url = nil
@@ -38,6 +39,19 @@ module FileStore
       path = File.join("uploads", RailsMultisite::ConnectionManagement.current_db)
       return path if !Rails.env.test?
       File.join(path, "test_#{ENV['TEST_ENV_NUMBER'].presence || '0'}")
+    end
+
+    def self.temporary_upload_path(file_name, folder_prefix: "")
+      # We don't want to use the original file name as it can contain special
+      # characters, which can interfere with external providers operations and
+      # introduce other unexpected behaviour.
+      file_name_random = "#{SecureRandom.hex}#{File.extname(file_name)}"
+      File.join(
+        TEMPORARY_UPLOAD_PREFIX,
+        folder_prefix,
+        SecureRandom.hex,
+        file_name_random
+      )
     end
 
     def has_been_uploaded?(url)
@@ -102,6 +116,8 @@ module FileStore
             follow_redirect: true
           )
 
+          return nil if file.nil?
+
           cache_file(file, filename)
           file = get_from_cache(filename)
         end
@@ -159,7 +175,7 @@ module FileStore
 
     def get_from_cache(filename)
       path = get_cache_path_for(filename)
-      File.open(path) if File.exists?(path)
+      File.open(path) if File.exist?(path)
     end
 
     def cache_file(file, filename)

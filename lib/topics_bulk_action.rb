@@ -12,9 +12,9 @@ class TopicsBulkAction
 
   def self.operations
     @operations ||= %w(change_category close archive change_notification_level
-                       reset_read dismiss_posts delete unlist archive_messages
+                       destroy_post_timing dismiss_posts delete unlist archive_messages
                        move_messages_to_inbox change_tags append_tags remove_tags
-                       relist dismiss_topics)
+                       relist dismiss_topics reset_bump_dates)
   end
 
   def self.register_operation(name, &block)
@@ -47,7 +47,7 @@ class TopicsBulkAction
     topics.each do |t|
       if guardian.can_see?(t) && t.private_message?
         if group
-          GroupArchivedMessage.move_to_inbox!(group.id, t)
+          GroupArchivedMessage.move_to_inbox!(group.id, t, acting_user_id: @user.id)
         else
           UserArchivedMessage.move_to_inbox!(@user.id, t)
         end
@@ -60,7 +60,7 @@ class TopicsBulkAction
     topics.each do |t|
       if guardian.can_see?(t) && t.private_message?
         if group
-          GroupArchivedMessage.archive!(group.id, t)
+          GroupArchivedMessage.archive!(group.id, t, acting_user_id: @user.id)
         else
           UserArchivedMessage.archive!(@user.id, t)
         end
@@ -69,7 +69,7 @@ class TopicsBulkAction
   end
 
   def dismiss_posts
-    highest_number_source_column = @user.staff? ? 'highest_staff_post_number' : 'highest_post_number'
+    highest_number_source_column = @user.whisperer? ? 'highest_staff_post_number' : 'highest_post_number'
     sql = <<~SQL
       UPDATE topic_users tu
       SET last_read_post_number = t.#{highest_number_source_column}
@@ -86,7 +86,6 @@ class TopicsBulkAction
       .joins("LEFT JOIN topic_users ON topic_users.topic_id = topics.id AND topic_users.user_id = #{@user.id}")
       .where("topics.created_at >= ?", dismiss_topics_since_date)
       .where("topic_users.last_read_post_number IS NULL")
-      .where("topics.archetype <> ?", Archetype.private_message)
       .order("topics.created_at DESC")
       .limit(SiteSetting.max_new_topics).map do |topic|
       {
@@ -99,8 +98,11 @@ class TopicsBulkAction
     @changed_ids = rows.map { |row| row[:topic_id] }
   end
 
-  def reset_read
-    PostTiming.destroy_for(@user.id, @topic_ids)
+  def destroy_post_timing
+    topics.each do |t|
+      PostTiming.destroy_last_for(@user, topic: t)
+      @changed_ids << t.id
+    end
   end
 
   def change_category
@@ -159,6 +161,15 @@ class TopicsBulkAction
     topics.each do |t|
       if guardian.can_moderate?(t)
         t.update_status('visible', true, @user)
+        @changed_ids << t.id
+      end
+    end
+  end
+
+  def reset_bump_dates
+    if guardian.can_update_bumped_at?
+      topics.each do |t|
+        t.reset_bumped_at
         @changed_ids << t.id
       end
     end

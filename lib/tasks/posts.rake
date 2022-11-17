@@ -54,7 +54,7 @@ end
 
 desc 'Rebake all posts with a quote using a letter_avatar'
 task 'posts:fix_letter_avatars' => :environment do
-  return unless SiteSetting.external_system_avatars_enabled
+  next unless SiteSetting.external_system_avatars_enabled
 
   search = Post.where("user_id <> -1")
     .where("raw LIKE '%/letter\_avatar/%' OR cooked LIKE '%/letter\_avatar/%'")
@@ -137,7 +137,7 @@ def rebake_post(post, opts = {})
   if !opts[:priority]
     opts[:priority] = :ultra_low
   end
-  post.rebake!(opts)
+  post.rebake!(**opts)
 rescue => e
   puts "", "Failed to rebake (topic_id: #{post.topic_id}, post_id: #{post.id})", e, e.backtrace.join("\n")
 end
@@ -506,7 +506,7 @@ def recover_uploads_from_index(path)
 
   db = RailsMultisite::ConnectionManagement.current_db
   cdn_path = SiteSetting.cdn_path("/uploads/#{db}").sub(/https?:/, "")
-  Post.where("cooked LIKE '%#{cdn_path}%'").each do |post|
+  Post.where("cooked LIKE ?", "%#{cdn_path}%").each do |post|
     regex = Regexp.new("((https?:)?#{Regexp.escape(cdn_path)}[^,;\\]\\>\\t\\n\\s)\"\']+)")
     uploads = []
     post.raw.scan(regex).each do |match|
@@ -662,10 +662,11 @@ def correct_inline_uploads
   dry_run = (ENV["DRY_RUN"].nil? ? true : ENV["DRY_RUN"] != "false")
   verbose = ENV["VERBOSE"]
 
-  scope = Post.joins(:post_uploads).distinct("posts.id")
-    .where(<<~SQL)
-    raw LIKE '%/uploads/#{RailsMultisite::ConnectionManagement.current_db}/original/%'
-    SQL
+  scope = Post.joins(:upload_references).distinct("posts.id")
+    .where(
+      "raw LIKE ?",
+      "%/uploads/#{RailsMultisite::ConnectionManagement.current_db}/original/%",
+    )
 
   affected_posts_count = scope.count
   fixed_count = 0
