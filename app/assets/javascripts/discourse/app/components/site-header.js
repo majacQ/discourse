@@ -2,9 +2,13 @@ import PanEvents, {
   SWIPE_DISTANCE_THRESHOLD,
   SWIPE_VELOCITY_THRESHOLD,
 } from "discourse/mixins/pan-events";
+  <<<<<<< chat-quotes
 import { cancel, schedule } from "@ember/runloop";
 import discourseLater from "discourse-common/lib/later";
 import Docking from "discourse/mixins/docking";
+  =======
+import { cancel, later, schedule } from "@ember/runloop";
+  >>>>>>> header-dock-fix
 import MountWidget from "discourse/components/mount-widget";
 import ItsATrap from "@discourse/itsatrap";
 import RerenderOnDoNotDisturbChange from "discourse/mixins/rerender-on-do-not-disturb-change";
@@ -12,13 +16,10 @@ import { observes } from "discourse-common/utils/decorators";
 import { topicTitleDecorators } from "discourse/components/topic-title";
 
 const SiteHeaderComponent = MountWidget.extend(
-  Docking,
   PanEvents,
   RerenderOnDoNotDisturbChange,
   {
     widget: "header",
-    docAt: null,
-    dockedHeader: null,
     _animate: false,
     _isPanning: false,
     _panMenuOrigin: "right",
@@ -167,6 +168,7 @@ const SiteHeaderComponent = MountWidget.extend(
       }
     },
 
+  <<<<<<< chat-quotes
     dockCheck() {
       const header = document.querySelector("header.d-header");
 
@@ -193,6 +195,8 @@ const SiteHeaderComponent = MountWidget.extend(
       }
     },
 
+  =======
+  >>>>>>> header-dock-fix
     setTopic(topic) {
       this.eventDispatched("dom:clean", "header");
       this._topic = topic;
