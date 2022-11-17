@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe Invite do
+RSpec.describe Invite do
   fab!(:user) { Fabricate(:user) }
+  let(:xss_email) { "<b onmouseover=alert('wufff!')>email</b><script>alert('test');</script>@test.com" }
+  let(:escaped_email) { "&lt;b onmouseover=alert(&#39;wufff!&#39;)&gt;email&lt;/b&gt;&lt;script&gt;alert(&#39;test&#39;);&lt;/script&gt;@test.com" }
 
-  context 'validators' do
+  describe 'Validators' do
     it { is_expected.to validate_presence_of :invited_by_id }
     it { is_expected.to rate_limit }
 
@@ -14,10 +14,11 @@ describe Invite do
       expect(invite).to be_valid
     end
 
-    it 'does not allow invites with invalid emails' do
-      invite = Fabricate.build(:invite, email: 'John Doe <john.doe@example.com>')
+    it 'escapes the invalid email before attaching the error message' do
+      invite = Fabricate.build(:invite, email: xss_email)
+
       expect(invite.valid?).to eq(false)
-      expect(invite.errors.full_messages).to include(I18n.t('invite.invalid_email', email: invite.email))
+      expect(invite.errors.full_messages).to include(I18n.t('invite.invalid_email', email: escaped_email))
     end
 
     it 'does not allow an invite with the same email as an existing user' do
@@ -38,9 +39,38 @@ describe Invite do
       expect(invite.valid?).to eq(false)
       expect(invite.errors.full_messages).to include(I18n.t('invite.invalid_email', email: invite.email))
     end
+
+    it 'allows only valid domains' do
+      invite = Fabricate.build(:invite, email: nil, domain: 'example', invited_by: user)
+      expect(invite).not_to be_valid
+
+      invite = Fabricate.build(:invite, email: nil, domain: 'example.com', invited_by: user)
+      expect(invite).to be_valid
+    end
+
+    it 'allows only email or only domain to be present' do
+      invite = Fabricate.build(:invite, email: nil, invited_by: user)
+      expect(invite).to be_valid
+
+      invite = Fabricate.build(:invite, email: nil, domain: 'example.com', invited_by: user)
+      expect(invite).to be_valid
+
+      invite = Fabricate.build(:invite, email: 'test@example.com', invited_by: user)
+      expect(invite).to be_valid
+
+      invite = Fabricate.build(:invite, email: 'test@example.com', domain: 'example.com', invited_by: user)
+      expect(invite).not_to be_valid
+      expect(invite.errors.full_messages).to include(I18n.t('invite.email_xor_domain'))
+    end
+
+    it 'checks if redemption_count is less or equal than max_redemptions_allowed' do
+      invite = Fabricate.build(:invite, redemption_count: 2, max_redemptions_allowed: 1, invited_by: user)
+      expect(invite).not_to be_valid
+      expect(invite.errors.full_messages.first).to include(I18n.t('invite.redemption_count_less_than_max', max_redemptions_allowed: 1))
+    end
   end
 
-  context 'before_save' do
+  describe 'before_save' do
     it 'regenerates the email token when email is changed' do
       invite = Fabricate(:invite, email: 'test@example.com')
       token = invite.email_token
@@ -56,7 +86,7 @@ describe Invite do
     end
   end
 
-  context '.generate' do
+  describe '.generate' do
     it 'saves an invites' do
       invite = Invite.generate(user, email: 'TEST@EXAMPLE.COM')
       expect(invite.invite_key).to be_present
@@ -74,7 +104,18 @@ describe Invite do
         .to raise_error(Invite::UserExists)
     end
 
-    context 'via email' do
+    it 'escapes the email_address when raising an existing user error' do
+      user.email = xss_email
+      user.save(validate: false)
+
+      expect { Invite.generate(user, email: user.email) }
+        .to raise_error(
+          Invite::UserExists,
+          I18n.t('invite.user_exists', email: escaped_email)
+        )
+    end
+
+    context 'with email' do
       it 'can be created and a job is enqueued to email the invite' do
         invite = Invite.generate(user, email: 'test@example.com')
         expect(invite.email).to eq('test@example.com')
@@ -96,7 +137,7 @@ describe Invite do
       end
     end
 
-    context 'via link' do
+    context 'with link' do
       it 'does not enqueue a job to email the invite' do
         invite = Invite.generate(user, skip_email: true)
         expect(invite.emailed_status).to eq(Invite.emailed_status_types[:not_required])
@@ -156,9 +197,27 @@ describe Invite do
 
         expect(invite.invite_key).not_to eq(another_invite.invite_key)
       end
+
+      context "when email is already invited 3 times" do
+        before do
+          RateLimiter.enable
+          3.times do
+            Invite.generate(user, email: "test@example.com")
+          end
+        end
+
+        after do
+          RateLimiter.clear_all!
+        end
+
+        it "raises an error" do
+          expect { Invite.generate(user, email: "test@example.com") }
+            .to raise_error(RateLimiter::LimitExceeded)
+        end
+      end
     end
 
-    context 'invite to a topic' do
+    context 'when inviting to a topic' do
       fab!(:topic) { Fabricate(:topic) }
       let(:invite) { Invite.generate(topic.user, email: 'test@example.com', topic: topic) }
 
@@ -181,7 +240,7 @@ describe Invite do
     end
   end
 
-  context '#redeem' do
+  describe '#redeem' do
     fab!(:invite) { Fabricate(:invite) }
 
     it 'works' do
@@ -219,13 +278,8 @@ describe Invite do
       expect(invite.redeem).to be_blank
     end
 
-    it 'does not work with deleted invites' do
-      invite.destroy!
-      expect(invite.redeem).to be_blank
-    end
-
     it 'does not work with invalidated invites' do
-      invite.update(invalidated_at: 1.day.ago)
+      invite.update!(invalidated_at: 1.day.ago)
       expect(invite.redeem).to be_blank
     end
 
@@ -267,15 +321,7 @@ describe Invite do
       end
     end
 
-    it 'activates user when must_approve_users? is enabled' do
-      SiteSetting.must_approve_users = true
-      invite.invited_by = Fabricate(:admin)
-
-      user = invite.redeem
-      expect(user.approved?).to eq(true)
-    end
-
-    context 'invite to a topic' do
+    context 'when inviting to a topic' do
       fab!(:topic) { Fabricate(:private_message_topic) }
       fab!(:another_topic) { Fabricate(:private_message_topic) }
 
@@ -292,26 +338,45 @@ describe Invite do
     end
   end
 
-  describe '#redeem_from_email' do
+  describe '#redeem_for_existing_user' do
     fab!(:invite) { Fabricate(:invite, email: 'test@example.com') }
     fab!(:user) { Fabricate(:user, email: invite.email) }
 
     it 'redeems the invite from email' do
-      Invite.redeem_from_email(user.email)
+      Invite.redeem_for_existing_user(user)
       expect(invite.reload).to be_redeemed
     end
 
     it 'does not redeem the invite if email does not match' do
-      Invite.redeem_from_email('test2@example.com')
+      user.update!(email: 'test2@example.com')
+      Invite.redeem_for_existing_user(user)
       expect(invite.reload).not_to be_redeemed
+    end
+
+    it 'does not work with expired invites' do
+      invite.update!(expires_at: 1.day.ago)
+      Invite.redeem_for_existing_user(user)
+      expect(invite).not_to be_redeemed
+    end
+
+    it 'does not work with deleted invites' do
+      invite.trash!
+      Invite.redeem_for_existing_user(user)
+      expect(invite).not_to be_redeemed
+    end
+
+    it 'does not work with invalidated invites' do
+      invite.update!(invalidated_at: 1.day.ago)
+      Invite.redeem_for_existing_user(user)
+      expect(invite).not_to be_redeemed
     end
   end
 
-  context 'scopes' do
+  describe 'scopes' do
     fab!(:inviter) { Fabricate(:user) }
 
     fab!(:pending_invite) { Fabricate(:invite, invited_by: inviter, email: 'pending@example.com') }
-    fab!(:pending_link_invite) { Fabricate(:invite, invited_by: inviter, max_redemptions_allowed: 5) }
+    fab!(:pending_link_invite) { Fabricate(:invite, invited_by: inviter, email: nil, max_redemptions_allowed: 5) }
     fab!(:pending_invite_from_another_user) { Fabricate(:invite) }
 
     fab!(:expired_invite) { Fabricate(:invite, invited_by: inviter, email: 'expired@example.com', expires_at: 1.day.ago) }

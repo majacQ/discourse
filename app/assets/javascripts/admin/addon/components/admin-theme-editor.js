@@ -3,9 +3,12 @@ import I18n from "I18n";
 import discourseComputed from "discourse-common/utils/decorators";
 import { fmt } from "discourse/lib/computed";
 import { isDocumentRTL } from "discourse/lib/text-direction";
+import { action } from "@ember/object";
 import { next } from "@ember/runloop";
 
 export default Component.extend({
+  warning: null,
+
   @discourseComputed("theme.targets", "onlyOverridden", "showAdvanced")
   visibleTargets(targets, onlyOverridden, showAdvanced) {
     return targets.filter((target) => {
@@ -39,7 +42,7 @@ export default Component.extend({
     if (["color_definitions"].includes(fieldName)) {
       return "scss";
     }
-    return fieldName && fieldName.indexOf("scss") > -1 ? "scss" : "html";
+    return fieldName && fieldName.includes("scss") ? "scss" : "html";
   },
 
   @discourseComputed("currentTargetName", "fieldName")
@@ -89,15 +92,26 @@ export default Component.extend({
     return this.theme.getError(target, fieldName);
   },
 
+  @action
+  toggleShowAdvanced(event) {
+    event?.preventDefault();
+    this.toggleProperty("showAdvanced");
+  },
+
+  @action
+  toggleAddField(event) {
+    event?.preventDefault();
+    this.toggleProperty("addingField");
+  },
+
+  @action
+  toggleMaximize(event) {
+    event?.preventDefault();
+    this.toggleProperty("maximized");
+    next(() => this.appEvents.trigger("ace:resize"));
+  },
+
   actions: {
-    toggleShowAdvanced() {
-      this.toggleProperty("showAdvanced");
-    },
-
-    toggleAddField() {
-      this.toggleProperty("addingField");
-    },
-
     cancelAddField() {
       this.set("addingField", false);
     },
@@ -112,13 +126,16 @@ export default Component.extend({
       this.fieldAdded(this.currentTargetName, name);
     },
 
-    toggleMaximize: function () {
-      this.toggleProperty("maximized");
-      next(() => this.appEvents.trigger("ace:resize"));
-    },
-
     onlyOverriddenChanged(value) {
       this.onlyOverriddenChanged(value);
+    },
+
+    save() {
+      this.attrs.save();
+    },
+
+    setWarning(message) {
+      this.set("warning", message);
     },
   },
 });

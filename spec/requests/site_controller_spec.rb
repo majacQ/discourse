@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe SiteController do
+RSpec.describe SiteController do
   describe '#basic_info' do
     it 'is visible always even for sites requiring login' do
       upload = Fabricate(:upload)
@@ -29,6 +27,7 @@ describe SiteController do
       expect(json["mobile_logo_url"]).to eq(expected_url)
       expect(json["header_primary_color"]).to eq("333333")
       expect(json["header_background_color"]).to eq("ffffff")
+      expect(json["login_required"]).to eq(true)
     end
   end
 

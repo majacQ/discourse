@@ -100,7 +100,8 @@ class StaffActionLogger
     UserHistory.create!(params(opts).merge(
       action: UserHistory.actions[:change_trust_level],
       target_user_id: user.id,
-      details: "old trust level: #{old_trust_level}\nnew trust level: #{new_trust_level}"
+      previous_value: old_trust_level,
+      new_value: new_trust_level,
     ))
   end
 
@@ -182,8 +183,8 @@ class StaffActionLogger
     UserHistory.create!(params(opts).merge(
       action: UserHistory.actions[:change_site_setting],
       subject: setting_name,
-      previous_value: previous_value,
-      new_value: new_value
+      previous_value: previous_value&.to_s,
+      new_value: new_value&.to_s
     ))
   end
 
@@ -437,20 +438,27 @@ class StaffActionLogger
     ))
   end
 
-  def log_roll_up(subnets, opts = {})
+  def log_roll_up(subnet, ips, opts = {})
     UserHistory.create!(params(opts).merge(
       action: UserHistory.actions[:roll_up],
-      details: subnets.join(", ")
+      details: "#{subnet} from #{ips.join(", ")}"
     ))
   end
 
-  def log_category_settings_change(category, category_params, old_permissions = nil)
+  def log_category_settings_change(category, category_params, old_permissions: nil, old_custom_fields: nil)
     validate_category(category)
 
     changed_attributes = category.previous_changes.slice(*category_params.keys)
 
     if !old_permissions.empty? && (old_permissions != category_params[:permissions])
       changed_attributes.merge!(permissions: [old_permissions.to_json, category_params[:permissions].to_json])
+    end
+
+    if old_custom_fields && category_params[:custom_fields]
+      category_params[:custom_fields].each do |key, value|
+        next if old_custom_fields[key] == value
+        changed_attributes["custom_fields[#{key}]"] = [old_custom_fields[key], value]
+      end
     end
 
     changed_attributes.each do |key, value|
@@ -803,6 +811,47 @@ class StaffActionLogger
     )
   end
 
+  def log_watched_words_creation(watched_word)
+    raise Discourse::InvalidParameters.new(:watched_word) unless watched_word
+
+    UserHistory.create!(
+      action: UserHistory.actions[:watched_word_create],
+      acting_user_id: @admin.id,
+      details: watched_word.action_log_details,
+      context: WatchedWord.actions[watched_word.action]
+    )
+  end
+
+  def log_watched_words_deletion(watched_word)
+    raise Discourse::InvalidParameters.new(:watched_word) unless watched_word
+
+    UserHistory.create!(
+      action: UserHistory.actions[:watched_word_destroy],
+      acting_user_id: @admin.id,
+      details: watched_word.action_log_details,
+      context: WatchedWord.actions[watched_word.action]
+    )
+  end
+
+  def log_group_deletetion(group)
+    raise Discourse::InvalidParameters.new(:group) if group.nil?
+
+    details = [
+      "name: #{group.name}",
+      "id: #{group.id}"
+    ]
+
+    if group.grant_trust_level
+      details << "grant_trust_level: #{group.grant_trust_level}"
+    end
+
+    UserHistory.create!(
+      acting_user_id: @admin.id,
+      action: UserHistory.actions[:delete_group],
+      details: details.join(', ')
+    )
+  end
+
   private
 
   def get_changes(changes)
@@ -811,10 +860,12 @@ class StaffActionLogger
     changes.delete("updated_at")
     old_values = []
     new_values = []
-    changes.each do |k, v|
-      old_values << "#{k}: #{v[0]}"
-      new_values << "#{k}: #{v[1]}"
-    end
+    changes
+      .sort_by { |k, _| k.to_s }
+      .each do |k, v|
+        old_values << "#{k}: #{v[0]}"
+        new_values << "#{k}: #{v[1]}"
+      end
 
     [old_values, new_values]
   end
@@ -827,5 +878,4 @@ class StaffActionLogger
   def validate_category(category)
     raise Discourse::InvalidParameters.new(:category) unless category && category.is_a?(Category)
   end
-
 end

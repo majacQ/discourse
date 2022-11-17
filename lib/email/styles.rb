@@ -121,8 +121,7 @@ module Email
       style('aside.quote .avatar', 'margin-right: 5px; width:20px; height:20px; vertical-align:middle;')
       style('aside.quote', 'border-left: 5px solid #e9e9e9; background-color: #f8f8f8; margin: 0;')
 
-      style('blockquote', 'border-left: 5px solid #e9e9e9; background-color: #f8f8f8; margin: 0;')
-      style('blockquote > p', 'padding: 1em;')
+      style('blockquote', 'border-left: 5px solid #e9e9e9; background-color: #f8f8f8; margin-left: 0; padding: 12px;')
 
       # Oneboxes
       style('aside.onebox', "border: 5px solid #e9e9e9; padding: 12px 25px 12px 12px; margin-bottom: 10px;")
@@ -139,7 +138,10 @@ module Email
       style('.github-info div', "display: inline; margin-right: 10px;")
       style('.github-icon-container', 'float: left;')
       style('.github-icon-container *', 'fill: #646464; width: 40px; height: 40px;')
+      style('.github-body-container', 'font-family: Consolas, Menlo, Monaco, "Lucida Console", "Liberation Mono", "DejaVu Sans Mono", "Bitstream Vera Sans Mono", "Courier New", monospace; margin-top: 1em !important;')
       style('.onebox-avatar-inline', ONEBOX_INLINE_AVATAR_STYLE)
+
+      @fragment.css('.github-body-container .excerpt').remove
 
       @fragment.css('aside.quote blockquote > p').each do |p|
         p['style'] = 'padding: 0;'
@@ -182,7 +184,7 @@ module Email
     def format_html
       correct_first_body_margin
       correct_footer_style
-      correct_footer_style_hilight_first
+      correct_footer_style_highlight_first
       reset_tables
 
       html_lang = SiteSetting.default_locale.sub("_", "-")
@@ -195,9 +197,13 @@ module Email
         dir: Rtl.new(nil).enabled? ? 'rtl' : 'ltr'
       )
 
+      style('blockquote > :first-child', 'margin-top: 0;')
+      style('blockquote > :last-child', 'margin-bottom: 0;')
+      style('blockquote > p', 'padding: 0;')
+
       style('.with-accent-colors', "background-color: #{SiteSetting.email_accent_bg_color}; color: #{SiteSetting.email_accent_fg_color};")
       style('h4', 'color: #222;')
-      style('h3', 'margin: 15px 0 20px 0;')
+      style('h3', 'margin: 30px 0 10px;')
       style('hr', 'background-color: #ddd; height: 1px; border: 1px;')
       style('a', "text-decoration: none; font-weight: bold; color: #{SiteSetting.email_link_color};")
       style('ul', 'margin: 0 0 0 10px; padding: 0 0 0 20px;')
@@ -207,6 +213,8 @@ module Email
       style('pre', 'word-wrap: break-word; max-width: 694px;')
       style('code', 'background-color: #f9f9f9; padding: 2px 5px;')
       style('pre code', 'display: block; background-color: #f9f9f9; overflow: auto; padding: 5px;')
+      style('pre.onebox code', 'white-space: normal;')
+      style('pre code li', 'white-space: pre;')
       style('.featured-topic a', "text-decoration: none; font-weight: bold; color: #{SiteSetting.email_link_color}; line-height:1.5em;")
       style('.summary-email', "-moz-box-sizing:border-box;-ms-text-size-adjust:100%;-webkit-box-sizing:border-box;-webkit-text-size-adjust:100%;box-sizing:border-box;color:#0a0a0a;font-family:Arial,sans-serif;font-size:14px;font-weight:400;line-height:1.3;margin:0;min-width:100%;padding:0;width:100%")
 
@@ -226,9 +234,11 @@ module Email
       style('.lightbox-wrapper .meta', 'display: none')
       style('div.undecorated-link-footer a', "font-weight: normal;")
       style('.mso-accent-link', "mso-border-alt: 6px solid #{SiteSetting.email_accent_bg_color}; background-color: #{SiteSetting.email_accent_bg_color};")
+      style('.reply-above-line', "font-size: 10px;font-family:'lucida grande',tahoma,verdana,arial,sans-serif;color: #b5b5b5;padding: 5px 0px 20px;border-top: 1px dotted #ddd;")
 
       onebox_styles
       plugin_styles
+      dark_mode_styles
 
       style('.post-excerpt img', "max-width: 50%; max-height: #{MAX_IMAGE_DIMENSION}px;")
 
@@ -246,11 +256,11 @@ module Email
       @@plugin_callbacks.each { |block| block.call(@fragment, @opts) }
     end
 
-    def inline_secure_images(attachments)
-      stripped_media = @fragment.css('[data-stripped-secure-media]')
+    def inline_secure_images(attachments, attachments_index)
+      stripped_media = @fragment.css('[data-stripped-secure-media], [data-stripped-secure-upload]')
       upload_shas = {}
       stripped_media.each do |div|
-        url = div['data-stripped-secure-media']
+        url = div['data-stripped-secure-media'] || div['data-stripped-secure-upload']
         filename = File.basename(url)
         filename_bare = filename.gsub(File.extname(filename), "")
         sha1 = filename_bare.partition('_').first
@@ -259,13 +269,13 @@ module Email
       uploads = Upload.select(:original_filename, :sha1).where(sha1: upload_shas.values)
 
       stripped_media.each do |div|
-        upload = uploads.find { |upl| upl.sha1 == upload_shas[div['data-stripped-secure-media']] }
+        upload = uploads.find do |upl|
+          upl.sha1 == (upload_shas[div['data-stripped-secure-media']] || upload_shas[div['data-stripped-secure-upload']])
+        end
         next if !upload
 
-        original_filename = upload.original_filename
-
-        if attachments[original_filename]
-          url = attachments[original_filename].url
+        if attachments[attachments_index[upload.sha1]]
+          url = attachments[attachments_index[upload.sha1]].url
 
           onebox_type = div['data-onebox-type']
           style = if onebox_type
@@ -286,7 +296,7 @@ module Email
     def to_html
       # needs to be before class + id strip because we need to style redacted
       # media and also not double-redact already redacted from lower levels
-      replace_secure_media_urls if SiteSetting.secure_media?
+      replace_secure_uploads_urls if SiteSetting.secure_uploads?
       strip_classes_and_ids
       replace_relative_urls
 
@@ -326,6 +336,18 @@ module Email
 
     private
 
+    def dark_mode_styles
+      # When we ship the email template and its styles we strip all css classes so to give our
+      # dark mode styles we are including in the template a selector we add a data-attr of 'dm=value' to
+      # the appropriate place
+      style(".digest-header, .digest-topic, .digest-topic-title-wrapper, .digest-topic-stats, .popular-post-excerpt", nil, dm: "header")
+      style(".digest-content, .header-popular-posts, .spacer, .popular-post-spacer, .popular-post-meta, .digest-new-header, .digest-new-topic, .body", nil, dm: "body")
+      style(".with-accent-colors, .digest-content-header", nil, dm: "body_primary")
+      style(".digest-topic-body", nil, dm: "topic-body")
+      style(".summary-footer", nil, dm: "text-color")
+      style("code, pre code, blockquote", nil, dm: "bg")
+    end
+
     def replace_relative_urls
       forum_uri = URI(Discourse.base_url)
       host = forum_uri.host
@@ -349,13 +371,13 @@ module Email
       end
     end
 
-    def replace_secure_media_urls
+    def replace_secure_uploads_urls
       # strip again, this can be done at a lower level like in the user
       # notification template but that may not catch everything
-      PrettyText.strip_secure_media(@fragment)
+      PrettyText.strip_secure_uploads(@fragment)
 
-      style('div.secure-media-notice', 'border: 5px solid #e9e9e9; padding: 5px; display: inline-block;')
-      style('div.secure-media-notice a', "color: #{SiteSetting.email_link_color}")
+      style('div.secure-upload-notice', 'border: 5px solid #e9e9e9; padding: 5px; display: inline-block;')
+      style('div.secure-upload-notice a', "color: #{SiteSetting.email_link_color}")
     end
 
     def correct_first_body_margin
@@ -373,9 +395,9 @@ module Email
       end
     end
 
-    def correct_footer_style_hilight_first
+    def correct_footer_style_highlight_first
       footernum = 0
-      @fragment.css('.footer.hilight').each do |element|
+      @fragment.css('.footer.highlight').each do |element|
         linknum = 0
         element.css('a').each do |inner|
           # we want the first footer link to be specially highlighted as IMPORTANT

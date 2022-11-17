@@ -67,12 +67,21 @@ class PostRevisor
     end
   end
 
-  # Fields we want to record revisions for by default
-  %i{title archetype}.each do |field|
-    track_topic_field(field) do |tc, attribute|
-      tc.record_change(field, tc.topic.public_send(field), attribute)
-      tc.topic.public_send("#{field}=", attribute)
-    end
+  def self.track_and_revise(topic_changes, field, attribute)
+    topic_changes.record_change(
+      field,
+      topic_changes.topic.public_send(field),
+      attribute
+    )
+    topic_changes.topic.public_send("#{field}=", attribute)
+  end
+
+  track_topic_field(:title) do |topic_changes, attribute|
+    track_and_revise topic_changes, :title, attribute
+  end
+
+  track_topic_field(:archetype) do |topic_changes, attribute|
+    track_and_revise topic_changes, :archetype, attribute
   end
 
   track_topic_field(:category_id) do |tc, category_id, fields|
@@ -104,16 +113,24 @@ class PostRevisor
         DB.after_commit do
           post = tc.topic.ordered_posts.first
           notified_user_ids = [post.user_id, post.last_editor_id].uniq
-          Jobs.enqueue(:notify_tag_change, post_id: post.id, notified_user_ids: notified_user_ids, diff_tags: ((tags - prev_tags) | (prev_tags - tags)))
+          if !SiteSetting.disable_tags_edit_notifications
+            Jobs.enqueue(
+              :notify_tag_change,
+              post_id: post.id,
+              notified_user_ids: notified_user_ids,
+              diff_tags: ((tags - prev_tags) | (prev_tags - tags))
+            )
+          end
         end
       end
     end
   end
 
   track_topic_field(:featured_link) do |topic_changes, featured_link|
-    if SiteSetting.topic_featured_link_enabled &&
-       topic_changes.guardian.can_edit_featured_link?(topic_changes.topic.category_id)
-
+    if !SiteSetting.topic_featured_link_enabled ||
+      !topic_changes.guardian.can_edit_featured_link?(topic_changes.topic.category_id)
+      topic_changes.check_result(false)
+    else
       topic_changes.record_change('featured_link', topic_changes.topic.featured_link, featured_link)
       topic_changes.topic.featured_link = featured_link
     end
@@ -121,7 +138,7 @@ class PostRevisor
 
   # AVAILABLE OPTIONS:
   # - revised_at: changes the date of the revision
-  # - force_new_version: bypass ninja-edit window
+  # - force_new_version: bypass grace period edit window
   # - bypass_rate_limiter:
   # - bypass_bump: do not bump the topic, even if last post
   # - skip_validations: ask ActiveRecord to skip validations
@@ -149,14 +166,23 @@ class PostRevisor
       end
     end
 
-    return false unless should_revise?
+    if !should_revise?
+      # the draft sequence is advanced here to handle the edge case where a
+      # user opens the composer to edit a post and makes some changes (which
+      # saves a draft), but then un-does the changes and clicks save. In this
+      # case, should_revise? returns false because nothing has really changed
+      # in the post, but we want to get rid of the draft so we advance the
+      # sequence.
+      advance_draft_sequence if !opts[:keep_existing_draft]
+      return false
+    end
 
     @post.acting_user = @editor
     @topic.acting_user = @editor
     @revised_at = @opts[:revised_at] || Time.now
     @last_version_at = @post.last_version_at || Time.now
 
-    if guardian.affected_by_slow_mode?(@topic) && !ninja_edit?
+    if guardian.affected_by_slow_mode?(@topic) && !grace_period_edit? && SiteSetting.slow_mode_prevents_editing
       @post.errors.add(:base, I18n.t("cannot_edit_on_slow_mode"))
       return false
     end
@@ -170,7 +196,7 @@ class PostRevisor
 
     @validate_topic = true
     @validate_topic = @opts[:validate_topic] if @opts.has_key?(:validate_topic)
-    @validate_topic = !@opts[:validate_topic] if @opts.has_key?(:skip_validations)
+    @validate_topic = !@opts[:skip_validations] if @opts.has_key?(:skip_validations)
 
     @skip_revision = false
     @skip_revision = @opts[:skip_revision] if @opts.has_key?(:skip_revision)
@@ -194,7 +220,7 @@ class PostRevisor
       plugin_callbacks
 
       revise_topic
-      advance_draft_sequence
+      advance_draft_sequence if !opts[:keep_existing_draft]
     end
 
     # Lock the post by default if the appropriate setting is true
@@ -226,6 +252,11 @@ class PostRevisor
     # it can fire events in sidekiq before the post is done saving
     # leading to corrupt state
     QuotedPost.extract_from(@post)
+
+    # This must be done before post_process_post, because that uses
+    # post upload security status to cook URLs.
+    @post.update_uploads_secure_status(source: "post revisor")
+
     post_process_post
 
     update_topic_word_counts
@@ -234,6 +265,10 @@ class PostRevisor
     grant_badge
 
     TopicLink.extract_from(@post)
+
+    if should_create_new_version?
+      ReviewablePost.queue_for_review_if_possible(@post, @editor)
+    end
 
     successfully_saved_post_and_topic
   end
@@ -252,7 +287,6 @@ class PostRevisor
         return true
       end
     end
-    advance_draft_sequence
     false
   end
 
@@ -274,7 +308,7 @@ class PostRevisor
 
   def should_create_new_version?
     return false if @skip_revision
-    edited_by_another_user? || !ninja_edit? || owner_changed? || force_new_version? || edit_reason_specified?
+    edited_by_another_user? || !grace_period_edit? || owner_changed? || force_new_version? || edit_reason_specified?
   end
 
   def edit_reason_specified?
@@ -323,7 +357,7 @@ class PostRevisor
     end
   end
 
-  def ninja_edit?
+  def grace_period_edit?
     return false if (@revised_at - @last_version_at) > SiteSetting.editing_grace_period.to_i
     return false if @post.reviewable_flag.present?
 
@@ -406,6 +440,8 @@ class PostRevisor
     @post.link_post_uploads
     @post.save_reply_relationships
 
+    @editor.increment_post_edits_count if @post_successfully_saved
+
     # post owner changed
     if prev_owner && new_owner && prev_owner != new_owner
       likes = UserAction.where(target_post_id: @post.id)
@@ -416,22 +452,19 @@ class PostRevisor
       private_message = @topic.private_message?
 
       prev_owner_user_stat = prev_owner.user_stat
+
       unless private_message
-        prev_owner_user_stat.post_count -= 1 if @post.post_type == Post.types[:regular]
-        prev_owner_user_stat.topic_count -= 1 if @post.is_first_post?
+        UserStatCountUpdater.decrement!(@post, user_stat: prev_owner_user_stat) if !@post.trashed?
         prev_owner_user_stat.likes_received -= likes
       end
 
       if @post.created_at == prev_owner.user_stat.first_post_created_at
-        prev_owner_user_stat.first_post_created_at = prev_owner.posts.order('created_at ASC').first.try(:created_at)
+        prev_owner_user_stat.update!(first_post_created_at: prev_owner.posts.order('created_at ASC').first.try(:created_at))
       end
-
-      prev_owner_user_stat.save!
 
       new_owner_user_stat = new_owner.user_stat
       unless private_message
-        new_owner_user_stat.post_count += 1 if @post.post_type == Post.types[:regular]
-        new_owner_user_stat.topic_count += 1 if @post.is_first_post?
+        UserStatCountUpdater.increment!(@post, user_stat: new_owner_user_stat) if !@post.trashed?
         new_owner_user_stat.likes_received += likes
       end
       new_owner_user_stat.save!
@@ -510,9 +543,9 @@ class PostRevisor
 
     modifications.each_key do |field|
       if revision.modifications.has_key?(field)
-        old_value = revision.modifications[field][0].to_s
-        new_value = modifications[field][1].to_s
-        if old_value != new_value
+        old_value = revision.modifications[field][0]
+        new_value = modifications[field][1]
+        if old_value.to_s != new_value.to_s
           revision.modifications[field] = [old_value, new_value]
         else
           revision.modifications.delete(field)
@@ -524,9 +557,10 @@ class PostRevisor
     # should probably do this before saving the post!
     if revision.modifications.empty?
       revision.destroy
+      @post.last_editor_id = PostRevision.where(post_id: @post.id).order(number: :desc).pluck_first(:user_id) || @post.user_id
       @post.version -= 1
       @post.public_version -= 1
-      @post.save
+      @post.save(validate: @validate_post)
     else
       revision.save
     end
@@ -596,6 +630,7 @@ class PostRevisor
 
     update_topic_excerpt
     update_category_description
+    hide_welcome_topic_banner
   end
 
   def update_topic_excerpt
@@ -615,6 +650,15 @@ class PostRevisor
     else
       @post.errors.add(:base, I18n.t("category.errors.description_incomplete"))
     end
+  end
+
+  def hide_welcome_topic_banner
+    return unless guardian.is_admin?
+    return unless @topic.id == SiteSetting.welcome_topic_id
+    return unless Discourse.cache.read(Site.welcome_topic_banner_cache_key(@editor.id))
+
+    Discourse.cache.write(Site.welcome_topic_banner_cache_key(@editor.id), false)
+    MessageBus.publish("/site/welcome-topic-banner", false)
   end
 
   def advance_draft_sequence

@@ -1,9 +1,7 @@
 # encoding: utf-8
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe Category do
+RSpec.describe Category do
   fab!(:user) { Fabricate(:user) }
 
   it { is_expected.to validate_presence_of :user_id }
@@ -30,6 +28,17 @@ describe Category do
     cats = Fabricate.build(:category, name: "cats")
     expect(cats).to_not be_valid
     expect(cats.errors[:name]).to be_present
+  end
+
+  describe 'Associations' do
+    it 'should delete associated sidebar_section_links when category is destroyed' do
+      category_sidebar_section_link = Fabricate(:category_sidebar_section_link)
+      category_sidebar_section_link_2 = Fabricate(:category_sidebar_section_link, linkable: category_sidebar_section_link.linkable)
+      tag_sidebar_section_link = Fabricate(:tag_sidebar_section_link)
+
+      expect { category_sidebar_section_link.linkable.destroy! }.to change { SidebarSectionLink.count }.from(3).to(1)
+      expect(SidebarSectionLink.first).to eq(tag_sidebar_section_link)
+    end
   end
 
   describe "slug" do
@@ -280,7 +289,7 @@ describe Category do
   end
 
   describe 'non-english characters' do
-    context 'uses ascii slug generator' do
+    context 'when using ascii slug generator' do
       before do
         SiteSetting.slug_generation_method = 'ascii'
         @category = Fabricate(:category_with_definition, name: "测试")
@@ -293,7 +302,7 @@ describe Category do
       end
     end
 
-    context 'uses none slug generator' do
+    context 'when using none slug generator' do
       before do
         SiteSetting.slug_generation_method = 'none'
         @category = Fabricate(:category_with_definition, name: "测试")
@@ -309,7 +318,7 @@ describe Category do
       end
     end
 
-    context 'uses encoded slug generator' do
+    context 'when using encoded slug generator' do
       before do
         SiteSetting.slug_generation_method = 'encoded'
         @category = Fabricate(:category_with_definition, name: "测试")
@@ -361,6 +370,19 @@ describe Category do
       @cat.slug = "#{@cat.id}-category"
       expect(@cat).to be_valid
       expect(@cat.errors[:slug]).not_to be_present
+    end
+
+    context 'if SiteSettings.slug_generation_method = ascii' do
+      before do
+        SiteSetting.slug_generation_method = 'ascii'
+      end
+
+      it 'fails if slug contains non-ascii characters' do
+        c = Fabricate.build(:category, name: "Sem acentuação", slug: "sem-acentuação")
+        expect(c).not_to be_valid
+
+        expect(c.errors[:slug]).to be_present
+      end
     end
   end
 
@@ -538,7 +560,7 @@ describe Category do
     it 'is deleted correctly' do
       @category.destroy
       expect(Category.exists?(id: @category_id)).to be false
-      expect(Topic.exists?(id: @topic_id)).to be false
+      expect(Topic.with_deleted.where.not(deleted_at: nil).exists?(id: @topic_id)).to be true
       expect(SiteSetting.shared_drafts_category).to be_blank
     end
 
@@ -875,10 +897,6 @@ describe Category do
   end
 
   describe 'auto bump' do
-    after do
-      RateLimiter.disable
-    end
-
     it 'should correctly automatically bump topics' do
       freeze_time
       category = Fabricate(:category_with_definition, created_at: 1.minute.ago)
@@ -1071,13 +1089,13 @@ describe Category do
         SQL
       end
 
-      context "#depth_of_descendants" do
+      describe "#depth_of_descendants" do
         it "should produce max_depth" do
           expect(category.depth_of_descendants(3)).to eq(3)
         end
       end
 
-      context "#height_of_ancestors" do
+      describe "#height_of_ancestors" do
         it "should produce max_height" do
           expect(category.height_of_ancestors(3)).to eq(3)
         end
@@ -1089,13 +1107,13 @@ describe Category do
         category.parent_category_id = category.id
       end
 
-      context "#depth_of_descendants" do
+      describe "#depth_of_descendants" do
         it "should produce max_depth" do
           expect(category.depth_of_descendants(3)).to eq(3)
         end
       end
 
-      context "#height_of_ancestors" do
+      describe "#height_of_ancestors" do
         it "should produce max_height" do
           expect(category.height_of_ancestors(3)).to eq(3)
         end
@@ -1107,20 +1125,20 @@ describe Category do
         category.parent_category_id = subcategory.id
       end
 
-      context "#depth_of_descendants" do
+      describe "#depth_of_descendants" do
         it "should produce max_depth" do
           expect(category.depth_of_descendants(3)).to eq(3)
         end
       end
 
-      context "#height_of_ancestors" do
+      describe "#height_of_ancestors" do
         it "should produce max_height" do
           expect(category.height_of_ancestors(3)).to eq(3)
         end
       end
     end
 
-    context "#depth_of_descendants" do
+    describe "#depth_of_descendants" do
       it "should be 0 when the category has no descendants" do
         expect(subcategory.depth_of_descendants).to eq(0)
       end
@@ -1130,7 +1148,7 @@ describe Category do
       end
     end
 
-    context "#height_of_ancestors" do
+    describe "#height_of_ancestors" do
       it "should be 0 when the category has no ancestors" do
         expect(category.height_of_ancestors).to eq(0)
       end
@@ -1222,6 +1240,62 @@ describe Category do
 
       expect(Category.find_by_slug_path(['cat1', "#{subcategory.id}-category"])).to eq(subcategory)
       expect(Category.find_by_slug_path(["#{category.id}-category", "#{subcategory.id}-category"])).to eq(subcategory)
+    end
+  end
+
+  describe '#cannot_delete_reason' do
+    fab!(:admin) { Fabricate(:admin) }
+    let(:guardian) { Guardian.new(admin) }
+    fab!(:category) { Fabricate(:category) }
+
+    describe 'when category is uncategorized' do
+      it 'should return the reason' do
+        category = Category.find(SiteSetting.uncategorized_category_id)
+
+        expect(category.cannot_delete_reason).to eq(
+          I18n.t('category.cannot_delete.uncategorized')
+        )
+      end
+    end
+
+    describe 'when category has subcategories' do
+      it 'should return the right reason' do
+        category.subcategories << Fabricate(:category)
+
+        expect(category.cannot_delete_reason).to eq(
+          I18n.t('category.cannot_delete.has_subcategories')
+        )
+      end
+    end
+
+    describe 'when category has topics' do
+      it 'should return the right reason' do
+        topic = Fabricate(:topic,
+          title: '</a><script>alert(document.cookie);</script><a>',
+          category: category
+        )
+
+        category.reload
+
+        expect(category.cannot_delete_reason).to eq(
+          I18n.t('category.cannot_delete.topic_exists',
+            count: 1,
+            topic_link: "<a href=\"#{topic.url}\">&lt;/a&gt;&lt;script&gt;alert(document.cookie);&lt;/script&gt;&lt;a&gt;</a>"
+          )
+        )
+      end
+    end
+  end
+
+  describe '#deleting the general category' do
+    fab!(:category) { Fabricate(:category) }
+
+    it 'should empty out the general_category_id site_setting' do
+      SiteSetting.general_category_id = category.id
+      category.destroy
+
+      expect(SiteSetting.general_category_id).to_not eq(category.id)
+      expect(SiteSetting.general_category_id).to be < 1
     end
   end
 end

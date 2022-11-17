@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe TopicUser do
+RSpec.describe TopicUser do
   let :watching do
     TopicUser.notification_levels[:watching]
   end
@@ -41,7 +39,7 @@ describe TopicUser do
   end
 
   describe '#notification_levels' do
-    context "verify enum sequence" do
+    context "when verifying enum sequence" do
       before do
         @notification_levels = TopicUser.notification_levels
       end
@@ -57,7 +55,7 @@ describe TopicUser do
   end
 
   describe '#notification_reasons' do
-    context "verify enum sequence" do
+    context "when verifying enum sequence" do
       before do
         @notification_reasons = TopicUser.notification_reasons
       end
@@ -99,12 +97,10 @@ describe TopicUser do
   end
 
   describe "unpinned" do
-
     it "defaults to blank" do
       ensure_topic_user
       expect(topic_user.cleared_pinned_at).to be_blank
     end
-
   end
 
   describe 'notifications' do
@@ -173,7 +169,6 @@ describe TopicUser do
   end
 
   describe 'visited at' do
-
     it 'set upon initial visit' do
       freeze_time yesterday
 
@@ -195,14 +190,11 @@ describe TopicUser do
       topic_user = TopicUser.get(topic, user)
       expect(topic_user.first_visited_at.to_i).to eq(yesterday.to_i)
       expect(topic_user.last_visited_at.to_i).to eq(Time.zone.now.to_i)
-
     end
   end
 
   describe 'read tracking' do
-
     context "without auto tracking" do
-
       let(:topic_user) { TopicUser.get(topic, user) }
 
       it 'should create a new record for a visit' do
@@ -226,7 +218,14 @@ describe TopicUser do
         freeze_time tomorrow
 
         Fabricate(:post, topic: topic, user: user)
-        TopicUser.update_last_read(user, topic.id, 2, 1, 0)
+        channel = TopicTrackingState.unread_channel_key(user.id)
+
+        messages = MessageBus.track_publish(channel) do
+          TopicUser.update_last_read(user, topic.id, 2, 1, 0)
+        end
+
+        expect(messages.blank?).to eq(false)
+
         topic_user = TopicUser.get(topic, user)
 
         expect(topic_user.last_read_post_number).to eq(2)
@@ -235,7 +234,7 @@ describe TopicUser do
       end
     end
 
-    context 'private messages' do
+    context 'with private messages' do
       fab!(:target_user) { Fabricate(:user) }
 
       let(:post) do
@@ -270,6 +269,20 @@ describe TopicUser do
           .to eq(TopicUser.notification_levels[:regular])
       end
 
+      it 'should publish the right message_bus message' do
+        TopicUser.update_last_read(user, topic.id, 1, 1, 0)
+
+        Fabricate(:post, topic: topic, user: user)
+
+        channel = PrivateMessageTopicTrackingState.user_channel(user.id)
+
+        messages = MessageBus.track_publish(channel) do
+          TopicUser.update_last_read(user, topic.id, 2, 1, 0)
+        end
+
+        expect(messages.blank?).to eq(false)
+      end
+
       describe 'inviting a group' do
         let(:group) do
           Fabricate(:group,
@@ -297,8 +310,7 @@ describe TopicUser do
       end
     end
 
-    context 'auto tracking' do
-
+    context 'with auto tracking' do
       let(:post_creator) { PostCreator.new(new_user, raw: Fabricate.build(:post).raw, topic_id: topic.id) }
 
       before do
@@ -380,6 +392,7 @@ describe TopicUser do
         new_user.user_option.update!(auto_track_topics_after_msecs: 0)
 
         another_user = Fabricate(:user)
+        Group.refresh_automatic_groups!
         pm = Fabricate(:private_message_topic, user: another_user)
         pm.invite(another_user, new_user.username)
 
@@ -391,7 +404,6 @@ describe TopicUser do
   end
 
   describe 'change a flag' do
-
     it "only inserts a row once, even on repeated calls" do
 
       topic; user
@@ -415,9 +427,7 @@ describe TopicUser do
       it 'has a key in the lookup for this forum topic' do
         expect(TopicUser.lookup_for(user, [topic]).has_key?(topic.id)).to eq(true)
       end
-
     end
-
   end
 
   it "can scope by tracking" do
@@ -434,7 +444,7 @@ describe TopicUser do
     p2 = Fabricate(:post, user: p1.user, topic: p1.topic, post_number: 2)
     p1.topic.notifier.watch_topic!(p1.user_id)
 
-    DB.exec("UPDATE topic_users set highest_seen_post_number=1, last_read_post_number=0
+    DB.exec("UPDATE topic_users set last_read_post_number=0
                        WHERE topic_id = :topic_id AND user_id = :user_id", topic_id: p1.topic_id, user_id: p1.user_id)
 
     [p1, p2].each do |p|
@@ -445,12 +455,10 @@ describe TopicUser do
 
     tu = TopicUser.find_by(user_id: p1.user_id, topic_id: p1.topic_id)
     expect(tu.last_read_post_number).to eq(p2.post_number)
-    expect(tu.highest_seen_post_number).to eq(2)
 
   end
 
   describe "mailing_list_mode" do
-
     it "will receive email notification for every topic" do
       user1 = Fabricate(:user)
 

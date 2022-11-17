@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe DirectoryItemsController do
+RSpec.describe DirectoryItemsController do
   fab!(:user) { Fabricate(:user) }
   fab!(:evil_trout) { Fabricate(:evil_trout) }
   fab!(:walter_white) { Fabricate(:walter_white) }
@@ -20,8 +18,7 @@ describe DirectoryItemsController do
   end
 
   context "without data" do
-
-    context "and a logged in user" do
+    context "with a logged in user" do
       before { sign_in(user) }
 
       it "succeeds" do
@@ -51,6 +48,17 @@ describe DirectoryItemsController do
       expect(json['directory_items'].length).to eq(4)
       expect(json['meta']['total_rows_directory_items']).to eq(4)
       expect(json['meta']['load_more_directory_items']).to include('.json')
+    end
+
+    it "respects more_params in load_more_directory_items" do
+      get '/directory_items.json', params: { period: 'all', order: "likes_given", group: group.name, user_field_ids: "1|2" }
+      expect(response.status).to eq(200)
+      json = response.parsed_body
+
+      expect(json['meta']['load_more_directory_items']).to include("group=#{group.name}")
+      expect(json['meta']['load_more_directory_items']).to include("user_field_ids=#{CGI.escape('1|2')}")
+      expect(json['meta']['load_more_directory_items']).to include("order=likes_given")
+      expect(json['meta']['load_more_directory_items']).to include("period=all")
     end
 
     it "fails when the directory is disabled" do
@@ -123,6 +131,41 @@ describe DirectoryItemsController do
       expect(json['meta']['total_rows_directory_items']).to eq(2)
       expect(json['directory_items'][0]['user']['username']).to eq(evil_trout.username) | eq(stage_user.username)
       expect(json['directory_items'][1]['user']['username']).to eq(evil_trout.username) | eq(stage_user.username)
+    end
+
+    it "orders users by user fields" do
+      group.add(walter_white)
+      field1 = Fabricate(:user_field, searchable: true)
+      field2 = Fabricate(:user_field, searchable: true)
+
+      user_fields = [
+        { user: walter_white, field: field1, value: "Yellow", order: 1 },
+        { user: stage_user, field: field1, value: "Apple", order: 0 },
+        { user: evil_trout, field: field2, value: "Moon", order: 2 }
+      ]
+
+      user_fields.each do |data|
+        UserCustomField.create!(
+          user_id: data[:user].id,
+          name: "user_field_#{data[:field].id}",
+          value: data[:value]
+        )
+      end
+
+      get '/directory_items.json', params: { period: 'all', group: group.name, order: field1.name, user_field_ids: "#{field1.id}|#{field2.id}", asc: true }
+      expect(response.status).to eq(200)
+
+      json = response.parsed_body
+      expect(json).to be_present
+      items = json['directory_items']
+      expect(items.length).to eq(3)
+      expect(json['meta']['total_rows_directory_items']).to eq(3)
+
+      user_fields.each do |data|
+        user = items[data[:order]]['user']
+        expect(user['username']).to eq(data[:user].username)
+        expect(user['user_fields']).to eq({ data[:field].id.to_s => data[:value] })
+      end
     end
 
     it "checks group permissions" do

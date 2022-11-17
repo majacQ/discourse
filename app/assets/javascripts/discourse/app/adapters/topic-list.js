@@ -8,18 +8,18 @@ export function finderFor(filter, params) {
     let url = getURL("/") + filter + ".json";
 
     if (params) {
-      const keys = Object.keys(params),
-        encoded = [];
+      const urlSearchParams = new URLSearchParams();
 
-      keys.forEach(function (p) {
-        const value = encodeURI(params[p]);
+      for (const [key, value] of Object.entries(params)) {
         if (typeof value !== "undefined") {
-          encoded.push(p + "=" + value);
+          urlSearchParams.set(key, value);
         }
-      });
+      }
 
-      if (encoded.length > 0) {
-        url += "?" + encoded.join("&");
+      const queryString = urlSearchParams.toString();
+
+      if (queryString) {
+        url += `?${queryString}`;
       }
     }
     return ajax(url);
@@ -27,17 +27,21 @@ export function finderFor(filter, params) {
 }
 
 export default RestAdapter.extend({
-  find(store, type, findArgs) {
-    const filter = findArgs.filter;
-    const params = findArgs.params;
+  async find(store, type, findArgs) {
+    const { filter, params } = findArgs;
 
+  <<<<<<< asyncify-preload-store
+    const result = await PreloadStore.getAndRemove(
+      `topic_list_${filter}`,
+  =======
     return PreloadStore.getAndRemove(
-      "topic_list_" + filter,
+      "topic_list",
+  >>>>>>> chat-quotes
       finderFor(filter, params)
-    ).then(function (result) {
-      result.filter = filter;
-      result.params = params;
-      return result;
-    });
+    );
+
+    result.filter = filter;
+    result.params = params;
+    return result;
   },
 });

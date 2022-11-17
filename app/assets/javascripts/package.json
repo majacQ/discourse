@@ -1,13 +1,17 @@
-
 {
   "private": true,
   "workspaces": [
     "discourse",
     "admin",
+    "discourse-plugins",
     "discourse-common",
+    "discourse-ensure-deprecation-order",
     "discourse-hbr",
     "discourse-widget-hbs",
+    "ember-cli-progress-ci",
     "pretty-text",
-    "select-kit"
+    "select-kit",
+    "truth-helpers",
+    "wizard"
   ]
 }

@@ -4,6 +4,21 @@ class TagUser < ActiveRecord::Base
   belongs_to :tag
   belongs_to :user
 
+  scope :notification_level_visible, -> (notification_levels = TagUser.notification_levels.values) {
+    select("tag_users.*")
+      .distinct
+      .joins("LEFT OUTER JOIN tag_group_memberships ON tag_users.tag_id = tag_group_memberships.tag_id")
+      .joins("LEFT OUTER JOIN tag_group_permissions ON tag_group_memberships.tag_group_id = tag_group_permissions.tag_group_id")
+      .joins("LEFT OUTER JOIN group_users on group_users.user_id = tag_users.user_id")
+      .where("(tag_group_permissions.group_id IS NULL
+               OR tag_group_permissions.group_id IN (:everyone_group_id, group_users.group_id)
+               OR group_users.group_id = :staff_group_id)
+              AND tag_users.notification_level IN (:notification_levels)",
+             staff_group_id: Group::AUTO_GROUPS[:staff],
+             everyone_group_id: Group::AUTO_GROUPS[:everyone],
+             notification_levels: notification_levels)
+  }
+
   def self.notification_levels
     NotificationLevels.all
   end
@@ -190,6 +205,31 @@ class TagUser < ActiveRecord::Base
     builder.exec(tracking: notification_levels[:tracking],
                  regular: notification_levels[:regular],
                  auto_track_tag: TopicUser.notification_reasons[:auto_track_tag])
+  end
+
+  def self.notification_levels_for(user)
+    # Anonymous users have all default tags set to regular tracking,
+    # except for default muted tags which stay muted.
+    if user.blank?
+      notification_levels = [
+        SiteSetting.default_tags_watching_first_post.split("|"),
+        SiteSetting.default_tags_watching.split("|"),
+        SiteSetting.default_tags_tracking.split("|")
+      ].flatten.map do |name|
+        [name, self.notification_levels[:regular]]
+      end
+
+      notification_levels += SiteSetting.default_tags_muted.split("|").map do |name|
+        [name, self.notification_levels[:muted]]
+      end
+    else
+      notification_levels = TagUser
+        .notification_level_visible
+        .where(user: user)
+        .joins(:tag).pluck("tags.name", :notification_level)
+    end
+
+    Hash[*notification_levels.flatten]
   end
 
 end

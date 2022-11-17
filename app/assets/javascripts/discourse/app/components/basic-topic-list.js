@@ -6,8 +6,6 @@ export default Component.extend({
   loadingMore: alias("topicList.loadingMore"),
   loading: not("loaded"),
 
-  hideMobileAvatar: true,
-
   @discourseComputed("topicList.loaded")
   loaded() {
     let topicList = this.topicList;
@@ -19,7 +17,7 @@ export default Component.extend({
   },
 
   @observes("topicList.[]")
-  _topicListChanged: function () {
+  _topicListChanged() {
     this._initFromTopicList(this.topicList);
   },
 
@@ -52,11 +50,7 @@ export default Component.extend({
             `.indicator-topic-${data.topic_id}`
           ).classList;
 
-          if (data.show_indicator) {
-            nodeClassList.remove("read");
-          } else {
-            nodeClassList.add("read");
-          }
+          nodeClassList.toggle("read", !data.show_indicator);
         });
       }
     });

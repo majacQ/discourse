@@ -74,7 +74,7 @@ class BulkImport::Base
 
   def initialize
     charset = ENV["DB_CHARSET"] || "utf8"
-    db = ActiveRecord::Base.connection_config
+    db = ActiveRecord::Base.connection_db_config.configuration_hash
     @encoder = PG::TextEncoder::CopyRow.new
     @raw_connection = PG.connect(dbname: db[:database], port: db[:port])
     @uploader = ImportScripts::Uploader.new
@@ -153,6 +153,7 @@ class BulkImport::Base
     puts "Loading imported user ids..."
     @users, imported_user_ids = imported_ids("user")
     @last_imported_user_id = imported_user_ids.max || -1
+    @pre_existing_user_ids = Set.new
 
     puts "Loading imported category ids..."
     @categories, imported_category_ids = imported_ids("category")
@@ -197,7 +198,7 @@ class BulkImport::Base
     puts "Loading users indexes..."
     @last_user_id = last_id(User)
     @last_user_email_id = last_id(UserEmail)
-    @emails = User.unscoped.joins(:user_emails).pluck(:"user_emails.email").to_set
+    @emails = User.unscoped.joins(:user_emails).pluck(:"user_emails.email", :"user_emails.user_id").to_h
     @usernames_lower = User.unscoped.pluck(:username_lower).to_set
     @mapped_usernames = UserCustomField.joins(:user).where(name: "import_username").pluck("user_custom_fields.value", "users.username").to_h
 
@@ -393,6 +394,17 @@ class BulkImport::Base
   end
 
   def process_user(user)
+    if user[:email].present?
+      user[:email].downcase!
+
+      if existing_user_id = @emails[user[:email]]
+        @pre_existing_user_ids << existing_user_id
+        @users[user[:imported_id].to_i] = existing_user_id
+        user[:skip] = true
+        return user
+      end
+    end
+
     @users[user[:imported_id].to_i] = user[:id] = @last_user_id += 1
 
     imported_username = user[:username].dup
@@ -412,11 +424,6 @@ class BulkImport::Base
     end
 
     user[:username_lower] = user[:username].downcase
-    user[:email] ||= random_email
-    user[:email].downcase!
-
-    # unique email
-    user[:email] = random_email until user[:email] =~ EmailValidator.email_regex && @emails.add?(user[:email])
     user[:trust_level] ||= TrustLevel[1]
     user[:active] = true unless user.has_key?(:active)
     user[:admin] ||= false
@@ -424,22 +431,37 @@ class BulkImport::Base
     user[:last_emailed_at] ||= NOW
     user[:created_at] ||= NOW
     user[:updated_at] ||= user[:created_at]
+
+    if (date_of_birth = user[:date_of_birth]).is_a?(Date) && date_of_birth.year != 1904
+      user[:date_of_birth] = Date.new(1904, date_of_birth.month, date_of_birth.day)
+    end
+
     user
   end
 
   def process_user_email(user_email)
+    user_id = @users[user_email[:imported_user_id].to_i]
+    return { skip: true } if @pre_existing_user_ids.include?(user_id)
+
     user_email[:id] = @last_user_email_id += 1
-    user_email[:user_id] = @users[user_email[:imported_user_id].to_i]
+    user_email[:user_id] = user_id
     user_email[:primary] = true
     user_email[:created_at] ||= NOW
     user_email[:updated_at] ||= user_email[:created_at]
+
     user_email[:email] ||= random_email
     user_email[:email].downcase!
+    # unique email
+    user_email[:email] = random_email until EmailAddressValidator.valid_value?(user_email[:email]) && !@emails.has_key?(user_email[:email])
+
     user_email
   end
 
   def process_user_stat(user_stat)
-    user_stat[:user_id] = @users[user_stat[:imported_user_id].to_i]
+    user_id = @users[user_stat[:imported_user_id].to_i]
+    return { skip: true } if @pre_existing_user_ids.include?(user_id)
+
+    user_stat[:user_id] = user_id
     user_stat[:topics_entered] ||= 0
     user_stat[:time_read] ||= 0
     user_stat[:days_visited] ||= 0
@@ -455,6 +477,8 @@ class BulkImport::Base
   end
 
   def process_user_profile(user_profile)
+    return { skip: true } if @pre_existing_user_ids.include?(user_profile[:user_id])
+
     user_profile[:bio_raw] = (user_profile[:bio_raw].presence || "").scrub.strip.presence
     user_profile[:bio_cooked] = pre_cook(user_profile[:bio_raw]) if user_profile[:bio_raw].present?
     user_profile[:views] ||= 0
@@ -627,6 +651,10 @@ class BulkImport::Base
     raw.gsub!(/\[TD\](.*?)\[\/TD\]/im, "\\1")
     raw.gsub!(/\[TD="?.*?"?\](.*?)\[\/TD\]/im, "\\1")
 
+    # [STRIKE]
+    raw.gsub!(/\[STRIKE\]/i, "<s>")
+    raw.gsub!(/\[\/STRIKE\]/i, "</s>")
+
     # [QUOTE]...[/QUOTE]
     raw.gsub!(/\[QUOTE="([^\]]+)"\]/i) { "[QUOTE=#{$1}]" }
 
@@ -644,7 +672,7 @@ class BulkImport::Base
 
       username = @mapped_usernames[imported_username] || imported_username
       post_number = post_number_from_imported_id(imported_postid)
-      topic_id = topic_id_from_imported_post_id(imported_post_id)
+      topic_id = topic_id_from_imported_post_id(imported_postid)
 
       if post_number && topic_id
         "\n[quote=\"#{username}, post:#{post_number}, topic:#{topic_id}\"]\n"
@@ -668,9 +696,9 @@ class BulkImport::Base
     # (basically, we're only missing list=a here...)
     # (https://meta.discourse.org/t/phpbb-3-importer-old/17397)
     raw.gsub!(/\[list\](.*?)\[\/list\]/im, '[ul]\1[/ul]')
-    raw.gsub!(/\[list=1\](.*?)\[\/list\]/im, '[ol]\1[/ol]')
+    raw.gsub!(/\[list=1\|?[^\]]*\](.*?)\[\/list\]/im, '[ol]\1[/ol]')
     raw.gsub!(/\[list\](.*?)\[\/list:u\]/im, '[ul]\1[/ul]')
-    raw.gsub!(/\[list=1\](.*?)\[\/list:o\]/im, '[ol]\1[/ol]')
+    raw.gsub!(/\[list=1\|?[^\]]*\](.*?)\[\/list:o\]/im, '[ol]\1[/ol]')
     # convert *-tags to li-tags so bbcode-to-md can do its magic on phpBB's lists:
     raw.gsub!(/\[\*\]\n/, '')
     raw.gsub!(/\[\*\](.*?)\[\/\*:m\]/, '[li]\1[/li]')
@@ -693,7 +721,7 @@ class BulkImport::Base
           processed = send(process_method_name, mapped)
           imported_ids << mapped[:imported_id] unless mapped[:imported_id].nil?
           imported_ids |= mapped[:imported_ids] unless mapped[:imported_ids].nil?
-          @raw_connection.put_copy_data columns.map { |c| processed[c] }
+          @raw_connection.put_copy_data columns.map { |c| processed[c] } unless processed[:skip]
           print "\r%7d - %6d/sec" % [imported_ids.size, imported_ids.size.to_f / (Time.now - start)] if imported_ids.size % 5000 == 0
         rescue => e
           puts "\n"
@@ -749,6 +777,7 @@ class BulkImport::Base
     name.gsub!(/[^A-Za-z0-9]+$/, "")
     name.gsub!(/([-_.]{2,})/) { $1.first }
     name.strip!
+    name.truncate(60)
     name
   end
 
@@ -757,7 +786,7 @@ class BulkImport::Base
   end
 
   def random_email
-    "#{SecureRandom.hex}@ema.il"
+    "#{SecureRandom.hex}@email.invalid"
   end
 
   def pre_cook(raw)

@@ -4,6 +4,13 @@ class ThemeField < ActiveRecord::Base
 
   belongs_to :upload
   has_one :javascript_cache, dependent: :destroy
+  has_one :upload_reference, as: :target, dependent: :destroy
+
+  after_save do
+    if self.type_id == ThemeField.types[:theme_upload_var] && saved_change_to_upload_id?
+      UploadReference.ensure_exist!(upload_ids: [self.upload_id], target: self)
+    end
+  end
 
   scope :find_by_theme_ids, ->(theme_ids) {
     return none unless theme_ids.present?
@@ -85,9 +92,10 @@ class ThemeField < ActiveRecord::Base
         if is_raw
           js_compiler.append_raw_template(name, hbs_template)
         else
-          js_compiler.append_ember_template(name, hbs_template)
+          js_compiler.append_ember_template("discourse/templates/#{name}", hbs_template)
         end
       rescue ThemeJavascriptCompiler::CompileError => ex
+        js_compiler.append_js_error("discourse/templates/#{name}", ex.message)
         errors << ex.message
       end
 
@@ -121,52 +129,50 @@ class ThemeField < ActiveRecord::Base
 
         js_compiler.append_module(js, "discourse/initializers/#{initializer_name}", include_variables: true)
       rescue ThemeJavascriptCompiler::CompileError => ex
+        js_compiler.append_js_error("discourse/initializers/#{initializer_name}", ex.message)
         errors << ex.message
       end
 
       node.remove
     end
 
-    doc.css('script').each do |node|
+    doc.css('script').each_with_index do |node, index|
       next unless inline_javascript?(node)
-      js_compiler.append_raw_script(node.inner_html)
+      js_compiler.append_raw_script("_html/#{Theme.targets[self.target_id]}/#{name}_#{index + 1}.js", node.inner_html)
       node.remove
     end
 
-    errors.each do |error|
-      js_compiler.append_js_error(error)
-    end
-
     settings_hash = theme.build_settings_hash
-    js_compiler.prepend_settings(settings_hash) if js_compiler.content.present? && settings_hash.present?
+    js_compiler.prepend_settings(settings_hash) if js_compiler.has_content? && settings_hash.present?
     javascript_cache.content = js_compiler.content
+    javascript_cache.source_map = js_compiler.source_map
     javascript_cache.save!
 
-    doc.add_child("<script src='#{javascript_cache.url}'></script>") if javascript_cache.content.present?
+    doc.add_child("<script defer src='#{javascript_cache.url}' data-theme-id='#{theme_id}'></script>") if javascript_cache.content.present?
     [doc.to_s, errors&.join("\n")]
   end
 
-  def process_extra_js(content)
-    errors = []
+  def validate_svg_sprite_xml
+    upload = Upload.find(self.upload_id) rescue nil
 
-    js_compiler = ThemeJavascriptCompiler.new(theme_id, theme.name)
-    filename, extension = name.split(".", 2)
-    begin
-      case extension
-      when "js.es6", "js"
-        js_compiler.append_module(content, filename, include_variables: true)
-      when "hbs"
-        js_compiler.append_ember_template(filename.sub("discourse/templates/", ""), content)
-      when "hbr", "raw.hbs"
-        js_compiler.append_raw_template(filename.sub("discourse/templates/", ""), content)
-      else
-        raise ThemeJavascriptCompiler::CompileError.new(I18n.t("themes.compile_error.unrecognized_extension", extension: extension))
-      end
-    rescue ThemeJavascriptCompiler::CompileError => ex
-      errors << ex.message
+    if Discourse.store.external?
+      external_copy = Discourse.store.download(upload) rescue nil
+      path = external_copy.try(:path)
+    else
+      path = Discourse.store.path_for(upload)
     end
 
-    [js_compiler.content, errors&.join("\n")]
+    error = nil
+
+    begin
+      content = File.read(path)
+      Nokogiri::XML(content) do |config|
+        config.options = Nokogiri::XML::ParseOptions::NOBLANKS
+      end
+    rescue => e
+      error = "Error with #{self.name}: #{e.inspect}"
+    end
+    error
   end
 
   def raw_translation_data(internal: false)
@@ -192,8 +198,12 @@ class ThemeField < ActiveRecord::Base
     #       this would reduce the size of the payload, without affecting functionality
     data = {}
     fallback_data.each { |hash| data.merge!(hash) }
-    overrides = theme.translation_override_hash.deep_symbolize_keys
-    data.deep_merge!(overrides) if with_overrides
+
+    if with_overrides
+      overrides = theme.translation_override_hash.deep_symbolize_keys
+      data.deep_merge!(overrides)
+    end
+
     data
   end
 
@@ -228,9 +238,10 @@ class ThemeField < ActiveRecord::Base
     end
 
     javascript_cache.content = js_compiler.content
+    javascript_cache.source_map = js_compiler.source_map
     javascript_cache.save!
     doc = ""
-    doc = "<script src='#{javascript_cache.url}'></script>" if javascript_cache.content.present?
+    doc = "<script defer src='#{javascript_cache.url}' data-theme-id='#{theme_id}'></script>" if javascript_cache.content.present?
     [doc, errors&.join("\n")]
   end
 
@@ -342,22 +353,21 @@ class ThemeField < ActiveRecord::Base
       self.compiler_version = Theme.compiler_version
       DB.after_commit { CSP::Extension.clear_theme_extensions_cache! }
     elsif extra_js_field? || js_tests_field?
-      self.value_baked, self.error = process_extra_js(self.value)
-      self.error = nil unless self.error.present?
+      self.error = nil
+      self.value_baked = "baked"
       self.compiler_version = Theme.compiler_version
     elsif basic_scss_field?
       ensure_scss_compiles!
       DB.after_commit { Stylesheet::Manager.clear_theme_cache! }
     elsif settings_field?
       validate_yaml!
-      theme.clear_cached_settings!
       DB.after_commit { CSP::Extension.clear_theme_extensions_cache! }
       DB.after_commit { SvgSprite.expire_cache }
       self.value_baked = "baked"
       self.compiler_version = Theme.compiler_version
     elsif svg_sprite_field?
       DB.after_commit { SvgSprite.expire_cache }
-      self.error = nil
+      self.error = validate_svg_sprite_xml
       self.value_baked = "baked"
       self.compiler_version = Theme.compiler_version
     end
@@ -375,11 +385,13 @@ class ThemeField < ActiveRecord::Base
   def compile_scss(prepended_scss = nil)
     prepended_scss ||= Stylesheet::Importer.new({}).prepended_scss
 
-    Stylesheet::Compiler.compile("#{prepended_scss} #{self.theme.scss_variables.to_s} #{self.value}",
-      "#{Theme.targets[self.target_id]}.scss",
-      theme: self.theme,
-      load_paths: self.theme.scss_load_paths
-    )
+    self.theme.with_scss_load_paths do |load_paths|
+      Stylesheet::Compiler.compile("#{prepended_scss} #{self.theme.scss_variables.to_s} #{self.value}",
+        "#{Theme.targets[self.target_id]}.scss",
+        theme: self.theme,
+        load_paths: load_paths
+      )
+    end
   end
 
   def compiled_css(prepended_scss)
@@ -539,16 +551,22 @@ class ThemeField < ActiveRecord::Base
     if (will_save_change_to_value? || will_save_change_to_upload_id?) && !will_save_change_to_value_baked?
       self.value_baked = nil
     end
+    if upload && upload.extension == "js"
+      if will_save_change_to_upload_id? || !javascript_cache
+        javascript_cache ||= build_javascript_cache
+        javascript_cache.content = upload.content
+      end
+    end
   end
 
   after_save do
     dependent_fields.each(&:invalidate_baked!)
   end
 
-  after_commit do
-    # TODO message for mobile vs desktop
-    MessageBus.publish "/header-change/#{theme.id}", self.value if theme && self.name == "header"
-    MessageBus.publish "/footer-change/#{theme.id}", self.value if theme && self.name == "footer"
+  after_destroy do
+    if svg_sprite_field?
+      DB.after_commit { SvgSprite.expire_cache }
+    end
   end
 
   private

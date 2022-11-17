@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe LocaleSiteSetting do
+RSpec.describe LocaleSiteSetting do
   def core_locales
     pattern = File.join(Rails.root, 'config', 'locales', 'client.*.yml')
     Dir.glob(pattern).map { |x| x.split('.')[-2] }
@@ -30,8 +28,8 @@ describe LocaleSiteSetting do
 
     it 'returns native names' do
       expect(native_locale_name('de')).to eq('Deutsch')
-      expect(native_locale_name('zh_CN')).to eq('中文')
-      expect(native_locale_name('zh_TW')).to eq('中文 (TW)')
+      expect(native_locale_name('zh_CN')).to eq('简体中文')
+      expect(native_locale_name('zh_TW')).to eq('繁體中文')
     end
   end
 

@@ -11,7 +11,7 @@ module Jobs
       return unless SiteSetting.auto_handle_queued_age.to_i > 0
 
       Reviewable
-        .where(status: Reviewable.statuses[:pending])
+        .pending
         .where('created_at < ?', SiteSetting.auto_handle_queued_age.to_i.days.ago)
         .each do |reviewable|
 
@@ -20,7 +20,7 @@ module Jobs
         elsif reviewable.is_a?(ReviewableQueuedPost)
           reviewable.perform(Discourse.system_user, :reject_post)
         elsif reviewable.is_a?(ReviewableUser)
-          reviewable.perform(Discourse.system_user, :reject_user_delete)
+          reviewable.perform(Discourse.system_user, :delete_user)
         end
       end
     end

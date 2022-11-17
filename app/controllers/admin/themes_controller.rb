@@ -5,6 +5,7 @@ require 'base64'
 class Admin::ThemesController < Admin::AdminController
 
   skip_before_action :check_xhr, only: [:show, :preview, :export]
+  before_action :ensure_admin
 
   def preview
     theme = Theme.find_by(id: params[:id])
@@ -35,11 +36,8 @@ class Admin::ThemesController < Admin::AdminController
   def generate_key_pair
     require 'sshkey'
     k = SSHKey.generate
-
-    render json: {
-      private_key: k.private_key,
-      public_key: k.ssh_public_key
-    }
+    Discourse.redis.setex("ssh_key_#{k.ssh_public_key}", 1.hour, k.private_key)
+    render json: { public_key: k.ssh_public_key }
   end
 
   THEME_CONTENT_TYPES ||= %w{
@@ -59,7 +57,7 @@ class Admin::ThemesController < Admin::AdminController
       json = JSON::parse(params[:theme].read)
       theme = json['theme']
 
-      @theme = Theme.new(name: theme["name"], user_id: theme_user.id)
+      @theme = Theme.new(name: theme["name"], user_id: theme_user.id, auto_update: false)
       theme["theme_fields"]&.each do |field|
 
         if field["raw_upload"]
@@ -92,15 +90,40 @@ class Admin::ThemesController < Admin::AdminController
         render json: @theme.errors, status: :unprocessable_entity
       end
     elsif remote = params[:remote]
-
-      guardian.ensure_allowed_theme_repo_import!(remote.strip)
-
       begin
-        branch = params[:branch] ? params[:branch] : nil
-        @theme = RemoteTheme.import_theme(remote, theme_user, private_key: params[:private_key], branch: branch)
-        render json: @theme, status: :created
-      rescue RemoteTheme::ImportError => e
-        render_json_error e.message
+        guardian.ensure_allowed_theme_repo_import!(remote.strip)
+      rescue Discourse::InvalidAccess
+        render_json_error I18n.t("themes.import_error.not_allowed_theme", { repo: remote.strip }), status: :forbidden
+        return
+      end
+
+      hijack do
+        begin
+          branch = params[:branch] ? params[:branch] : nil
+          private_key = params[:public_key] ? Discourse.redis.get("ssh_key_#{params[:public_key]}") : nil
+          return render_json_error I18n.t("themes.import_error.ssh_key_gone") if params[:public_key].present? && private_key.blank?
+
+          @theme = RemoteTheme.import_theme(remote, theme_user, private_key: private_key, branch: branch)
+          render json: @theme, status: :created
+        rescue RemoteTheme::ImportError => e
+          if params[:force]
+            theme_name = params[:remote].gsub(/.git$/, "").split("/").last
+
+            remote_theme = RemoteTheme.new
+            remote_theme.private_key = private_key
+            remote_theme.branch = params[:branch] ? params[:branch] : nil
+            remote_theme.remote_url = params[:remote]
+            remote_theme.save!
+
+            @theme = Theme.new(user_id: theme_user&.id || -1, name: theme_name)
+            @theme.remote_theme = remote_theme
+            @theme.save!
+
+            render json: @theme, status: :created
+          else
+            render_json_error e.message
+          end
+        end
       end
     elsif params[:bundle] || (params[:theme] && THEME_CONTENT_TYPES.include?(params[:theme].content_type))
 
@@ -112,7 +135,14 @@ class Admin::ThemesController < Admin::AdminController
       update_components = params[:components]
       match_theme_by_name = !!params[:bundle] && !params.key?(:theme_id) # Old theme CLI behavior, match by name. Remove Jan 2020
       begin
-        @theme = RemoteTheme.update_zipped_theme(bundle.path, bundle.original_filename, match_theme: match_theme_by_name, user: theme_user, theme_id: theme_id, update_components: update_components)
+        @theme = RemoteTheme.update_zipped_theme(
+          bundle.path,
+          bundle.original_filename,
+          match_theme: match_theme_by_name,
+          user: theme_user,
+          theme_id: theme_id,
+          update_components: update_components
+        )
         log_theme_change(nil, @theme)
         render json: @theme, status: :created
       rescue RemoteTheme::ImportError => e
@@ -124,16 +154,7 @@ class Admin::ThemesController < Admin::AdminController
   end
 
   def index
-    @themes = Theme.order(:name).includes(:child_themes,
-                                          :parent_themes,
-                                          :remote_theme,
-                                          :theme_settings,
-                                          :settings_field,
-                                          :locale_fields,
-                                          :user,
-                                          :color_scheme,
-                                          theme_fields: :upload
-                                          )
+    @themes = Theme.include_relations.order(:name)
     @color_schemes = ColorScheme.all.includes(:theme, color_scheme_colors: :color_scheme).to_a
 
     payload = {
@@ -171,7 +192,7 @@ class Admin::ThemesController < Admin::AdminController
   end
 
   def update
-    @theme = Theme.find_by(id: params[:id])
+    @theme = Theme.include_relations.find_by(id: params[:id])
     raise Discourse::InvalidParameters.new(:id) unless @theme
 
     original_json = ThemeSerializer.new(@theme, root: false).to_json
@@ -209,7 +230,7 @@ class Admin::ThemesController < Admin::AdminController
       if @theme.save
         update_default_theme
 
-        @theme.reload
+        @theme = Theme.include_relations.find(@theme.id)
 
         if (!disables_component && !enables_component) || theme_params.keys.size > 1
           log_theme_change(original_json, @theme)
@@ -245,7 +266,7 @@ class Admin::ThemesController < Admin::AdminController
   end
 
   def show
-    @theme = Theme.find_by(id: params[:id])
+    @theme = Theme.include_relations.find_by(id: params[:id])
     raise Discourse::InvalidParameters.new(:id) unless @theme
 
     render json: ThemeSerializer.new(@theme)
@@ -287,7 +308,7 @@ class Admin::ThemesController < Admin::AdminController
   private
 
   def ban_in_allowlist_mode!
-    raise Discourse::InvalidAccess if !GlobalSetting.allowed_theme_ids.nil?
+    raise Discourse::InvalidAccess if !Theme.allowed_remote_theme_ids.nil?
   end
 
   def ban_for_remote_theme!

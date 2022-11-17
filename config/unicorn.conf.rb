@@ -25,8 +25,13 @@ end
 # feel free to point this anywhere accessible on the filesystem
 pid (ENV["UNICORN_PID_PATH"] || "#{discourse_path}/tmp/pids/unicorn.pid")
 
-if ENV["RAILS_ENV"] != "production"
+  <<<<<<< asyncify-preload-store
+if ENV["RAILS_ENV"] == "development" || !ENV["RAILS_ENV"]
   logger Logger.new($stdout)
+  =======
+if ENV["RAILS_ENV"] != "production"
+  logger Logger.new(STDOUT)
+  >>>>>>> chat-quotes
   # we want a longer timeout in dev cause first request can be really slow
   timeout (ENV["UNICORN_TIMEOUT"] && ENV["UNICORN_TIMEOUT"].to_i || 60)
 else
@@ -71,7 +76,7 @@ before_fork do |server, worker|
     if supervisor > 0
       Thread.new do
         while true
-          unless File.exists?("/proc/#{supervisor}")
+          unless File.exist?("/proc/#{supervisor}")
             puts "Kill self supervisor is gone"
             Process.kill "TERM", Process.pid
           end
@@ -251,19 +256,10 @@ before_fork do |server, worker|
   # to the implementation of standard Unix signal handlers, this
   # helps (but does not completely) prevent identical, repeated signals
   # from being lost when the receiving process is busy.
-  sleep 1
+  sleep 1 if !Rails.env.development?
 end
 
 after_fork do |server, worker|
   DiscourseEvent.trigger(:web_fork_started)
-
-  # warm up v8 after fork, that way we do not fork a v8 context
-  # it may cause issues if bg threads in a v8 isolate randomly stop
-  # working due to fork
   Discourse.after_fork
-  begin
-    PrettyText.cook("warm up **pretty text**")
-  rescue => e
-    Rails.logger.error("Failed to warm up pretty text: #{e}")
-  end
 end

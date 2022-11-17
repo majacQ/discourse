@@ -1,10 +1,12 @@
 # frozen_string_literal: true
-require_dependency 'content_security_policy/default'
+require 'content_security_policy/default'
 
 class ContentSecurityPolicy
   class Builder
     EXTENDABLE_DIRECTIVES = %i[
       base_uri
+      frame_ancestors
+      manifest_src
       object_src
       script_src
       worker_src
@@ -16,10 +18,8 @@ class ContentSecurityPolicy
       default_src
       font_src
       form_action
-      frame_ancestors
       frame_src
       img_src
-      manifest_src
       media_src
       prefetch_src
       style_src

@@ -1,8 +1,4 @@
-import {
-  acceptance,
-  exists,
-  queryAll,
-} from "discourse/tests/helpers/qunit-helpers";
+import { acceptance, exists } from "discourse/tests/helpers/qunit-helpers";
 import { click, fillIn, visit } from "@ember/test-helpers";
 import selectKit from "discourse/tests/helpers/select-kit-helper";
 import { test } from "qunit";
@@ -33,13 +29,18 @@ acceptance(
         "textarea is disabled"
       );
 
+      assert.ok(
+        !exists("button.toggle-fullscreen"),
+        "fullscreen button is not present"
+      );
+
       const categoryChooser = selectKit(".category-chooser");
 
       await categoryChooser.expand();
       await categoryChooser.selectRowByValue(2);
 
       assert.ok(
-        queryAll(".d-editor-textarea-wrapper.disabled").length === 0,
+        !exists(".d-editor-textarea-wrapper.disabled"),
         "textarea is enabled"
       );
 
@@ -48,8 +49,13 @@ acceptance(
       await categoryChooser.selectRowByIndex(0);
 
       assert.ok(
-        queryAll(".d-editor-textarea-wrapper.disabled").length === 0,
+        !exists(".d-editor-textarea-wrapper.disabled"),
         "textarea is still enabled"
+      );
+
+      assert.ok(
+        exists("button.toggle-fullscreen"),
+        "fullscreen button is present"
       );
     });
   }
@@ -66,18 +72,21 @@ acceptance(
           id: 1,
           name: "test won",
           slug: "test-won",
+          permission: 1,
           topic_template: null,
         },
         {
           id: 2,
           name: "test too",
           slug: "test-too",
+          permission: 1,
           topic_template: "",
         },
         {
           id: 3,
           name: "test free",
           slug: "test-free",
+          permission: 1,
           topic_template: null,
         },
       ],
@@ -91,8 +100,13 @@ acceptance(
         "category errors are hidden by default"
       );
       assert.ok(
-        queryAll(".d-editor-textarea-wrapper.disabled").length === 0,
+        !exists(".d-editor-textarea-wrapper.disabled"),
         "textarea is enabled"
+      );
+
+      assert.ok(
+        exists("button.toggle-fullscreen"),
+        "fullscreen button is present"
       );
 
       await click("#reply-control button.create");

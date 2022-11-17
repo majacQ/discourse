@@ -36,10 +36,11 @@ module Jobs
             post.update_column(:cooked, cp.html)
             post.topic.update_excerpt(post.excerpt_for_topic) if post.is_first_post?
             extract_links(post)
-            auto_tag(post) if SiteSetting.tagging_enabled? && post.post_number == 1
             post.publish_change_to_clients! :revised
           end
         end
+
+        enqueue_pull_hotlinked_images(post) unless args[:skip_pull_hotlinked_images]
 
         if !post.user&.staff? && !post.user&.staged?
           s = post.raw
@@ -62,23 +63,9 @@ module Jobs
       QuotedPost.extract_from(post)
     end
 
-    def auto_tag(post)
-      word_watcher = WordWatcher.new(post.raw)
-
-      old_tags = post.topic.tags.pluck(:name).to_set
-      new_tags = old_tags.dup
-
-      WordWatcher.words_for_action(:tag).each do |word, tags|
-        new_tags += tags.split(",") if word_watcher.matches?(word)
-      end
-
-      if old_tags != new_tags
-        post.revise(
-          Discourse.system_user,
-          tags: new_tags.to_a,
-          edit_reason: I18n.t(:watched_words_auto_tag)
-        )
-      end
+    def enqueue_pull_hotlinked_images(post)
+      Jobs.cancel_scheduled_job(:pull_hotlinked_images, post_id: post.id)
+      Jobs.enqueue(:pull_hotlinked_images, post_id: post.id)
     end
   end
 

@@ -4,6 +4,14 @@ class UserAvatar < ActiveRecord::Base
   belongs_to :user
   belongs_to :gravatar_upload, class_name: 'Upload'
   belongs_to :custom_upload, class_name: 'Upload'
+  has_many :upload_references, as: :target, dependent: :destroy
+
+  after_save do
+    if saved_change_to_custom_upload_id? || saved_change_to_gravatar_upload_id?
+      upload_ids = [self.custom_upload_id, self.gravatar_upload_id]
+      UploadReference.ensure_exist!(upload_ids: upload_ids, target: self)
+    end
+  end
 
   @@custom_user_gravatar_email_hash = {
     Discourse::SYSTEM_USER_ID => User.email_hash("info@discourse.org")
@@ -29,6 +37,10 @@ class UserAvatar < ActiveRecord::Base
 
         email_hash = @@custom_user_gravatar_email_hash[user_id] || user.email_hash
         gravatar_url = "https://#{SiteSetting.gravatar_base_url}/avatar/#{email_hash}.png?s=#{max}&d=404&reset_cache=#{SecureRandom.urlsafe_base64(5)}"
+
+        if SiteSetting.verbose_upload_logging
+          Rails.logger.warn("Verbose Upload Logging: Downloading gravatar from #{gravatar_url}")
+        end
 
         # follow redirects in case gravatar change rules on us
         tempfile = FileHelper.download(
@@ -95,6 +107,10 @@ class UserAvatar < ActiveRecord::Base
   end
 
   def self.import_url_for_user(avatar_url, user, options = nil)
+    if SiteSetting.verbose_upload_logging
+      Rails.logger.warn("Verbose Upload Logging: Downloading sso-avatar from #{avatar_url}")
+    end
+
     tempfile = FileHelper.download(
       avatar_url,
       max_file_size: SiteSetting.max_image_size_kb.kilobytes,

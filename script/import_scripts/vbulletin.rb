@@ -53,25 +53,25 @@ class ImportScripts::VBulletin < ImportScripts::Base
     rescue Exception => e
       puts '=' * 50
       puts e.message
-      puts <<EOM
-Cannot connect in to database.
+      puts <<~TEXT
+        Cannot connect in to database.
 
-Hostname: #{DB_HOST}
-Username: #{DB_USER}
-Password: #{DB_PW}
-database: #{DB_NAME}
+        Hostname: #{DB_HOST}
+        Username: #{DB_USER}
+        Password: #{DB_PW}
+        database: #{DB_NAME}
 
-Edit the script or set these environment variables:
+        Edit the script or set these environment variables:
 
-export DB_HOST="localhost"
-export DB_NAME="vbulletin"
-export DB_PW=""
-export DB_USER="root"
-export TABLE_PREFIX="vb_"
-export ATTACHMENT_DIR '/path/to/your/attachment/folder'
+        export DB_HOST="localhost"
+        export DB_NAME="vbulletin"
+        export DB_PW=""
+        export DB_USER="root"
+        export TABLE_PREFIX="vb_"
+        export ATTACHMENT_DIR '/path/to/your/attachment/folder'
 
-Exiting.
-EOM
+        Exiting.
+      TEXT
       exit
   end
 
@@ -151,7 +151,7 @@ EOM
 
       create_users(users, total: user_count, offset: offset) do |user|
         email = user["email"].presence || fake_email
-        email = fake_email unless email[EmailValidator.email_regex]
+        email = fake_email if !EmailAddressValidator.valid_value?(email)
 
         password = [user["password"].presence, user["salt"].presence].compact.join(":")
 
@@ -426,7 +426,7 @@ EOM
     real_filename = row['filename']
     real_filename.prepend SecureRandom.hex if real_filename[0] == '.'
 
-    unless File.exists?(filename)
+    unless File.exist?(filename)
       if row['dbsize'].to_i == 0
         puts "Attachment file #{row['filedataid']} doesn't exist"
         return nil
@@ -570,6 +570,25 @@ EOM
   def import_attachments
     puts '', 'importing attachments...'
 
+    mapping = {}
+    attachments = mysql_query(<<-SQL
+      SELECT a.attachmentid, a.contentid as postid, p.threadid
+        FROM #{TABLE_PREFIX}attachment a, #{TABLE_PREFIX}post p
+       WHERE a.contentid = p.postid
+       AND contenttypeid = 1 AND state = 'visible'
+    SQL
+    )
+    attachments.each do |attachment|
+      post_id = post_id_from_imported_post_id(attachment['postid'])
+      post_id = post_id_from_imported_post_id("thread-#{attachment['threadid']}") unless post_id
+      if post_id.nil?
+        puts "Post for attachment #{attachment['attachmentid']} not found"
+        next
+      end
+      mapping[post_id] ||= []
+      mapping[post_id] << attachment['attachmentid'].to_i
+    end
+
     current_count = 0
 
     total_count = mysql_query(<<-SQL
@@ -594,6 +613,10 @@ EOM
         matches = attachment_regex.match(s)
         attachment_id = matches[1]
 
+        unless mapping[post.id].nil?
+          mapping[post.id].delete(attachment_id.to_i)
+        end
+
         upload, filename = find_upload(post, attachment_id)
         unless upload
           fail_count += 1
@@ -601,6 +624,40 @@ EOM
         end
 
         html_for_upload(upload, filename)
+      end
+
+      # make resumed imports faster
+      if new_raw == post.raw
+        unless mapping[post.id].nil? || mapping[post.id].empty?
+          imported_text = mysql_query(<<-SQL
+            SELECT p.pagetext
+              FROM #{TABLE_PREFIX}attachment a, #{TABLE_PREFIX}post p
+             WHERE a.contentid = p.postid
+             AND a.attachmentid = #{mapping[post.id][0]}
+          SQL
+          ).first["pagetext"]
+
+          imported_text.scan(attachment_regex) do |match|
+            attachment_id = match[0]
+            mapping[post.id].delete(attachment_id.to_i)
+          end
+        end
+      end
+
+      unless mapping[post.id].nil? || mapping[post.id].empty?
+        mapping[post.id].each do |attachment_id|
+          upload, filename = find_upload(post, attachment_id)
+          unless upload
+            fail_count += 1
+            next
+          end
+
+          # internal upload deduplication will make sure that we do not import attachments again
+          html = html_for_upload(upload, filename)
+          if !new_raw[html]
+            new_raw += "\n\n#{html}\n\n"
+          end
+        end
       end
 
       if new_raw != post.raw
@@ -617,12 +674,12 @@ EOM
     # keep track of closed topics
     closed_topic_ids = []
 
-    topics = mysql_query <<-MYSQL
+    topics = mysql_query <<-SQL
         SELECT t.threadid threadid, firstpostid, open
           FROM #{TABLE_PREFIX}thread t
           JOIN #{TABLE_PREFIX}post p ON p.postid = t.firstpostid
       ORDER BY t.threadid
-    MYSQL
+    SQL
     topics.each do |topic|
       topic_id = "thread-#{topic["threadid"]}"
       closed_topic_ids << topic_id if topic["open"] == 0

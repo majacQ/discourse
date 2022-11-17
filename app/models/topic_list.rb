@@ -25,6 +25,19 @@ class TopicList
     end
   end
 
+  def self.on_preload_user_ids(&blk)
+    (@preload_user_ids ||= Set.new) << blk
+  end
+
+  def self.preload_user_ids(topics, user_ids, object)
+    if @preload_user_ids
+      @preload_user_ids.each do |preload_user_ids|
+        user_ids = preload_user_ids.call(topics, user_ids, object)
+      end
+    end
+    user_ids
+  end
+
   attr_accessor(
     :more_topics_url,
     :prev_topics_url,
@@ -63,17 +76,7 @@ class TopicList
   end
 
   def preload_key
-    if @category
-      if @opts[:no_subcategories]
-        "topic_list_#{@category.url.sub(/^\//, '')}/none/l/#{@filter}"
-      else
-        "topic_list_#{@category.url.sub(/^\//, '')}/l/#{@filter}"
-      end
-    elsif @tags && @tags.first.present?
-      "topic_list_tag/#{@tags.first.name}/l/#{@filter}"
-    else
-      "topic_list_#{@filter}"
-    end
+    "topic_list"
   end
 
   # Lazy initialization
@@ -91,18 +94,11 @@ class TopicList
     post_action_type =
       if @current_user
         if @opts[:filter].present?
-          if @opts[:filter] == "bookmarked"
-            PostActionType.types[:bookmark]
-          elsif @opts[:filter] == "liked"
+          if @opts[:filter] == "liked"
             PostActionType.types[:like]
           end
         end
       end
-
-    # Include bookmarks if you have bookmarked topics
-    if @current_user && !post_action_type
-      post_action_type = PostActionType.types[:bookmark] if @topic_lookup.any? { |_, tu| tu && tu.bookmarked }
-    end
 
     # Data for bookmarks or likes
     post_action_lookup = PostAction.lookup_for(@current_user, @topics, post_action_type) if post_action_type
@@ -113,6 +109,7 @@ class TopicList
       user_ids << ft.user_id << ft.last_post_user_id << ft.featured_user_ids << ft.allowed_user_ids
     end
 
+    user_ids = TopicList.preload_user_ids(@topics, user_ids, self)
     user_lookup = UserLookup.new(user_ids)
 
     @topics.each do |ft|
@@ -139,7 +136,9 @@ class TopicList
       ft.topic_list = self
     end
 
-    ActiveRecord::Associations::Preloader.new.preload(@topics, [:image_upload, topic_thumbnails: :optimized_image])
+    ActiveRecord::Associations::Preloader
+      .new(records: @topics, associations: [:image_upload, topic_thumbnails: :optimized_image])
+      .call
 
     if preloaded_custom_fields.present?
       Topic.preload_custom_fields(@topics, preloaded_custom_fields)

@@ -27,10 +27,17 @@ end
 
 DiscourseEvent.on(:post_edited) do |post, topic_changed|
   unless post.topic&.trashed?
-    WebHook.enqueue_post_hooks(:post_edited, post)
 
+    # if we are editing the OP and the topic is changed, do not send
+    # the post_edited event -- this event is sent separately because
+    # when we update the OP in the UI we send two API calls in this order:
+    #
+    # PUT /t/topic-name
+    # PUT /post/243552
     if post.is_first_post? && topic_changed
       WebHook.enqueue_topic_hooks(:topic_edited, post.topic)
+    else
+      WebHook.enqueue_post_hooks(:post_edited, post)
     end
   end
 end
@@ -85,8 +92,13 @@ end
   end
 end
 
-DiscourseEvent.on(:reviewable_created) do |reviewable|
-  WebHook.enqueue_object_hooks(:reviewable, reviewable, :reviewable_created, reviewable.serializer)
+%i(
+  reviewable_created
+  reviewable_score_updated
+).each do |event|
+  DiscourseEvent.on(event) do |reviewable|
+    WebHook.enqueue_object_hooks(:reviewable, reviewable, event, reviewable.serializer)
+  end
 end
 
 DiscourseEvent.on(:reviewable_transitioned_to) do |status, reviewable|
@@ -100,4 +112,26 @@ end
 DiscourseEvent.on(:user_added_to_group) do |user, group, options|
   group_user = GroupUser.find_by(user: user, group: group)
   WebHook.enqueue_object_hooks(:group_user, group_user, :user_added_to_group, WebHookGroupUserSerializer)
+end
+
+DiscourseEvent.on(:user_promoted) do |payload|
+  user_id, new_trust_level, old_trust_level = payload.values_at(:user_id, :new_trust_level, :old_trust_level)
+
+  next if new_trust_level < old_trust_level
+
+  user = User.find(user_id)
+  WebHook.enqueue_object_hooks(:user_promoted, user, :user_promoted, UserSerializer)
+end
+
+DiscourseEvent.on(:like_created) do |post_action|
+  user = post_action.user
+  group_ids = user.groups.map(&:id)
+  topic = Topic.includes(:tags).joins(:posts).find_by(posts: { id: post_action.post_id })
+  category_id = topic&.category_id
+  tag_ids = topic&.tag_ids
+
+  WebHook.enqueue_object_hooks(:like,
+    post_action, :post_liked, WebHookLikeSerializer,
+    group_ids: group_ids, category_id: category_id, tag_ids: tag_ids
+  )
 end

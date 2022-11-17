@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Admin::GroupsController < Admin::AdminController
+class Admin::GroupsController < Admin::StaffController
   def create
     guardian.ensure_can_create_group!
 
@@ -45,10 +45,8 @@ class Admin::GroupsController < Admin::AdminController
     if group.automatic
       can_not_modify_automatic
     else
-      details = { name: group.name }
-      details[:grant_trust_level] = group.grant_trust_level if group.grant_trust_level
+      StaffActionLogger.new(current_user).log_group_deletetion(group)
 
-      StaffActionLogger.new(current_user).log_custom('delete_group', details)
       group.destroy!
       render json: success_json
     end
@@ -113,7 +111,7 @@ class Admin::GroupsController < Admin::AdminController
     raise Discourse::NotFound unless group
 
     users = User.where(username: group_params[:usernames].split(","))
-    users.each { |user| guardian.ensure_can_change_primary_group!(user) }
+    users.each { |user| guardian.ensure_can_change_primary_group!(user, group) }
     users.update_all(primary_group_id: params[:primary] == "true" ? group.id : nil)
 
     render json: success_json
@@ -179,6 +177,12 @@ class Admin::GroupsController < Admin::AdminController
     ]
     custom_fields = DiscoursePluginRegistry.editable_group_custom_fields
     permitted << { custom_fields: custom_fields } unless custom_fields.blank?
+
+    if guardian.can_associate_groups?
+      permitted << { associated_group_ids: [] }
+    end
+
+    permitted = permitted | DiscoursePluginRegistry.group_params
 
     params.require(:group).permit(permitted)
   end

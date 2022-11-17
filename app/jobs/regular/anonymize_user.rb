@@ -16,6 +16,7 @@ module Jobs
     def make_anonymous
       anonymize_ips(@anonymize_ip) if @anonymize_ip
 
+      Invite.where(email: @prev_email).destroy_all
       InvitedUser.where(user_id: @user_id).destroy_all
       EmailToken.where(user_id: @user_id).destroy_all
       EmailLog.where(user_id: @user_id).delete_all
@@ -45,8 +46,9 @@ module Jobs
       # UserHistory for delete_user logs the user's IP. Note this is quite ugly but we don't
       # have a better way of querying on details right now.
       UserHistory.where(
-        "action = :action AND details LIKE 'id: #{@user_id}\n%'",
-        action: UserHistory.actions[:delete_user]
+        "action = :action AND details LIKE :details",
+        action: UserHistory.actions[:delete_user],
+        details: "id: #{@user_id}\n%",
       ).update_all(ip_address: new_ip)
     end
 

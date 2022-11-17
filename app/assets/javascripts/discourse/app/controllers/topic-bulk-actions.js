@@ -4,7 +4,8 @@ import I18n from "I18n";
 import ModalFunctionality from "discourse/mixins/modal-functionality";
 import { Promise } from "rsvp";
 import Topic from "discourse/models/topic";
-import bootbox from "bootbox";
+
+import { inject as service } from "@ember/service";
 
 const _buttons = [];
 
@@ -57,9 +58,12 @@ addBulkButton("showNotificationLevel", "notification_level", {
   icon: "d-regular",
   class: "btn-default",
 });
-addBulkButton("resetRead", "reset_read", {
-  icon: "backward",
+addBulkButton("deletePostTiming", "defer", {
+  icon: "circle",
   class: "btn-default",
+  buttonVisible() {
+    return this.currentUser.enable_defer;
+  },
 });
 addBulkButton("unlistTopics", "unlist_topics", {
   icon: "far-eye-slash",
@@ -73,30 +77,49 @@ addBulkButton("relistTopics", "relist_topics", {
   buttonVisible: (topics) =>
     topics.some((t) => !t.visible) && !topics.some((t) => t.isPrivateMessage),
 });
+addBulkButton("resetBumpDateTopics", "reset_bump_dates", {
+  icon: "anchor",
+  class: "btn-default",
+  buttonVisible() {
+    return this.currentUser.canManageTopic;
+  },
+});
 addBulkButton("showTagTopics", "change_tags", {
   icon: "tag",
   class: "btn-default",
   enabledSetting: "tagging_enabled",
+  buttonVisible() {
+    return this.currentUser.staff;
+  },
 });
 addBulkButton("showAppendTagTopics", "append_tags", {
   icon: "tag",
   class: "btn-default",
   enabledSetting: "tagging_enabled",
+  buttonVisible() {
+    return this.currentUser.staff;
+  },
 });
 addBulkButton("removeTags", "remove_tags", {
   icon: "tag",
   class: "btn-default",
   enabledSetting: "tagging_enabled",
+  buttonVisible() {
+    return this.currentUser.staff;
+  },
 });
 addBulkButton("deleteTopics", "delete", {
   icon: "trash-alt",
-  class: "btn-danger",
+  class: "btn-danger delete-topics",
+  buttonVisible() {
+    return this.currentUser.staff;
+  },
 });
 
 // Modal for performing bulk actions on topics
 export default Controller.extend(ModalFunctionality, {
   userPrivateMessages: controller("user-private-messages"),
-
+  dialog: service(),
   tags: null,
   emptyTags: empty("tags"),
   categoryId: alias("model.category.id"),
@@ -112,7 +135,7 @@ export default Controller.extend(ModalFunctionality, {
         if (b.enabledSetting && !this.siteSettings[b.enabledSetting]) {
           return false;
         }
-        return b.buttonVisible(topics);
+        return b.buttonVisible.call(this, topics);
       })
     );
     this.set("modal.modalClass", "topic-bulk-actions-modal small");
@@ -121,12 +144,15 @@ export default Controller.extend(ModalFunctionality, {
 
   perform(operation) {
     this.set("processedTopicCount", 0);
-    this.send("changeBulkTemplate", "modal/bulk-progress");
+    if (this.get("model.topics").length > 20) {
+      this.send("changeBulkTemplate", "modal/bulk-progress");
+    }
+
     this.set("loading", true);
 
     return this._processChunks(operation)
       .catch(() => {
-        bootbox.alert(I18n.t("generic_error"));
+        this.dialog.alert(I18n.t("generic_error"));
       })
       .finally(() => {
         this.set("loading", false);
@@ -215,7 +241,7 @@ export default Controller.extend(ModalFunctionality, {
     },
 
     showAppendTagTopics() {
-      this.set("tags", "");
+      this.set("tags", null);
       this.set("action", "appendTags");
       this.set("label", "append_tags");
       this.set("title", "choose_append_tags");
@@ -272,6 +298,10 @@ export default Controller.extend(ModalFunctionality, {
       this.forEachPerformed({ type: "relist" }, (t) => t.set("visible", true));
     },
 
+    resetBumpDateTopics() {
+      this.performAndRefresh({ type: "reset_bump_dates" });
+    },
+
     changeCategory() {
       const categoryId = parseInt(this.newCategoryId, 10) || 0;
 
@@ -284,21 +314,17 @@ export default Controller.extend(ModalFunctionality, {
       );
     },
 
-    resetRead() {
-      this.performAndRefresh({ type: "reset_read" });
+    deletePostTiming() {
+      this.performAndRefresh({ type: "destroy_post_timing" });
     },
 
     removeTags() {
-      bootbox.confirm(
-        I18n.t("topics.bulk.confirm_remove_tags", {
+      this.dialog.deleteConfirm({
+        message: I18n.t("topics.bulk.confirm_remove_tags", {
           count: this.get("model.topics").length,
         }),
-        (result) => {
-          if (result) {
-            this.performAndRefresh({ type: "remove_tags" });
-          }
-        }
-      );
+        didConfirm: () => this.performAndRefresh({ type: "remove_tags" }),
+      });
     },
   },
 });

@@ -1,4 +1,4 @@
-import { alias, notEmpty, or, readOnly } from "@ember/object/computed";
+import { alias, bool, not, readOnly } from "@ember/object/computed";
 import Controller, { inject as controller } from "@ember/controller";
 import DiscourseURL from "discourse/lib/url";
 import EmberObject from "@ember/object";
@@ -28,22 +28,21 @@ export default Controller.extend(
 
     invitedBy: readOnly("model.invited_by"),
     email: alias("model.email"),
+    accountEmail: alias("email"),
+    existingUserId: readOnly("model.existing_user_id"),
+    existingUserCanRedeem: readOnly("model.existing_user_can_redeem"),
+    existingUserRedeeming: bool("existingUserId"),
     hiddenEmail: alias("model.hidden_email"),
+    emailVerifiedByLink: alias("model.email_verified_by_link"),
+    differentExternalEmail: alias("model.different_external_email"),
     accountUsername: alias("model.username"),
-    passwordRequired: notEmpty("accountPassword"),
+    passwordRequired: not("externalAuthsOnly"),
     successMessage: null,
     errorMessage: null,
     userFields: null,
     authOptions: null,
     inviteImageUrl: getUrl("/images/envelope.svg"),
     isInviteLink: readOnly("model.is_invite_link"),
-    submitDisabled: or(
-      "emailValidation.failed",
-      "usernameValidation.failed",
-      "passwordValidation.failed",
-      "nameValidation.failed",
-      "userFieldsValidation.failed"
-    ),
     rejectedEmails: null,
 
     init() {
@@ -78,9 +77,18 @@ export default Controller.extend(
       });
     },
 
+    @discourseComputed("existingUserId")
+    subheaderMessage(existingUserId) {
+      if (existingUserId) {
+        return I18n.t("invites.existing_user_can_redeem");
+      } else {
+        return I18n.t("create_account.subheader_title");
+      }
+    },
+
     @discourseComputed("email")
     yourEmailMessage(email) {
-      return I18n.t("invites.your_email", { email: email });
+      return I18n.t("invites.your_email", { email });
     },
 
     @discourseComputed
@@ -97,21 +105,69 @@ export default Controller.extend(
       );
     },
 
-    @discourseComputed("externalAuthsOnly", "discourseConnectEnabled")
-    showSocialLoginAvailable(externalAuthsOnly, discourseConnectEnabled) {
-      return !externalAuthsOnly && !discourseConnectEnabled;
+    @discourseComputed(
+      "emailValidation.failed",
+      "usernameValidation.failed",
+      "passwordValidation.failed",
+      "nameValidation.failed",
+      "userFieldsValidation.failed",
+      "existingUserRedeeming",
+      "existingUserCanRedeem"
+    )
+    submitDisabled(
+      emailValidationFailed,
+      usernameValidationFailed,
+      passwordValidationFailed,
+      nameValidationFailed,
+      userFieldsValidationFailed,
+      existingUserRedeeming,
+      existingUserCanRedeem
+    ) {
+      if (existingUserRedeeming) {
+        return !existingUserCanRedeem;
+      }
+
+      return (
+        emailValidationFailed ||
+        usernameValidationFailed ||
+        passwordValidationFailed ||
+        nameValidationFailed ||
+        userFieldsValidationFailed
+      );
+    },
+
+    @discourseComputed(
+      "externalAuthsEnabled",
+      "externalAuthsOnly",
+      "discourseConnectEnabled"
+    )
+    showSocialLoginAvailable(
+      externalAuthsEnabled,
+      externalAuthsOnly,
+      discourseConnectEnabled
+    ) {
+      return (
+        externalAuthsEnabled && !externalAuthsOnly && !discourseConnectEnabled
+      );
     },
 
     @discourseComputed(
       "externalAuthsOnly",
       "authOptions",
-      "emailValidation.failed"
+      "emailValidation.failed",
+      "existingUserRedeeming"
     )
-    shouldDisplayForm(externalAuthsOnly, authOptions, emailValidationFailed) {
+    shouldDisplayForm(
+      externalAuthsOnly,
+      authOptions,
+      emailValidationFailed,
+      existingUserRedeeming
+    ) {
       return (
         (this.siteSettings.enable_local_logins ||
           (externalAuthsOnly && authOptions && !emailValidationFailed)) &&
-        !this.siteSettings.enable_discourse_connect
+        !this.siteSettings.enable_discourse_connect &&
+        !existingUserRedeeming
       );
     },
 
@@ -127,16 +183,20 @@ export default Controller.extend(
       "rejectedEmails.[]",
       "authOptions.email",
       "authOptions.email_valid",
-      "hiddenEmail"
+      "hiddenEmail",
+      "emailVerifiedByLink",
+      "differentExternalEmail"
     )
     emailValidation(
       email,
       rejectedEmails,
       externalAuthEmail,
       externalAuthEmailValid,
-      hiddenEmail
+      hiddenEmail,
+      emailVerifiedByLink,
+      differentExternalEmail
     ) {
-      if (hiddenEmail) {
+      if (hiddenEmail && !differentExternalEmail) {
         return EmberObject.create({
           ok: true,
           reason: I18n.t("user.email.ok"),
@@ -157,12 +217,12 @@ export default Controller.extend(
         });
       }
 
-      if (externalAuthEmail) {
+      if (externalAuthEmail && externalAuthEmailValid) {
         const provider = this.createAccount.authProviderDisplayName(
           this.get("authOptions.auth_provider")
         );
 
-        if (externalAuthEmail === email && externalAuthEmailValid) {
+        if (externalAuthEmail === email) {
           return EmberObject.create({
             ok: true,
             reason: I18n.t("user.email.authenticated", {
@@ -177,6 +237,13 @@ export default Controller.extend(
             }),
           });
         }
+      }
+
+      if (emailVerifiedByLink) {
+        return EmberObject.create({
+          ok: true,
+          reason: I18n.t("user.email.authenticated_by_invite"),
+        });
       }
 
       if (emailValid(email)) {
@@ -197,6 +264,26 @@ export default Controller.extend(
 
     @discourseComputed
     ssoPath: () => getUrl("/session/sso"),
+
+    @discourseComputed
+    disclaimerHtml() {
+      return I18n.t("create_account.disclaimer", {
+        tos_link: this.siteSettings.tos_url || getUrl("/tos"),
+        privacy_link:
+          this.siteSettings.privacy_policy_url || getUrl("/privacy"),
+      });
+    },
+
+    @discourseComputed("authOptions.associate_url", "authOptions.auth_provider")
+    associateHtml(url, provider) {
+      if (!url) {
+        return;
+      }
+      return I18n.t("create_account.associate", {
+        associate_link: url,
+        provider: I18n.t(`login.${provider}.name`),
+      });
+    },
 
     actions: {
       submit() {

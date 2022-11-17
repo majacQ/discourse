@@ -13,13 +13,13 @@ module UploadsHelpers
     stub_request(:head, "https://#{SiteSetting.s3_upload_bucket}.s3.#{SiteSetting.s3_region}.amazonaws.com/")
   end
 
-  def enable_secure_media
+  def enable_secure_uploads
     setup_s3
-    SiteSetting.secure_media = true
+    SiteSetting.secure_uploads = true
   end
 
   def stub_upload(upload)
-    url = "https://#{SiteSetting.s3_upload_bucket}.s3.#{SiteSetting.s3_region}.amazonaws.com/original/1X/#{upload.sha1}.#{upload.extension}?acl"
+    url = %r{https://#{SiteSetting.s3_upload_bucket}.s3.#{SiteSetting.s3_region}.amazonaws.com/original/\d+X.*#{upload.sha1}.#{upload.extension}\?acl}
     stub_request(:put, url)
   end
 

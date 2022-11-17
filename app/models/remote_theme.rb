@@ -15,7 +15,7 @@ class RemoteTheme < ActiveRecord::Base
   ALLOWED_FIELDS = %w{scss embedded_scss head_tag header after_header body_tag footer}
 
   GITHUB_REGEXP = /^https?:\/\/github\.com\//
-  GITHUB_SSH_REGEXP = /^git@github\.com:/
+  GITHUB_SSH_REGEXP = /^ssh:\/\/git@github\.com:/
 
   has_one :theme, autosave: false
   scope :joined_remotes, -> {
@@ -25,8 +25,10 @@ class RemoteTheme < ActiveRecord::Base
   validates_format_of :minimum_discourse_version, :maximum_discourse_version, with: Discourse::VERSION_REGEXP, allow_nil: true
 
   def self.extract_theme_info(importer)
-    JSON.parse(importer["about.json"])
-  rescue TypeError, JSON::ParserError
+    json = JSON.parse(importer["about.json"])
+    json.fetch("name")
+    json
+  rescue TypeError, JSON::ParserError, KeyError
     raise ImportError.new I18n.t("themes.import_error.about_json")
   end
 
@@ -40,7 +42,7 @@ class RemoteTheme < ActiveRecord::Base
 
     existing = true
     if theme.blank?
-      theme = Theme.new(user_id: user&.id || -1, name: theme_info["name"])
+      theme = Theme.new(user_id: user&.id || -1, name: theme_info["name"], auto_update: false)
       existing = false
     end
 
@@ -80,6 +82,7 @@ class RemoteTheme < ActiveRecord::Base
     importer.import!
 
     theme_info = RemoteTheme.extract_theme_info(importer)
+
     component = [true, "true"].include?(theme_info["component"])
     theme = Theme.new(user_id: user&.id || -1, name: theme_info["name"], component: component)
     theme.child_components = theme_info["components"].presence || []
@@ -112,6 +115,10 @@ class RemoteTheme < ActiveRecord::Base
     self.joined_remotes.where("last_error_text IS NOT NULL").pluck("themes.name", "themes.id")
   end
 
+  def out_of_date?
+    commits_behind > 0 || remote_version != local_version
+  end
+
   def update_remote_version
     return unless is_git?
     importer = ThemeStore::GitImporter.new(remote_url, private_key: private_key, branch: branch)
@@ -125,6 +132,11 @@ class RemoteTheme < ActiveRecord::Base
       self.last_error_text = nil
     ensure
       self.save!
+      begin
+        importer.cleanup!
+      rescue => e
+        Rails.logger.warn("Failed cleanup remote git #{e}")
+      end
     end
   end
 
@@ -153,8 +165,20 @@ class RemoteTheme < ActiveRecord::Base
         new_path = "#{File.dirname(path)}/#{SecureRandom.hex}#{File.extname(path)}"
         File.rename(path, new_path) # OptimizedImage has strict file name restrictions, so rename temporarily
         upload = UploadCreator.new(File.open(new_path), File.basename(relative_path), for_theme: true).create_for(theme.user_id)
+
+        if !upload.errors.empty?
+          raise ImportError, I18n.t("themes.import_error.upload", name: name, errors: upload.errors.full_messages.join(","))
+        end
+
         updated_fields << theme.set_field(target: :common, name: name, type: :theme_upload_var, upload_id: upload.id)
       end
+    end
+
+    # Update all theme attributes if this is just a placeholder
+    if self.remote_url.present? && !self.local_version && !self.commits_behind
+      self.theme.name = theme_info["name"]
+      self.theme.component = [true, "true"].include?(theme_info["component"])
+      self.theme.child_components = theme_info["components"].presence || []
     end
 
     METADATA_PROPERTIES.each do |property|

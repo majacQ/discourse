@@ -13,30 +13,46 @@ lv:
     formats:
       short: "%d-%m-%Y"
       short_no_year: "%B %-d"
+      date_only: "%B %-d, %Y"
+      long: "%B %-d, %Y, %l:%M%P"
+      no_day: "%Y %B"
   date:
     month_names:
     - null
-    - January
-    - February
-    - March
-    - April
-    - May
-    - June
-    - July
-    - August
-    - September
-    - October
-    - November
-    - December
+    - Janvāris
+    - Februāris
+    - Marts
+    - Aprīlis
+    - Maijs
+    - jūnijs
+    - Jūlijs
+    - augusts
+    - Septembris
+    - Oktobris
+    - Novembris
+    - Decembris
+    <<: *datetime_formats
+  time:
+    am: "am"
+    pm: "pm"
     <<: *datetime_formats
   title: "Discourse"
   topics: "Tēmas"
   posts: "raksti"
+  views: "skatījumi"
   loading: "Ielāde"
+  powered_by_html: 'Powered by <a href="https://www.discourse.org">Discourse</a>, vislabāk skatāms ar iespējotu JavaScript'
   sign_up: "Reģistrēties"
   log_in: "Ienākt"
   submit: "Iesniegt"
+  purge_reason: "Automātiski izdzēsts kā pamests, deaktivizēts konts"
+  disable_remote_images_download_reason: "Attālu lejupielāde tika atspējota, jo nebija pietiekami daudz vietas diskā."
   anonymous: "Anonīmi"
+  remove_posts_deleted_by_author: "Izdzēsis autors"
+  redirect_warning: "Mēs nevarējām pārbaudīt, vai jūsu izvēlētā saite tiešām tika ievietota forumā. Ja tomēr vēlaties turpināt, atlasiet zemāk esošo saiti."
+  on_another_topic: "Par citu tēmu"
+  inline_oneboxer:
+    topic_page_title_post_number_by_user: "#%{post_number} - %{username}"
   emails:
     incoming:
       default_subject: "Šim ierakstam ir nepieciešams nosaukums"
@@ -55,13 +71,22 @@ lv:
       other: "vel %{count} atbildes"
     loading: "Diskusijas Ielādēšana..."
     in_reply_to: "▶ %{username}"
+    replies:
+      zero: "%{count} atbildes"
+      one: "%{count} atbilde"
+      other: "%{count} atbildes"
     created: "Radīts"
   next_page: "nākošo lapu →"
   prev_page: "← iepriekšējo lapu"
   page_num: "Lapa %{num}"
+  rss_num_posts:
+    zero: "%{count} ieraksti"
+    one: "%{count} ieraksts"
+    other: "%{count} ieraksti"
   read_full_topic: "Lasīt pilnu tēmu"
   rss_description:
     latest: "Jaunākās tēmas"
+  excerpt_image: "bilde"
   bookmarks:
     reminders:
       later_today: "Vēlāk šodien"
@@ -97,18 +122,66 @@ lv:
         bio_raw: "Par Mani"
     errors:
       <<: *errors
+  general_category_name: "Vispārīgi"
   staff_category_name: "Personāls"
   trust_levels:
-    newuser:
-      title: "jauns lietotājs"
-    member:
-      title: "biedrs"
+    admin: "Administrators"
+    staff: "Personāls"
+  rate_limiter:
+    hours:
+      zero: "%{count} stundas"
+      one: "%{count} stunda"
+      other: "%{count} stundas"
   datetime:
     distance_in_words:
       half_a_minute: "< 1 m"
+      less_than_x_seconds:
+        zero: "< %{count} s"
+        one: "< %{count} s"
+        other: "< %{count} s"
+      x_seconds:
+        zero: "%{count} s"
+        one: "%{count} s"
+        other: "%{count} s"
+      less_than_x_minutes:
+        zero: "< %{count} m"
+        one: "< %{count} m"
+        other: "< %{count} m"
+      x_minutes:
+        zero: "%{count} m"
+        one: "%{count} m"
+        other: "%{count} m"
+      about_x_hours:
+        zero: "%{count} h"
+        one: "%{count} h"
+        other: "%{count} h"
+      x_days:
+        zero: "%{count} d"
+        one: "%{count} d"
+        other: "%{count} d"
+      about_x_years:
+        zero: "%{count} g"
+        one: "%{count} g"
+        other: "%{count} g"
+      over_x_years:
+        zero: "> %{count} g"
+        one: "> %{count} g"
+        other: "> %{count} g"
+      almost_x_years:
+        zero: "%{count} g"
+        one: "%{count} g"
+        other: "%{count} g"
     distance_in_words_verbose:
       half_a_minute: "tikko"
       less_than_x_seconds: "tikko"
+      about_x_hours:
+        zero: "pirms %{count} stundām"
+        one: "pirms %{count} stundas"
+        other: "pirms %{count} stundām"
+      x_days:
+        zero: "pirms %{count} dienām"
+        one: "pirms %{count} dienas"
+        other: "pirms %{count} dienām"
   password_reset:
     choose_new: "Izvēlēties jaunu paroli"
     choose: "Izvēlēties paroli"
@@ -287,7 +360,23 @@ lv:
     top_uploads:
       labels:
         filename: Faila nosaukums
+    top_users_by_likes_received:
+      labels:
+        user: Lietotājs
+        qtt_like: Saņemtās atzinības
+    top_users_by_likes_received_from_inferior_trust_level:
+      labels:
+        user: Lietotājs
+        qtt_like: Saņemtās atzinības
+    top_users_by_likes_received_from_a_variety_of_people:
+      labels:
+        user: Lietotājs
+        qtt_like: Saņemtās atzinības
   site_settings:
+    disabled: "atslēgt"
+    dark_mode_none: "Nav"
+    embed_truncate: "Saīsināt iegultos ierakstus."
+    embed_post_limit: "Maksimālais iegulto ierakstu skaits."
     errors:
       invalid_email: "Nepareiza e-pasta adrese."
   search:
@@ -304,6 +393,8 @@ lv:
     email:
       sent_test: "nosūtīts!"
   system_messages:
+    queued_by_staff:
+      title: "Ieraksts gaida apstiprinājumu"
     welcome_user:
       subject_template: "Laipni lūdzam %{site_name}!"
     welcome_invite:
@@ -316,13 +407,17 @@ lv:
     set_password:
       title: "Iestatīt paroli"
   page_not_found:
+    page_title: "Lapa nav atrasta"
     popular_topics: "Populāri"
     recent_topics: "Neseni"
     see_more: "Vairāk"
     search_title: "Meklēt šajā vietnē"
     search_button: "Meklēt"
+  image: "bilde"
   upload:
     unauthorized: "Atvainojiet, fails, ko mēģināt augšuplādēt, nav atļauts (atļautie paplašinājumi: %{authorized_extensions})."
+  color_schemes:
+    default_theme_name: "Noklusējums"
   csv_export:
     boolean_yes: "Jā"
     boolean_no: "Nē"
@@ -343,24 +438,16 @@ lv:
       title: "Atkārtoti nosūtīt aktivācijas e-pastu"
   wizard:
     step:
-      forum_title:
-        title: "Vārds"
       privacy:
         fields:
-          privacy:
-            choices:
-              open:
-                label: "Publisks"
-              restricted:
-                label: "Privāts"
-      contact:
+          login_required:
+            placeholder: "Privāts"
+          must_approve_users:
+            placeholder: "Pieprasīt apstiprinājumu"
+      styling:
         fields:
-          contact_email:
-            placeholder: "vards@piemers.com"
-      corporate:
-        title: "Organizācija"
-      homepage:
-        fields:
+          styling_preview:
+            label: "Priekšskatījums"
           homepage_style:
             choices:
               categories_only:
@@ -369,6 +456,8 @@ lv:
                 label: "Sadaļas un to labākās tēmas"
               categories_and_latest_topics:
                 label: "Sadaļas un jaunākās tēmas"
+              categories_and_top_topics:
+                label: "Kategorijas un populārākās tēmas"
   joined: "Pievienojās"
   discourse_push_notifications:
     popup:
@@ -382,8 +471,6 @@ lv:
     actions:
       agree_and_suspend:
         title: "Apturētie lietotāji"
-      delete_spammer:
-        title: "Izdzēst spamotāju"
       delete_single:
         title: "Dzēst"
       disagree:
@@ -397,10 +484,7 @@ lv:
           title: "Dzēst lietotāju."
       reject:
         title: "Noraidīt"
-      delete_user:
-        title: "Dzēst lietotāju."
-  time:
-    <<: *datetime_formats
+  fallback_username: "lietotājs"
   activemodel:
     errors:
       <<: *errors

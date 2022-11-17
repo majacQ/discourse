@@ -1,5 +1,6 @@
 import DiscourseRoute from "discourse/routes/discourse";
 import { isPresent } from "@ember/utils";
+import { action } from "@ember/object";
 
 export default DiscourseRoute.extend({
   model(params) {
@@ -21,6 +22,12 @@ export default DiscourseRoute.extend({
     if (meta.reviewable_count !== undefined) {
       this.currentUser.set("reviewable_count", meta.reviewable_count);
     }
+    if (meta.unseen_reviewable_count !== undefined) {
+      this.currentUser.set(
+        "unseen_reviewable_count",
+        meta.unseen_reviewable_count
+      );
+    }
 
     controller.setProperties({
       reviewables: model,
@@ -39,10 +46,12 @@ export default DiscourseRoute.extend({
       sort_order: meta.sort_order,
       additionalFilters: meta.additional_filters || {},
     });
+
+    controller.reviewables.setEach("last_performing_username", null);
   },
 
   activate() {
-    this.messageBus.subscribe("/reviewable_claimed", (data) => {
+    this._updateClaimedBy = (data) => {
       const reviewables = this.controller.reviewables;
       if (reviewables) {
         const user = data.user
@@ -54,16 +63,42 @@ export default DiscourseRoute.extend({
           }
         });
       }
-    });
+    };
+
+    this._updateReviewables = (data) => {
+      if (data.updates) {
+        this.controller.reviewables.forEach((reviewable) => {
+          const updates = data.updates[reviewable.id];
+          if (updates) {
+            reviewable.setProperties(updates);
+          }
+        });
+      }
+    };
+
+    this.messageBus.subscribe("/reviewable_claimed", this._updateClaimedBy);
+    this.messageBus.subscribe(
+      this._reviewableCountsChannel(),
+      this._updateReviewables
+    );
   },
 
   deactivate() {
-    this.messageBus.unsubscribe("/reviewable_claimed");
+    this.messageBus.unsubscribe("/reviewable_claimed", this._updateClaimedBy);
+    this.messageBus.unsubscribe(
+      this._reviewableCountsChannel(),
+      this._updateReviewables
+    );
   },
 
-  actions: {
-    refreshRoute() {
-      this.refresh();
-    },
+  @action
+  refreshRoute() {
+    this.refresh();
+  },
+
+  _reviewableCountsChannel() {
+    return this.currentUser.redesigned_user_menu_enabled
+      ? `/reviewable_counts/${this.currentUser.id}`
+      : "/reviewable_counts";
   },
 });

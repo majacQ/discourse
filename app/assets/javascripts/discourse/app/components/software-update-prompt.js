@@ -1,5 +1,6 @@
 import getURL from "discourse-common/lib/get-url";
-import { cancel, later } from "@ember/runloop";
+import { cancel } from "@ember/runloop";
+import discourseLater from "discourse-common/lib/later";
 import discourseComputed, { on } from "discourse-common/utils/decorators";
 import Component from "@ember/component";
 import { action } from "@ember/object";
@@ -9,6 +10,7 @@ export default Component.extend({
   tagName: "",
 
   showPrompt: false,
+  animatePrompt: false,
   _timeoutHandler: null,
 
   @discourseComputed
@@ -17,7 +19,7 @@ export default Component.extend({
   },
 
   @on("init")
-  initSubscribtions() {
+  initSubscriptions() {
     this.messageBus.subscribe("/refresh_client", () => {
       this.session.requiresRefresh = true;
     });
@@ -29,16 +31,32 @@ export default Component.extend({
 
       if (!this._timeoutHandler && this.session.requiresRefresh) {
         if (isTesting()) {
-          this.set("showPrompt", true);
+          this.updatePromptState(true);
         } else {
           // Since we can do this transparently for people browsing the forum
           // hold back the message 24 hours.
-          this._timeoutHandler = later(() => {
-            this.set("showPrompt", true);
+          this._timeoutHandler = discourseLater(() => {
+            this.updatePromptState(true);
           }, 1000 * 60 * 24 * 60);
         }
       }
     });
+  },
+
+  updatePromptState(value) {
+    // when adding the message, we inject the HTML then add the animation
+    // when dismissing, things need to happen in the opposite order
+    const firstProp = value ? "showPrompt" : "animatePrompt",
+      secondProp = value ? "animatePrompt" : "showPrompt";
+
+    this.set(firstProp, value);
+    if (isTesting()) {
+      this.set(secondProp, value);
+    } else {
+      discourseLater(() => {
+        this.set(secondProp, value);
+      }, 500);
+    }
   },
 
   @action
@@ -48,7 +66,7 @@ export default Component.extend({
 
   @action
   dismiss() {
-    this.set("showPrompt", false);
+    this.updatePromptState(false);
   },
 
   @on("willDestroyElement")

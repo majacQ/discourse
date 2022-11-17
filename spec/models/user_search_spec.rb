@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-describe UserSearch do
+RSpec.describe UserSearch do
 
   before_all { SearchIndexer.enable } # Enable for prefabrication
   before { SearchIndexer.enable } # Enable for each test
@@ -114,6 +112,7 @@ describe UserSearch do
     fab!(:post5) { Fabricate :post, user: mr_brown, topic: topic3 }
     fab!(:post6) { Fabricate :post, user: mr_white, topic: topic }
     fab!(:post7) { Fabricate :post, user: staged, topic: topic4 }
+    fab!(:post8) { Fabricate :post, user: mr_brown, topic: topic2, post_type: Post.types[:whisper] }
 
     before { mr_white.update(suspended_at: 1.day.ago, suspended_till: 1.year.from_now) }
 
@@ -170,6 +169,17 @@ describe UserSearch do
       expect(results).to eq [mr_b, mr_brown, mr_blue].map(&:username)
     end
 
+    it "does not reveal whisper users" do
+      results = search_for("", topic_id: topic2.id)
+      expect(results).to eq [mr_blue.username]
+    end
+
+    it "does not include deleted posts users" do
+      post4.trash!
+      results = search_for("", topic_id: topic.id)
+      expect(results).to eq [mr_orange, mr_b].map(&:username)
+    end
+
     it "only reveals topic participants to people with permission" do
       pm_topic = Fabricate(:private_message_post).topic
 
@@ -183,6 +193,7 @@ describe UserSearch do
         search_for("", topic_id: pm_topic.id, searching_user: mr_b)
       end.to raise_error(Discourse::InvalidAccess)
 
+      Group.refresh_automatic_groups!
       pm_topic.invite(pm_topic.user, mr_b.username)
 
       results = search_for("", topic_id: pm_topic.id, searching_user: mr_b)
@@ -237,6 +248,15 @@ describe UserSearch do
       # mrb is omitted since they're the searching user
       results = search_for("", topic_id: topic.id, searching_user: mr_b)
       expect(results).to eq [mr_pink, mr_orange].map(&:username)
+    end
+
+    it "works with last_seen_users option" do
+      results = search_for("", last_seen_users: true)
+
+      expect(results).not_to be_blank
+      expect(results[0]).to eq("mrbrown")
+      expect(results[1]).to eq("mrpink")
+      expect(results[2]).to eq("mrorange")
     end
   end
 end

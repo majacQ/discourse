@@ -1,4 +1,5 @@
 import Site from "discourse/models/site";
+import { capitalize } from "@ember/string";
 
 export default function () {
   // Error page
@@ -27,16 +28,9 @@ export default function () {
   });
 
   this.route("discovery", { path: "/", resetNamespace: true }, function () {
-    // top
-    this.route("top");
-    this.route("topCategoryNone", {
-      path: "/c/*category_slug_path_with_id/none/l/top",
-    });
-    this.route("topCategory", { path: "/c/*category_slug_path_with_id/l/top" });
-
-    // top by periods
+    // top by periods - legacy route
     Site.currentProp("periods").forEach((period) => {
-      const top = "top" + period.capitalize();
+      const top = "top" + capitalize(period);
 
       this.route(top, { path: "/top/" + period });
       this.route(top + "CategoryNone", {
@@ -47,7 +41,7 @@ export default function () {
       });
     });
 
-    // filters (e.g. bookmarks, posted, read, unread, latest)
+    // filters (e.g. bookmarks, posted, read, unread, latest, top)
     Site.currentProp("filters").forEach((filter) => {
       this.route(filter, { path: "/" + filter });
       this.route(filter + "CategoryNone", {
@@ -147,10 +141,15 @@ export default function () {
         "userPrivateMessages",
         { path: "/messages", resetNamespace: true },
         function () {
-          this.route("sent");
+          this.route("new");
+          this.route("unread");
           this.route("archive");
+          this.route("sent");
+          this.route("warnings");
           this.route("group", { path: "group/:name" });
           this.route("groupArchive", { path: "group/:name/archive" });
+          this.route("groupNew", { path: "group/:name/new" });
+          this.route("groupUnread", { path: "group/:name/unread" });
           this.route("tags");
           this.route("tagsShow", { path: "tags/:id" });
         }
@@ -167,6 +166,7 @@ export default function () {
         this.route("tags");
         this.route("interface");
         this.route("apps");
+        this.route("sidebar");
 
         this.route("username");
         this.route("email");
@@ -193,6 +193,7 @@ export default function () {
   this.route("signup", { path: "/signup" });
   this.route("login", { path: "/login" });
   this.route("email-login", { path: "/session/email-login/:token" });
+  this.route("second-factor-auth", { path: "/session/2fa" });
   this.route("associate-account", { path: "/associate/:token" });
   this.route("login-preferences");
   this.route("forgot-password", { path: "/password-reset" });
@@ -216,7 +217,7 @@ export default function () {
     this.route("show", { path: "/:tag_id" });
 
     Site.currentProp("filters").forEach((filter) => {
-      this.route("show" + filter.capitalize(), {
+      this.route("show" + capitalize(filter), {
         path: "/:tag_id/l/" + filter,
       });
     });
@@ -226,21 +227,30 @@ export default function () {
     this.route("showCategory", {
       path: "/c/*category_slug_path_with_id/:tag_id",
     });
+    this.route("showCategoryAll", {
+      path: "/c/*category_slug_path_with_id/all/:tag_id",
+    });
     this.route("showCategoryNone", {
       path: "/c/*category_slug_path_with_id/none/:tag_id",
     });
 
     Site.currentProp("filters").forEach((filter) => {
-      this.route("showCategory" + filter.capitalize(), {
+      this.route("showCategory" + capitalize(filter), {
         path: "/c/*category_slug_path_with_id/:tag_id/l/" + filter,
       });
-      this.route("showCategoryNone" + filter.capitalize(), {
+      this.route("showCategoryAll" + capitalize(filter), {
+        path: "/c/*category_slug_path_with_id/all/:tag_id/l/" + filter,
+      });
+      this.route("showCategoryNone" + capitalize(filter), {
         path: "/c/*category_slug_path_with_id/none/:tag_id/l/" + filter,
       });
     });
     this.route("intersection", {
       path: "intersection/:tag_id/*additional_tags",
     });
+
+    // legacy route
+    this.route("legacyRedirect", { path: "/:tag_id" });
   });
 
   this.route(

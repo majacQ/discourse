@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-require_dependency "mobile_detection"
-require_dependency "crawler_detection"
-require_dependency "guardian"
-require_dependency "http_language_parser"
+require "mobile_detection"
+require "crawler_detection"
+require "guardian"
+require "http_language_parser"
 
 module Middleware
   class AnonymousCache
@@ -12,6 +12,8 @@ module Middleware
       @@cache_key_segments ||= {
         m: 'key_is_mobile?',
         c: 'key_is_crawler?',
+        o: 'key_is_old_browser?',
+        d: 'key_is_modern_mobile_device?',
         b: 'key_has_brotli?',
         t: 'key_cache_theme_ids',
         ca: 'key_compress_anon',
@@ -29,7 +31,7 @@ module Middleware
         method << "|#{k}=#\{h.#{v}}"
       end
       method << "\"\nend"
-      eval(method)
+      eval(method) # rubocop:disable Security/Eval
       @@compiled = true
     end
 
@@ -49,9 +51,15 @@ module Middleware
       ACCEPT_ENCODING  = "HTTP_ACCEPT_ENCODING"
       DISCOURSE_RENDER = "HTTP_DISCOURSE_RENDER"
 
-      def initialize(env)
+      REDIS_STORE_SCRIPT = DiscourseRedis::EvalHelper.new <<~LUA
+        local current = redis.call("incr", KEYS[1])
+        redis.call("expire",KEYS[1],ARGV[1])
+        return current
+      LUA
+
+      def initialize(env, request = nil)
         @env = env
-        @request = Rack::Request.new(@env)
+        @request = request || Rack::Request.new(@env)
       end
 
       def blocked_crawler?
@@ -92,8 +100,8 @@ module Middleware
       end
 
       def key_locale
-        if SiteSetting.set_locale_from_accept_language_header
-          HttpLanguageParser.parse(@env["HTTP_ACCEPT_LANGUAGE"])
+        if locale = Discourse.anonymous_locale(@request)
+          locale
         else
           "" # No need to key, it is the same for all anon users
         end
@@ -114,6 +122,14 @@ module Middleware
       end
       alias_method :key_is_crawler?, :is_crawler?
 
+      def key_is_modern_mobile_device?
+        MobileDetection.modern_mobile_device?(@env[USER_AGENT]) if @env[USER_AGENT]
+      end
+
+      def key_is_old_browser?
+        CrawlerDetection.show_browser_update?(@env[USER_AGENT]) if @env[USER_AGENT]
+      end
+
       def cache_key
         return @cache_key if defined?(@cache_key)
 
@@ -132,9 +148,9 @@ module Middleware
 
       def theme_ids
         ids, _ = @request.cookies['theme_ids']&.split('|')
-        ids = ids&.split(",")&.map(&:to_i)
-        if ids && Guardian.new.allow_themes?(ids)
-          Theme.transform_ids(ids)
+        id = ids&.split(",")&.map(&:to_i)&.first
+        if id && Guardian.new.allow_themes?([id])
+          Theme.transform_ids(id)
         else
           []
         end
@@ -171,6 +187,7 @@ module Middleware
       def force_anonymous!
         @env[Auth::DefaultCurrentUserProvider::USER_API_KEY] = nil
         @env['HTTP_COOKIE'] = nil
+        @env['HTTP_DISCOURSE_LOGGED_IN'] = nil
         @env['rack.request.cookie.hash'] = {}
         @env['rack.request.cookie.string'] = ''
         @env['_bypass_cache'] = nil
@@ -258,11 +275,7 @@ module Middleware
         if status == 200 && cache_duration
 
           if GlobalSetting.anon_cache_store_threshold > 1
-            count = Discourse.redis.eval(<<~REDIS, [cache_key_count], [cache_duration])
-              local current = redis.call("incr", KEYS[1])
-              redis.call("expire",KEYS[1],ARGV[1])
-              return current
-            REDIS
+            count = REDIS_STORE_SCRIPT.eval(Discourse.redis, [cache_key_count], [cache_duration])
 
             # technically lua will cast for us, but might as well be
             # prudent here, hence the to_i
@@ -314,7 +327,7 @@ module Middleware
       if PAYLOAD_INVALID_REQUEST_METHODS.include?(env[Rack::REQUEST_METHOD]) &&
         env[Rack::RACK_INPUT].size > 0
 
-        return [413, {}, []]
+        return [413, { "Cache-Control" => "private, max-age=0, must-revalidate" }, []]
       end
 
       helper = Helper.new(env)

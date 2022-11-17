@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe PostReadersController do
+RSpec.describe PostReadersController do
   describe '#index' do
     fab!(:admin) { Fabricate(:admin) }
     fab!(:reader) { Fabricate(:user) }
@@ -15,7 +13,7 @@ describe PostReadersController do
       @post = Fabricate(:post, topic: @group_message, post_number: 3)
     end
 
-    context 'When the user has access to readers data' do
+    context 'when the user has access to readers data' do
       before do
         @group.update!(publish_read_state: true)
         @group.add(admin)
@@ -48,7 +46,7 @@ describe PostReadersController do
         assert_reader_is_correctly_serialized(reader_data, reader, @post)
       end
 
-      it 'return an empty list when nodobody read unti that post' do
+      it 'return an empty list when nodobody read until that post' do
         TopicUser.create!(user: reader, topic: @group_message, last_read_post_number: 1)
 
         get '/post_readers.json', params: { id: @post.id }

@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe UserSerializer do
+RSpec.describe UserSerializer do
   fab!(:user) { Fabricate(:user, trust_level: 0) }
 
   context "with a TL0 user seen as anonymous" do
@@ -40,12 +38,8 @@ describe UserSerializer do
       SiteSetting.default_other_notification_level_when_replying = 3
       SiteSetting.default_other_new_topic_duration_minutes = 60 * 24
 
-      user = Fabricate.build(:user,
-                             id: 1,
-                             user_profile: Fabricate.build(:user_profile),
-                             user_option: UserOption.new(dynamic_favicon: true, skip_new_user_tips: true),
-                             user_stat: UserStat.new
-                            )
+      user = Fabricate(:user)
+      user.user_option.update(dynamic_favicon: true, skip_new_user_tips: true)
 
       json = UserSerializer.new(user, scope: Guardian.new(user), root: false).as_json
 
@@ -60,12 +54,57 @@ describe UserSerializer do
   end
 
   context "with a user" do
+    let(:admin_user) { Fabricate(:admin) }
     let(:scope) { Guardian.new }
     fab!(:user) { Fabricate(:user) }
     let(:serializer) { UserSerializer.new(user, scope: scope, root: false) }
     let(:json) { serializer.as_json }
     fab!(:upload) { Fabricate(:upload) }
     fab!(:upload2) { Fabricate(:upload) }
+
+    context "when the scope user is admin" do
+      let(:scope) { Guardian.new(admin_user) }
+
+      it "returns the user's category notification levels, not the scope user's" do
+        category1 = Fabricate(:category)
+        category2 = Fabricate(:category)
+        category3 = Fabricate(:category)
+        category4 = Fabricate(:category)
+        CategoryUser.create(category: category1, user: user, notification_level: CategoryUser.notification_levels[:muted])
+        CategoryUser.create(category: Fabricate(:category), user: admin_user, notification_level: CategoryUser.notification_levels[:muted])
+        CategoryUser.create(category: category2, user: user, notification_level: CategoryUser.notification_levels[:tracking])
+        CategoryUser.create(category: Fabricate(:category), user: admin_user, notification_level: CategoryUser.notification_levels[:tracking])
+        CategoryUser.create(category: category3, user: user, notification_level: CategoryUser.notification_levels[:watching])
+        CategoryUser.create(category: Fabricate(:category), user: admin_user, notification_level: CategoryUser.notification_levels[:watching])
+        CategoryUser.create(category: category4, user: user, notification_level: CategoryUser.notification_levels[:regular])
+        CategoryUser.create(category: Fabricate(:category), user: admin_user, notification_level: CategoryUser.notification_levels[:regular])
+
+        expect(json[:muted_category_ids]).to eq([category1.id])
+        expect(json[:tracked_category_ids]).to eq([category2.id])
+        expect(json[:watched_category_ids]).to eq([category3.id])
+        expect(json[:regular_category_ids]).to eq([category4.id])
+      end
+
+      it "returns the user's tag notification levels, not the scope user's" do
+        tag1 = Fabricate(:tag)
+        tag2 = Fabricate(:tag)
+        tag3 = Fabricate(:tag)
+        tag4 = Fabricate(:tag)
+        TagUser.create(tag: tag1, user: user, notification_level: TagUser.notification_levels[:muted])
+        TagUser.create(tag: Fabricate(:tag), user: admin_user, notification_level: TagUser.notification_levels[:muted])
+        TagUser.create(tag: tag2, user: user, notification_level: TagUser.notification_levels[:tracking])
+        TagUser.create(tag: Fabricate(:tag), user: admin_user, notification_level: TagUser.notification_levels[:tracking])
+        TagUser.create(tag: tag3, user: user, notification_level: TagUser.notification_levels[:watching])
+        TagUser.create(tag: Fabricate(:tag), user: admin_user, notification_level: TagUser.notification_levels[:watching])
+        TagUser.create(tag: tag4, user: user, notification_level: TagUser.notification_levels[:watching_first_post])
+        TagUser.create(tag: Fabricate(:tag), user: admin_user, notification_level: TagUser.notification_levels[:watching_first_post])
+
+        expect(json[:muted_tags]).to eq([tag1.name])
+        expect(json[:tracked_tags]).to eq([tag2.name])
+        expect(json[:watched_tags]).to eq([tag3.name])
+        expect(json[:watching_first_post_tags]).to eq([tag4.name])
+      end
+    end
 
     context "with `enable_names` true" do
       before do
@@ -211,6 +250,16 @@ describe UserSerializer do
           expect(json[:second_factor_enabled]).to eq(true)
         end
       end
+
+      context "when backup codes enabled" do
+        before do
+          User.any_instance.stubs(:backup_codes_enabled?).returns(true)
+        end
+
+        it "is true" do
+          expect(json[:second_factor_enabled]).to eq(true)
+        end
+      end
     end
 
     describe "ignored and muted" do
@@ -332,4 +381,54 @@ describe UserSerializer do
       expect(json[:user_api_keys][2][:id]).to eq(user_api_key_2.id)
     end
   end
+
+  describe '#sidebar_tags' do
+    fab!(:tag_sidebar_section_link) { Fabricate(:tag_sidebar_section_link, user: user) }
+    fab!(:tag_sidebar_section_link_2) { Fabricate(:tag_sidebar_section_link, user: user) }
+
+    context 'when viewing self' do
+      subject(:json) { UserSerializer.new(user, scope: Guardian.new(user), root: false).as_json }
+
+      it "is not included when SiteSetting.enable_experimental_sidebar_hamburger is false" do
+        SiteSetting.enable_experimental_sidebar_hamburger = false
+        SiteSetting.tagging_enabled = true
+
+        expect(json[:sidebar_tags]).to eq(nil)
+      end
+
+      it "is not included when SiteSetting.tagging_enabled is false" do
+        SiteSetting.enable_experimental_sidebar_hamburger = true
+        SiteSetting.tagging_enabled = false
+
+        expect(json[:sidebar_tags]).to eq(nil)
+      end
+
+      it "is present when experimental sidebar and tagging has been enabled" do
+        SiteSetting.enable_experimental_sidebar_hamburger = true
+        SiteSetting.tagging_enabled = true
+
+        tag_sidebar_section_link_2.linkable.update!(pm_topic_count: 5, topic_count: 0)
+
+        expect(json[:sidebar_tags]).to contain_exactly(
+          { name: tag_sidebar_section_link.linkable.name, pm_only: false },
+          { name: tag_sidebar_section_link_2.linkable.name, pm_only: true }
+        )
+      end
+    end
+
+    context 'when viewing another user' do
+      fab!(:user2) { Fabricate(:user) }
+
+      subject(:json) { UserSerializer.new(user, scope: Guardian.new(user2), root: false).as_json }
+
+      it "is not present even when experimental sidebar and tagging has been enabled" do
+        SiteSetting.enable_experimental_sidebar_hamburger = true
+        SiteSetting.tagging_enabled = true
+
+        expect(json[:sidebar_tags]).to eq(nil)
+      end
+    end
+  end
+
+  include_examples "#display_sidebar_tags", UserSerializer
 end

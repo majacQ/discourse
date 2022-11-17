@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe UserNotificationScheduleProcessor do
+RSpec.describe UserNotificationScheduleProcessor do
   include ActiveSupport::Testing::TimeHelpers
 
   fab!(:user) { Fabricate(:user) }
@@ -28,7 +26,7 @@ describe UserNotificationScheduleProcessor do
           UserNotificationScheduleProcessor.create_do_not_disturb_timings_for(standard_schedule)
 
           # The default schedule is 8am - 5pm.
-          # Expext DND timings to fill gaps before/after those times for 3 days.
+          # Expect DND timings to fill gaps before/after those times for 3 days.
           dnd_timings = user.do_not_disturb_timings
           offset = timezone_info[:offset]
           expect(dnd_timings[0].starts_at).to eq_time(Time.new(2020, 1, 4, 0, 0, 0, offset))
@@ -145,12 +143,13 @@ describe UserNotificationScheduleProcessor do
       user.user_option.update(timezone: "UTC")
       schedule = standard_schedule
       travel_to Time.new(2020, 12, 31, 1, 0, 0, "+00:00") do
-        MessageBus.expects(:publish).with(
-          "/do-not-disturb/#{user.id}",
-          { ends_at: Time.new(2020, 12, 31, 7, 59, 0, "+00:00").httpdate },
-          user_ids: [user.id]
-        )
-        UserNotificationScheduleProcessor.create_do_not_disturb_timings_for(schedule)
+        messages = MessageBus.track_publish("/do-not-disturb/#{user.id}") do
+          UserNotificationScheduleProcessor.create_do_not_disturb_timings_for(schedule)
+        end
+
+        expect(messages.size).to eq(1)
+        expect(messages[0].data[:ends_at]).to eq(Time.new(2020, 12, 31, 7, 59, 0, "+00:00").httpdate)
+        expect(messages[0].user_ids).to contain_exactly(user.id)
       end
     end
   end

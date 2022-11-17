@@ -2,12 +2,14 @@ import Component from "@ember/component";
 import Group from "discourse/models/group";
 import I18n from "I18n";
 import PermissionType from "discourse/models/permission-type";
-import bootbox from "bootbox";
 import { bufferedProperty } from "discourse/mixins/buffered-content";
 import discourseComputed from "discourse-common/utils/decorators";
+import { inject as service } from "@ember/service";
 import { isEmpty } from "@ember/utils";
 
 export default Component.extend(bufferedProperty("model"), {
+  router: service(),
+  dialog: service(),
   tagName: "",
   allGroups: null,
 
@@ -23,28 +25,17 @@ export default Component.extend(bufferedProperty("model"), {
   },
 
   @discourseComputed(
-    "buffered.isSaving",
     "buffered.name",
     "buffered.tag_names",
     "buffered.permissions"
   )
-  savingDisabled(isSaving, name, tagNames, permissions) {
+  cannotSave(name, tagNames, permissions) {
     return (
-      isSaving ||
       isEmpty(name) ||
       isEmpty(tagNames) ||
       (!this.everyoneSelected(permissions) &&
         isEmpty(this.selectedGroupNames(permissions)))
     );
-  },
-
-  @discourseComputed("buffered.permissions")
-  showPrivateChooser(permissions) {
-    if (!permissions) {
-      return true;
-    }
-
-    return permissions.everyone !== PermissionType.READONLY;
   },
 
   @discourseComputed("buffered.permissions", "allGroups")
@@ -116,6 +107,11 @@ export default Component.extend(bufferedProperty("model"), {
     },
 
     save() {
+      if (this.cannotSave) {
+        this.dialog.alert(I18n.t("tagging.groups.cannot_save"));
+        return false;
+      }
+
       const attrs = this.buffered.getProperties(
         "name",
         "tag_names",
@@ -137,27 +133,23 @@ export default Component.extend(bufferedProperty("model"), {
 
         if (this.onSave) {
           this.onSave();
+        } else {
+          this.router.transitionTo("tagGroups.index");
         }
       });
     },
 
     destroy() {
-      return bootbox.confirm(
-        I18n.t("tagging.groups.confirm_delete"),
-        I18n.t("no_value"),
-        I18n.t("yes_value"),
-        (destroy) => {
-          if (!destroy) {
-            return;
-          }
-
+      return this.dialog.yesNoConfirm({
+        message: I18n.t("tagging.groups.confirm_delete"),
+        didConfirm: () => {
           this.model.destroyRecord().then(() => {
             if (this.onDestroy) {
               this.onDestroy();
             }
           });
-        }
-      );
+        },
+      });
     },
   },
 });

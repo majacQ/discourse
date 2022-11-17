@@ -54,6 +54,10 @@ class NewPostManager
     manager.user.trust_level <= SiteSetting.auto_silence_fast_typers_max_trust_level
   end
 
+  def self.auto_silence?(manager)
+    is_first_post?(manager) && WordWatcher.new("#{manager.args[:title]} #{manager.args[:raw]}").should_silence?
+  end
+
   def self.matches_auto_silence_regex?(manager)
     args = manager.args
 
@@ -102,7 +106,7 @@ class NewPostManager
 
     return :fast_typer if is_fast_typer?(manager)
 
-    return :auto_silence_regex if matches_auto_silence_regex?(manager)
+    return :auto_silence_regex if auto_silence?(manager) || matches_auto_silence_regex?(manager)
 
     return :staged if SiteSetting.approve_unless_staged? && user.staged?
 
@@ -168,7 +172,7 @@ class NewPostManager
     I18n.with_locale(SiteSetting.default_locale) do
       if is_fast_typer?(manager)
         UserSilencer.silence(manager.user, Discourse.system_user, keep_posts: true, reason: I18n.t("user.new_user_typed_too_fast"))
-      elsif matches_auto_silence_regex?(manager)
+      elsif auto_silence?(manager) || matches_auto_silence_regex?(manager)
         UserSilencer.silence(manager.user, Discourse.system_user, keep_posts: true, reason: I18n.t("user.content_matches_auto_silence_regex"))
       elsif reason == :email_spam && is_first_post?(manager)
         UserSilencer.silence(manager.user, Discourse.system_user, keep_posts: true, reason: I18n.t("user.email_in_spam_header"))
@@ -197,10 +201,10 @@ class NewPostManager
       result = NewPostResult.new(:created_post, false)
       if matches.size == 1
         key = 'contains_blocked_word'
-        translation_args = { word: matches[0] }
+        translation_args = { word: CGI.escapeHTML(matches[0]) }
       else
         key = 'contains_blocked_words'
-        translation_args = { words: matches.join(', ') }
+        translation_args = { words: CGI.escapeHTML(matches.join(', ')) }
       end
       result.errors.add(:base, I18n.t(key, translation_args))
       return result

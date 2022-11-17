@@ -1,16 +1,13 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe EmailLog do
-
+RSpec.describe EmailLog do
   it { is_expected.to belong_to :user }
   it { is_expected.to validate_presence_of :to_address }
   it { is_expected.to validate_presence_of :email_type }
 
   fab!(:user) { Fabricate(:user) }
 
-  context 'unique email per post' do
+  describe 'unique email per post' do
     it 'only allows through one email per post' do
       post = Fabricate(:post)
       user = post.user
@@ -37,7 +34,7 @@ describe EmailLog do
     end
   end
 
-  context 'after_create' do
+  describe 'after_create' do
     context 'with user' do
       it 'updates the last_emailed_at value for the user' do
         expect {
@@ -108,6 +105,76 @@ describe EmailLog do
       expect(raw_key).to_not eq(hex)
       expect(raw_key.delete('-')).to eq(hex)
       expect(EmailLog.find(email_log.id).bounce_key).to eq(hex)
+    end
+  end
+
+  describe "cc addresses handling" do
+    let!(:email_log) { Fabricate(:email_log, user: user) }
+
+    describe "#cc_addresses_split" do
+      it "returns empty array if there are no cc addresses" do
+        expect(email_log.cc_addresses_split).to eq([])
+      end
+
+      it "returns array of cc addresses if there are any" do
+        email_log.update(cc_addresses: "test@test.com;test@test2.com")
+        expect(email_log.cc_addresses_split).to eq(["test@test.com", "test@test2.com"])
+      end
+    end
+
+    describe "#cc_users" do
+      it "returns empty array if there are no cc users" do
+        expect(email_log.cc_users).to eq([])
+      end
+
+      it "returns array of users if cc_user_ids is present" do
+        cc_user = Fabricate(:user, email: "test@test.com")
+        cc_user2 = Fabricate(:user, email: "test@test2.com")
+        email_log.update(cc_addresses: "test@test.com;test@test2.com", cc_user_ids: [cc_user.id, cc_user2.id])
+        expect(email_log.cc_users).to match_array([cc_user, cc_user2])
+      end
+    end
+  end
+
+  describe ".addressed_to_user scope" do
+    let(:user) { Fabricate(:user, email: "test@test.com") }
+    before do
+      Fabricate(:email_log, to_address: "john@smith.com")
+      Fabricate(:email_log, cc_addresses: "jane@jones.com;elle@someplace.org")
+      user.reload
+    end
+
+    it "returns email logs where the to address matches" do
+      user.user_emails.first.update!(email: "john@smith.com")
+      expect(EmailLog.addressed_to_user(user).count).to eq(1)
+    end
+
+    it "returns email logs where a cc address matches" do
+      user.user_emails.first.update!(email: "elle@someplace.org")
+      expect(EmailLog.addressed_to_user(user).count).to eq(1)
+    end
+
+    it "returns nothing if no emails match" do
+      expect(EmailLog.addressed_to_user(user).count).to eq(0)
+    end
+  end
+
+  describe "bounce_error_code fix before update" do
+    fab!(:email_log) { Fabricate(:email_log) }
+
+    it "makes sure the bounce_error_code is in the format X.X.X or XXX" do
+      email_log.update!(bounce_error_code: "5.1.1")
+      expect(email_log.reload.bounce_error_code).to eq("5.1.1")
+      email_log.update!(bounce_error_code: "5.2.23")
+      expect(email_log.reload.bounce_error_code).to eq("5.2.23")
+      email_log.update!(bounce_error_code: "5.0.0 (permanent failure)")
+      expect(email_log.reload.bounce_error_code).to eq("5.0.0")
+      email_log.update!(bounce_error_code: "422")
+      expect(email_log.reload.bounce_error_code).to eq("422")
+      email_log.update!(bounce_error_code: "5.2")
+      expect(email_log.reload.bounce_error_code).to eq(nil)
+      email_log.update!(bounce_error_code: "blah")
+      expect(email_log.reload.bounce_error_code).to eq(nil)
     end
   end
 end

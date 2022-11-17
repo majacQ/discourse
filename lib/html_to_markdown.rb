@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "nokogumbo"
 require "securerandom"
 
 class HtmlToMarkdown
@@ -37,11 +36,8 @@ class HtmlToMarkdown
     @doc.traverse { |node| node.remove if !allowed.include?(node.name) }
   end
 
-  HIDDEN_STYLES ||= /(display\s*:\s*none)|(visibility\s*:\s*hidden)|(opacity\s*:\s*0)|(transform\s*:\s*scale\(0\))|((width|height)\s*:\s*0)/i
-
   def remove_hidden!(doc)
     @doc.css("[hidden]").remove
-    @doc.css("[style]").each { |n| n.remove if n["style"][HIDDEN_STYLES] }
     @doc.css("img[width]").each { |n| n.remove if n["width"].to_i <= 0 }
     @doc.css("img[height]").each { |n| n.remove if n["height"].to_i <= 0 }
   end
@@ -57,19 +53,19 @@ class HtmlToMarkdown
       doc.css("br.#{klass}").each do |br|
         parent = br.parent
 
-        if parent.description.block?
+        if block?(parent)
           br.remove_class(klass)
         else
           before, after = parent.children.slice_when { |n| n == br }.to_a
 
           if before.size > 1
-            b = Nokogiri::XML::Node.new(parent.name, doc)
+            b = doc.document.create_element(parent.name)
             before[0...-1].each { |c| b.add_child(c) }
             parent.previous = b if b.inner_html.present?
           end
 
           if after.present?
-            a = Nokogiri::XML::Node.new(parent.name, doc)
+            a = doc.document.create_element(parent.name)
             after.each { |c| a.add_child(c) }
             parent.next = a if a.inner_html.present?
           end
@@ -198,7 +194,7 @@ class HtmlToMarkdown
   BLOCKS ||= %w{div tr}
   BLOCKS.each do |tag|
     define_method("visit_#{tag}") do |node|
-      prefix = node.previous_element&.description&.block? ? "" : "\n"
+      prefix = block?(node.previous_element) ? "" : "\n"
       "#{prefix}#{traverse(node)}\n"
     end
   end
@@ -287,7 +283,7 @@ class HtmlToMarkdown
   LISTS ||= %w{ul ol}
   LISTS.each do |tag|
     define_method("visit_#{tag}") do |node|
-      prefix = node.previous_element&.description&.block? ? "" : "\n"
+      prefix = block?(node.previous_element) ? "" : "\n"
       suffix = node.ancestors("ul, ol, li").size > 0 ? "" : "\n"
       "#{prefix}#{traverse(node)}#{suffix}"
     end
@@ -362,4 +358,9 @@ class HtmlToMarkdown
     node.text
   end
 
+  HTML5_BLOCK_ELEMENTS ||= %w[article aside details dialog figcaption figure footer header main nav section]
+  def block?(node)
+    return false if !node
+    node.description&.block? || HTML5_BLOCK_ELEMENTS.include?(node.name)
+  end
 end

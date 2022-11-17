@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe PostAction do
+RSpec.describe PostAction do
   it { is_expected.to rate_limit }
 
   fab!(:moderator) { Fabricate(:moderator) }
@@ -11,7 +9,6 @@ describe PostAction do
   fab!(:admin) { Fabricate(:admin) }
   fab!(:post) { Fabricate(:post) }
   fab!(:second_post) { Fabricate(:post, topic: post.topic) }
-  let(:bookmark) { PostAction.new(user_id: post.user_id, post_action_type_id: PostActionType.types[:bookmark] , post_id: post.id) }
 
   def value_for(user_id, dt)
     GivenDailyLike.find_for(user_id, dt).pluck(:likes_given)[0] || 0
@@ -23,8 +20,7 @@ describe PostAction do
     expect(pa).not_to be_valid
   end
 
-  context "messaging" do
-
+  describe "messaging" do
     it "notifies moderators (integration test)" do
       post = create_post
       mod = moderator
@@ -88,8 +84,30 @@ describe PostAction do
       topic.reload
       expect(topic.posts.count).to eq(2)
       expect(topic.posts.last.post_type).to eq(Post.types[:moderator_action])
+      expect(topic.message_archived?(mod)).to eq(true)
     end
 
+    context "with category group moderators" do
+      fab!(:group_user) { Fabricate(:group_user) }
+      let(:group) { group_user.group }
+
+      before do
+        SiteSetting.enable_category_group_moderation = true
+        group.update!(messageable_level: Group::ALIAS_LEVELS[:nobody])
+        post.topic.category.update!(reviewable_by_group_id: group.id)
+      end
+
+      it "notifies via pm" do
+        result = PostActionCreator.notify_moderators(
+          codinghorror,
+          post,
+          "this is my special long message"
+        )
+
+        readable_by_groups = result.reviewable_score.meta_topic.topic_allowed_groups.map(&:group_id)
+        expect(readable_by_groups).to include(group.id)
+      end
+    end
   end
 
   describe "update_counters" do
@@ -110,31 +128,6 @@ describe PostAction do
 
       tu = TopicUser.get(post.topic, codinghorror)
       expect(tu.liked).to be true
-      expect(tu.bookmarked).to be false
-    end
-
-  end
-
-  describe "when a user bookmarks something" do
-    it "increases the post's bookmark count when saved" do
-      expect { bookmark.save; post.reload }.to change(post, :bookmark_count).by(1)
-    end
-
-    describe 'when deleted' do
-
-      before do
-        bookmark.save
-        post.reload
-        @topic = post.topic
-        @topic.reload
-        bookmark.deleted_at = DateTime.now
-        bookmark.save
-      end
-
-      it 'reduces the bookmark count of the post' do
-        expect { post.reload }.to change(post, :bookmark_count).by(-1)
-      end
-
     end
   end
 
@@ -252,7 +245,7 @@ describe PostAction do
       admin4 = Fabricate(:admin)
       PostActionCreator.like(admin4, post)
 
-      # first happend within the same day, no need to notify
+      # first happened within the same day, no need to notify
       expect(Notification.where(post_number: 1, topic_id: post.topic_id).count)
         .to eq(2)
     end
@@ -418,7 +411,7 @@ describe PostAction do
       end.to_not change { Notification.count }
     end
 
-    it "should generate a notification if liker is an admin irregardles of \
+    it "should generate a notification if liker is an admin irregardless of \
       muting" do
 
       MutedUser.create!(user_id: post.user.id, muted_user_id: admin.id)
@@ -431,6 +424,16 @@ describe PostAction do
 
       expect(notification.user_id).to eq(post.user_id)
       expect(notification.notification_type).to eq(Notification.types[:liked])
+    end
+
+    it 'should not increase topic like count when liking a whisper' do
+      SiteSetting.set(:enable_whispers, true)
+      post.revise(admin, post_type: Post.types[:whisper])
+
+      PostActionCreator.like(admin, post)
+
+      expect(post.reload.like_count).to eq(1)
+      expect(post.topic.like_count).to eq(0)
     end
 
     it 'should increase the `like_count` and `like_score` when a user likes something' do
@@ -469,7 +472,7 @@ describe PostAction do
     it "shouldn't change given_likes unless likes are given or removed" do
       freeze_time(Time.zone.now)
 
-      PostActionCreator.like(codinghorror, Fabricate(:post))
+      PostActionCreator.like(codinghorror, post)
       expect(value_for(codinghorror.id, Date.today)).to eq(1)
 
       PostActionType.types.each do |type_name, type_id|
@@ -490,20 +493,17 @@ describe PostAction do
   describe 'flagging' do
 
     it 'does not allow you to flag stuff twice, even if the reason is different' do
-      post = Fabricate(:post)
       expect(PostActionCreator.spam(eviltrout, post)).to be_success
       expect(PostActionCreator.off_topic(eviltrout, post)).to be_failed
     end
 
     it 'allows you to flag stuff again if your previous flag was removed' do
-      post = Fabricate(:post)
       PostActionCreator.spam(eviltrout, post)
       PostActionDestroyer.destroy(eviltrout, post, :spam)
       expect(PostActionCreator.spam(eviltrout, post)).to be_success
     end
 
     it 'should update counts when you clear flags' do
-      post = Fabricate(:post)
       reviewable = PostActionCreator.spam(eviltrout, post).reviewable
 
       expect(post.reload.spam_count).to eq(1)
@@ -518,7 +518,7 @@ describe PostAction do
       post = Fabricate(:post, user: mod)
 
       Reviewable.set_priorities(high: 2.0)
-      SiteSetting.hide_post_sensitivity = Reviewable.sensitivity[:low]
+      SiteSetting.hide_post_sensitivity = Reviewable.sensitivities[:low]
       Discourse.stubs(:site_contact_user).returns(admin)
 
       PostActionCreator.spam(eviltrout, post)
@@ -533,7 +533,7 @@ describe PostAction do
       post = Fabricate(:post, user: mod)
 
       Reviewable.set_priorities(high: 8.0)
-      SiteSetting.hide_post_sensitivity = Reviewable.sensitivity[:low]
+      SiteSetting.hide_post_sensitivity = Reviewable.sensitivities[:low]
       Discourse.stubs(:site_contact_user).returns(admin)
 
       PostActionCreator.spam(eviltrout, post)
@@ -563,7 +563,7 @@ describe PostAction do
       walterwhite = Fabricate(:walter_white)
 
       Reviewable.set_priorities(high: 3.0)
-      SiteSetting.hide_post_sensitivity = Reviewable.sensitivity[:low]
+      SiteSetting.hide_post_sensitivity = Reviewable.sensitivities[:low]
       Discourse.stubs(:site_contact_user).returns(admin)
 
       PostActionCreator.spam(eviltrout, post)
@@ -662,7 +662,7 @@ describe PostAction do
       expect(result.reviewable.payload['targets_topic']).to eq(false)
     end
 
-    it "will unhide the post when a moderator undos the flag on which s/he took action" do
+    it "will unhide the post when a moderator undoes the flag on which s/he took action" do
       Discourse.stubs(:site_contact_user).returns(admin)
 
       post = create_post
@@ -677,7 +677,7 @@ describe PostAction do
       expect(post.hidden).to eq(false)
     end
 
-    context "topic auto closing" do
+    context "with topic auto closing" do
       fab!(:topic) { Fabricate(:topic) }
       let(:post1) { create_post(topic: topic) }
       let(:post2) { create_post(topic: topic) }
@@ -687,9 +687,9 @@ describe PostAction do
       fab!(:flagger2) { Fabricate(:user) }
 
       before do
-        SiteSetting.hide_post_sensitivity = Reviewable.sensitivity[:disabled]
+        SiteSetting.hide_post_sensitivity = Reviewable.sensitivities[:disabled]
         Reviewable.set_priorities(high: 4.5)
-        SiteSetting.auto_close_topic_sensitivity = Reviewable.sensitivity[:low]
+        SiteSetting.auto_close_topic_sensitivity = Reviewable.sensitivities[:low]
         SiteSetting.num_flaggers_to_close_topic = 2
         SiteSetting.num_hours_to_close_topic = 1
       end
@@ -733,7 +733,7 @@ describe PostAction do
         expect(topic_status_update.status_type).to eq(TopicTimer.types[:open])
       end
 
-      context "on a staff post" do
+      context "when on a staff post" do
         fab!(:staff_user) { Fabricate(:user, moderator: true) }
         fab!(:topic) { Fabricate(:topic, user: staff_user) }
 
@@ -753,7 +753,7 @@ describe PostAction do
 
         SiteSetting.num_flaggers_to_close_topic = 1
         Reviewable.set_priorities(high: 0.5)
-        SiteSetting.auto_close_topic_sensitivity = Reviewable.sensitivity[:low]
+        SiteSetting.auto_close_topic_sensitivity = Reviewable.sensitivities[:low]
 
         post = Fabricate(:post, topic: topic)
         PostActionCreator.spam(flagger1, post)
@@ -772,7 +772,7 @@ describe PostAction do
         freeze_time timer.execute_at
         SiteSetting.num_flaggers_to_close_topic = 10
         Reviewable.set_priorities(high: 10.0)
-        SiteSetting.auto_close_topic_sensitivity = Reviewable.sensitivity[:low]
+        SiteSetting.auto_close_topic_sensitivity = Reviewable.sensitivities[:low]
 
         Jobs::ToggleTopicClosed.new.execute(topic_timer_id: timer.id, state: false)
 
@@ -800,6 +800,7 @@ describe PostAction do
   end
 
   it "prevents user to act twice at the same time" do
+    Group.refresh_automatic_groups!
     # flags are already being tested
     all_types_except_flags = PostActionType.types.except(*PostActionType.flag_types_without_custom.keys)
     all_types_except_flags.values.each do |action|
@@ -830,16 +831,11 @@ describe PostAction do
     end
 
     it "should raise the right errors when it fails to create a post" do
-      begin
-        group = Group[:moderators]
-        messageable_level = group.messageable_level
-        group.update!(messageable_level: Group::ALIAS_LEVELS[:nobody])
+      user = Fabricate(:user)
+      UserSilencer.new(user, Discourse.system_user).silence
 
-        result = PostActionCreator.notify_moderators(Fabricate(:user), post, 'testing')
-        expect(result).to be_failed
-      ensure
-        group.update!(messageable_level: messageable_level)
-      end
+      result = PostActionCreator.notify_moderators(user, post, 'testing')
+      expect(result).to be_failed
     end
 
     it "should succeed even with low max title length" do
@@ -856,8 +852,7 @@ describe PostAction do
   describe ".lookup_for" do
     it "returns the correct map" do
       user = Fabricate(:user)
-      post = Fabricate(:post)
-      post_action = PostActionCreator.create(user, post, :bookmark).post_action
+      post_action = PostActionCreator.create(user, post, :like).post_action
       map = PostAction.lookup_for(user, [post.topic], post_action.post_action_type_id)
 
       expect(map).to eq(post.topic_id => [post.post_number])
@@ -880,8 +875,8 @@ describe PostAction do
 
     it "should create a notification in the related topic" do
       Jobs.run_immediately!
-      post = Fabricate(:post)
       user = Fabricate(:user)
+      stub_image_size
       result = PostActionCreator.create(user, post, :spam, message: "WAT")
       topic = result.post_action.related_post.topic
       reviewable = result.reviewable
@@ -896,7 +891,6 @@ describe PostAction do
 
     skip "should not add a moderator post when post is flagged via private message" do
       Jobs.run_immediately!
-      post = Fabricate(:post)
       user = Fabricate(:user)
       result = PostActionCreator.create(user, post, :notify_user, message: "WAT")
       action = result.post_action
@@ -914,28 +908,49 @@ describe PostAction do
 
   describe "rate limiting" do
 
-    def limiter(tl)
+    def limiter(tl, type)
       user = Fabricate.build(:user)
       user.trust_level = tl
-      action = PostAction.new(user: user, post_action_type_id: PostActionType.types[:like])
+      action = PostAction.new(user: user, post_action_type_id: PostActionType.types[type])
       action.post_action_rate_limiter
     end
 
-    it "should scale up like limits depending on liker" do
-      expect(limiter(0).max).to eq SiteSetting.max_likes_per_day
-      expect(limiter(1).max).to eq SiteSetting.max_likes_per_day
-      expect(limiter(2).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl2_additional_likes_per_day_multiplier).to_i
-      expect(limiter(3).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl3_additional_likes_per_day_multiplier).to_i
-      expect(limiter(4).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl4_additional_likes_per_day_multiplier).to_i
+    it "should scale up likes limits depending on trust level" do
+      expect(limiter(0, :like).max).to eq SiteSetting.max_likes_per_day
+      expect(limiter(1, :like).max).to eq SiteSetting.max_likes_per_day
+      expect(limiter(2, :like).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl2_additional_likes_per_day_multiplier).to_i
+      expect(limiter(3, :like).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl3_additional_likes_per_day_multiplier).to_i
+      expect(limiter(4, :like).max).to eq (SiteSetting.max_likes_per_day * SiteSetting.tl4_additional_likes_per_day_multiplier).to_i
 
       SiteSetting.tl2_additional_likes_per_day_multiplier = -1
-      expect(limiter(2).max).to eq SiteSetting.max_likes_per_day
+      expect(limiter(2, :like).max).to eq SiteSetting.max_likes_per_day
 
       SiteSetting.tl2_additional_likes_per_day_multiplier = 0.8
-      expect(limiter(2).max).to eq SiteSetting.max_likes_per_day
+      expect(limiter(2, :like).max).to eq SiteSetting.max_likes_per_day
 
       SiteSetting.tl2_additional_likes_per_day_multiplier = "bob"
-      expect(limiter(2).max).to eq SiteSetting.max_likes_per_day
+      expect(limiter(2, :like).max).to eq SiteSetting.max_likes_per_day
+    end
+
+    it "should scale up flag limits depending on trust level" do
+      %i(off_topic inappropriate spam notify_moderators).each do |type|
+        SiteSetting.tl2_additional_flags_per_day_multiplier = 1.5
+
+        expect(limiter(0, type).max).to eq SiteSetting.max_flags_per_day
+        expect(limiter(1, type).max).to eq SiteSetting.max_flags_per_day
+        expect(limiter(2, type).max).to eq (SiteSetting.max_flags_per_day * SiteSetting.tl2_additional_flags_per_day_multiplier).to_i
+        expect(limiter(3, type).max).to eq (SiteSetting.max_flags_per_day * SiteSetting.tl3_additional_flags_per_day_multiplier).to_i
+        expect(limiter(4, type).max).to eq (SiteSetting.max_flags_per_day * SiteSetting.tl4_additional_flags_per_day_multiplier).to_i
+
+        SiteSetting.tl2_additional_flags_per_day_multiplier = -1
+        expect(limiter(2, type).max).to eq SiteSetting.max_flags_per_day
+
+        SiteSetting.tl2_additional_flags_per_day_multiplier = 0.8
+        expect(limiter(2, type).max).to eq SiteSetting.max_flags_per_day
+
+        SiteSetting.tl2_additional_flags_per_day_multiplier = "bob"
+        expect(limiter(2, type).max).to eq SiteSetting.max_flags_per_day
+      end
     end
 
   end
@@ -967,14 +982,12 @@ describe PostAction do
   end
 
   describe "triggers Discourse events" do
-    fab!(:post) { Fabricate(:post) }
-
     it 'triggers a flag_created event' do
       event = DiscourseEvent.track(:flag_created) { PostActionCreator.spam(eviltrout, post) }
       expect(event).to be_present
     end
 
-    context "resolving flags" do
+    context "when resolving flags" do
       let(:result) { PostActionCreator.spam(eviltrout, post) }
       let(:post_action) { result.post_action }
       let(:reviewable) { result.reviewable }

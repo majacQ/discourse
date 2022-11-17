@@ -1,15 +1,13 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe TopicTimestampChanger do
-  describe "change!" do
+RSpec.describe TopicTimestampChanger do
+  describe "#change!" do
     let(:old_timestamp) { Time.zone.now }
     let(:topic) { Fabricate(:topic, created_at: old_timestamp) }
     let!(:p1) { Fabricate(:post, topic: topic, created_at: old_timestamp) }
     let!(:p2) { Fabricate(:post, topic: topic, created_at: old_timestamp + 1.day) }
 
-    context 'new timestamp is in the future' do
+    context 'when new timestamp is in the future' do
       let(:new_timestamp) { old_timestamp + 2.day }
 
       it 'should raise the right error' do
@@ -18,7 +16,7 @@ describe TopicTimestampChanger do
       end
     end
 
-    context 'new timestamp is in the past' do
+    context 'when new timestamp is in the past' do
       let(:new_timestamp) { old_timestamp - 2.day }
 
       it 'changes the timestamp of the topic and opening post' do
@@ -26,22 +24,23 @@ describe TopicTimestampChanger do
         TopicTimestampChanger.new(topic: topic, timestamp: new_timestamp.to_f).change!
 
         topic.reload
+        p1.reload
+        p2.reload
+        last_post_created_at = p2.created_at
+
         expect(topic.created_at).to eq_time(new_timestamp)
         expect(topic.updated_at).to eq_time(new_timestamp)
-        expect(topic.bumped_at).to eq_time(new_timestamp)
+        expect(topic.bumped_at).to eq_time(last_post_created_at)
+        expect(topic.last_posted_at).to eq_time(last_post_created_at)
 
-        p1.reload
         expect(p1.created_at).to eq_time(new_timestamp)
         expect(p1.updated_at).to eq_time(new_timestamp)
 
-        p2.reload
         expect(p2.created_at).to eq_time(new_timestamp + 1.day)
         expect(p2.updated_at).to eq_time(new_timestamp + 1.day)
-
-        expect(topic.last_posted_at).to eq_time(p2.reload.created_at)
       end
 
-      describe 'when posts have timestamps in the future' do
+      context 'when posts have timestamps in the future' do
         it 'should set the new timestamp as the default timestamp' do
           new_timestamp = freeze_time
 

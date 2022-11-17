@@ -3,14 +3,20 @@ const _cache = {};
 export function applyInlineOneboxes(inline, ajax, opts) {
   opts = opts || {};
 
-  Object.keys(inline).forEach((url) => {
+  const urls = Object.keys(inline).filter((url) => !_cache[url]);
+
+  urls.forEach((url) => {
     // cache a blank locally, so we never trigger a lookup
     _cache[url] = {};
   });
 
-  return ajax("/inline-onebox", {
+  if (urls.length === 0) {
+    return;
+  }
+
+  ajax("/inline-onebox", {
     data: {
-      urls: Object.keys(inline),
+      urls,
       category_id: opts.categoryId,
       topic_id: opts.topicId,
     },
@@ -18,12 +24,12 @@ export function applyInlineOneboxes(inline, ajax, opts) {
     result["inline-oneboxes"].forEach((onebox) => {
       if (onebox.title) {
         _cache[onebox.url] = onebox;
+
         let links = inline[onebox.url] || [];
         links.forEach((link) => {
-          $(link)
-            .text(onebox.title)
-            .addClass("inline-onebox")
-            .removeClass("inline-onebox-loading");
+          link.innerText = onebox.title;
+          link.classList.add("inline-onebox");
+          link.classList.remove("inline-onebox-loading");
         });
       }
     });

@@ -36,12 +36,14 @@ class PostSerializer < BasicPostSerializer
              :category_id,
              :display_username,
              :primary_group_name,
-             :primary_group_flair_url,
-             :primary_group_flair_bg_color,
-             :primary_group_flair_color,
+             :flair_name,
+             :flair_url,
+             :flair_bg_color,
+             :flair_color,
              :version,
              :can_edit,
              :can_delete,
+             :can_permanently_delete,
              :can_recover,
              :can_wiki,
              :link_counts,
@@ -52,7 +54,6 @@ class PostSerializer < BasicPostSerializer
              :bookmarked,
              :bookmark_reminder_at,
              :bookmark_id,
-             :bookmark_reminder_type,
              :bookmark_name,
              :bookmark_auto_delete_preference,
              :raw,
@@ -78,13 +79,16 @@ class PostSerializer < BasicPostSerializer
              :is_auto_generated,
              :action_code,
              :action_code_who,
+             :action_code_path,
              :notice,
              :last_wiki_edit,
              :locked,
              :excerpt,
              :reviewable_id,
              :reviewable_score_count,
-             :reviewable_score_pending_count
+             :reviewable_score_pending_count,
+             :user_suspended,
+             :user_status
 
   def initialize(object, opts)
     super(object, opts)
@@ -166,6 +170,14 @@ class PostSerializer < BasicPostSerializer
     scope.can_delete?(object)
   end
 
+  def can_permanently_delete
+    true
+  end
+
+  def include_can_permanently_delete?
+    SiteSetting.can_permanently_delete && scope.is_admin? && object.deleted_at
+  end
+
   def can_recover
     scope.can_recover_post?(object)
   end
@@ -188,16 +200,20 @@ class PostSerializer < BasicPostSerializer
     end
   end
 
-  def primary_group_flair_url
-    object.user&.primary_group&.flair_url
+  def flair_name
+    object.user&.flair_group&.name
   end
 
-  def primary_group_flair_bg_color
-    object.user&.primary_group&.flair_bg_color
+  def flair_url
+    object.user&.flair_group&.flair_url
   end
 
-  def primary_group_flair_color
-    object.user&.primary_group&.flair_color
+  def flair_bg_color
+    object.user&.flair_group&.flair_bg_color
+  end
+
+  def flair_color
+    object.user&.flair_group&.flair_color
   end
 
   def link_counts
@@ -242,6 +258,7 @@ class PostSerializer < BasicPostSerializer
   def reply_to_user
     {
       username: object.reply_to_user.username,
+      name: object.reply_to_user.name,
       avatar_template: object.reply_to_user.avatar_template
     }
   end
@@ -266,12 +283,11 @@ class PostSerializer < BasicPostSerializer
     result = []
     can_see_post = scope.can_see_post?(object)
 
-    PostActionType.types.except(:bookmark).each do |sym, id|
+    PostActionType.types.each do |sym, id|
       count_col = "#{sym}_count".to_sym
 
       count = object.public_send(count_col) if object.respond_to?(count_col)
       summary = { id: id, count: count }
-      summary[:hidden] = true if sym == :vote
 
       if scope.post_can_act?(object, sym, opts: { taken_actions: actions }, can_see_post: can_see_post)
         summary[:can_act] = true
@@ -341,10 +357,6 @@ class PostSerializer < BasicPostSerializer
     bookmarked
   end
 
-  def include_bookmark_reminder_type?
-    bookmarked
-  end
-
   def include_bookmark_name?
     bookmarked
   end
@@ -358,17 +370,15 @@ class PostSerializer < BasicPostSerializer
   end
 
   def post_bookmark
-    return nil if @topic_view.blank?
-    @post_bookmark ||= @topic_view.user_post_bookmarks.find { |bookmark| bookmark.post_id == object.id }
+    if @topic_view.present?
+      @post_bookmark ||= @topic_view.bookmarks.find { |bookmark| bookmark.bookmarkable == object }
+    else
+      @post_bookmark ||= Bookmark.find_by(user: scope.user, bookmarkable: object)
+    end
   end
 
   def bookmark_reminder_at
     post_bookmark&.reminder_at
-  end
-
-  def bookmark_reminder_type
-    return if post_bookmark.blank?
-    Bookmark.reminder_types[post_bookmark.reminder_type].to_s
   end
 
   def bookmark_name
@@ -425,6 +435,11 @@ class PostSerializer < BasicPostSerializer
     scope.is_staff? ? object.version : object.public_version
   end
 
+  def action_code
+    return "open_topic" if object.action_code == "public_topic" && SiteSetting.login_required?
+    object.action_code
+  end
+
   def include_action_code?
     object.action_code.present?
   end
@@ -435,6 +450,14 @@ class PostSerializer < BasicPostSerializer
 
   def include_action_code_who?
     include_action_code? && action_code_who.present?
+  end
+
+  def action_code_path
+    post_custom_fields["action_code_path"]
+  end
+
+  def include_action_code_path?
+    include_action_code? && action_code_path.present?
   end
 
   def notice
@@ -519,6 +542,22 @@ class PostSerializer < BasicPostSerializer
 
   def include_reviewable_score_pending_count?
     can_review_topic?
+  end
+
+  def user_suspended
+    true
+  end
+
+  def include_user_suspended?
+    object.user&.suspended?
+  end
+
+  def include_user_status?
+    SiteSetting.enable_user_status && object.user&.has_status?
+  end
+
+  def user_status
+    UserStatusSerializer.new(object.user&.user_status, root: false)
   end
 
 private

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe ReviewableFlaggedPost, type: :model do
 
   def pending_count
@@ -34,7 +32,8 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
         expect(actions.has?(:agree_and_keep_hidden)).to eq(false)
         expect(actions.has?(:agree_and_silence)).to eq(true)
         expect(actions.has?(:agree_and_suspend)).to eq(true)
-        expect(actions.has?(:delete_spammer)).to eq(true)
+        expect(actions.has?(:delete_user)).to eq(true)
+        expect(actions.has?(:delete_user_block)).to eq(true)
         expect(actions.has?(:disagree)).to eq(true)
         expect(actions.has?(:ignore)).to eq(true)
         expect(actions.has?(:delete_and_ignore)).to eq(true)
@@ -137,7 +136,7 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
     end
 
     it "supports deleting a spammer" do
-      reviewable.perform(moderator, :delete_spammer)
+      reviewable.perform(moderator, :delete_user_block)
       expect(reviewable).to be_approved
       expect(score.reload).to be_agreed
       expect(post.reload.deleted_at).to be_present
@@ -282,15 +281,34 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
   end
 
   describe "#perform_delete_and_agree_replies" do
-    it 'ignore flagged replies' do
-      flagged_post = Fabricate(:reviewable_flagged_post)
-      reply = create_reply(flagged_post.target)
-      flagged_post.target.update(reply_count: 1)
-      flagged_reply = Fabricate(:reviewable_flagged_post, target: reply)
+    let(:flagged_post) { Fabricate(:reviewable_flagged_post) }
+    let!(:reply) { create_reply(flagged_post.target) }
 
+    before do
+      flagged_post.target.update(reply_count: 1)
+    end
+
+    it 'ignore flagged replies' do
+      flagged_reply = Fabricate(:reviewable_flagged_post, target: reply)
       flagged_post.perform(moderator, :delete_and_agree_replies)
 
-      expect(flagged_reply.reload.status).to eq(Reviewable.statuses[:ignored])
+      expect(flagged_reply.reload).to be_ignored
+    end
+
+    it "notifies users that responded to flagged post" do
+      SiteSetting.notify_users_after_responses_deleted_on_flagged_post = true
+      flagged_post.perform(moderator, :delete_and_agree_replies)
+
+      expect(Jobs::SendSystemMessage.jobs.size).to eq(2)
+      expect(Jobs::SendSystemMessage.jobs.last["args"].first["message_type"]).to eq("flags_agreed_and_post_deleted_for_responders")
+    end
+
+    it "ignores flagged responses" do
+      SiteSetting.notify_users_after_responses_deleted_on_flagged_post = true
+      flagged_reply = Fabricate(:reviewable_flagged_post, target: reply)
+      flagged_post.perform(moderator, :delete_and_agree_replies)
+
+      expect(flagged_reply.reload).to be_ignored
     end
   end
 
@@ -302,6 +320,23 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
       reviewable.perform(moderator, :disagree_and_restore)
 
       assert_pm_creation_enqueued(reviewable.post.user_id, "flags_disagreed")
+    end
+  end
+
+  describe 'recalculating the reviewable score' do
+    let(:expected_score) { 8 }
+    let(:reviewable) { Fabricate(:reviewable_flagged_post, score: expected_score) }
+
+    it "doesn't recalculate the score after ignore" do
+      reviewable.perform(moderator, :ignore)
+
+      expect(reviewable.score).to eq(expected_score)
+    end
+
+    it "doesn't recalculate the score after disagree" do
+      reviewable.perform(moderator, :disagree)
+
+      expect(reviewable.score).to eq(expected_score)
     end
   end
 

@@ -8,6 +8,8 @@ USERNAME_ROUTE_FORMAT = /[%\w.\-]+?/ unless defined? USERNAME_ROUTE_FORMAT
 BACKUP_ROUTE_FORMAT = /.+\.(sql\.gz|tar\.gz|tgz)/i unless defined? BACKUP_ROUTE_FORMAT
 
 Discourse::Application.routes.draw do
+  def patch(*) end # Disable PATCH requests
+
   scope path: nil, constraints: { format: /(json|html|\*\/\*)/ } do
     relative_url_root = (defined?(Rails.configuration.relative_url_root) && Rails.configuration.relative_url_root) ? Rails.configuration.relative_url_root + '/' : '/'
 
@@ -15,14 +17,25 @@ Discourse::Application.routes.draw do
     get "/404-body" => "exceptions#not_found_body"
 
     get "/bootstrap" => "bootstrap#index"
+    if Rails.env.test? || Rails.env.development?
+      get "/bootstrap/plugin-css-for-tests.css" => "bootstrap#plugin_css_for_tests"
+    end
 
     post "webhooks/aws" => "webhooks#aws"
     post "webhooks/mailgun"  => "webhooks#mailgun"
     post "webhooks/mailjet"  => "webhooks#mailjet"
     post "webhooks/mandrill" => "webhooks#mandrill"
+    get "webhooks/mandrill" => "webhooks#mandrill_head"
     post "webhooks/postmark" => "webhooks#postmark"
     post "webhooks/sendgrid" => "webhooks#sendgrid"
     post "webhooks/sparkpost" => "webhooks#sparkpost"
+
+    scope path: nil, format: true, constraints: { format: :xml } do
+      resources :sitemap, only: [:index]
+      get "/sitemap_:page" => "sitemap#page", page: /[1-9][0-9]*/
+      get "/sitemap_recent" => "sitemap#recent"
+      get "/news" => "sitemap#news"
+    end
 
     scope path: nil, constraints: { format: /.*/ } do
       if Rails.env.development?
@@ -144,7 +157,7 @@ Discourse::Application.routes.draw do
         delete "sso_record"
       end
       get "users/:id.json" => 'users#show', defaults: { format: 'json' }
-      get 'users/:id/:username' => 'users#show', constraints: { username: RouteFormat.username }
+      get 'users/:id/:username' => 'users#show', constraints: { username: RouteFormat.username }, as: :user_show
       get 'users/:id/:username/badges' => 'users#show'
       get 'users/:id/:username/tl3_requirements' => 'users#show'
 
@@ -176,11 +189,7 @@ Discourse::Application.routes.draw do
         resources :staff_action_logs,     only: [:index]
         get 'staff_action_logs/:id/diff' => 'staff_action_logs#diff'
         resources :screened_emails,       only: [:index, :destroy]
-        resources :screened_ip_addresses, only: [:index, :create, :update, :destroy] do
-          collection do
-            post "roll_up"
-          end
-        end
+        resources :screened_ip_addresses, only: [:index, :create, :update, :destroy]
         resources :screened_urls,         only: [:index]
         resources :search_logs,           only: [:index]
         get 'search_logs/term/' => 'search_logs#term'
@@ -189,8 +198,8 @@ Discourse::Application.routes.draw do
       get "/logs" => "staff_action_logs#index"
 
       # alias
-      get '/logs/watched_words', to: redirect(relative_url_root + 'admin/customize/watched_words'), constraints: AdminConstraint.new
-      get '/logs/watched_words/*path', to: redirect(relative_url_root + 'admin/customize/watched_words/%{path}'), constraints: AdminConstraint.new
+      get '/logs/watched_words', to: redirect(relative_url_root + 'admin/customize/watched_words')
+      get '/logs/watched_words/*path', to: redirect(relative_url_root + 'admin/customize/watched_words/%{path}')
 
       get "customize" => "color_schemes#index", constraints: AdminConstraint.new
       get "customize/themes" => "themes#index", constraints: AdminConstraint.new
@@ -200,13 +209,17 @@ Discourse::Application.routes.draw do
       get "customize/embedding" => "embedding#show", constraints: AdminConstraint.new
       put "customize/embedding" => "embedding#update", constraints: AdminConstraint.new
 
-      resources :themes, constraints: AdminConstraint.new
-
-      post "themes/import" => "themes#import"
-      post "themes/upload_asset" => "themes#upload_asset"
-      post "themes/generate_key_pair" => "themes#generate_key_pair"
-      get "themes/:id/preview" => "themes#preview"
-      put "themes/:id/setting" => "themes#update_single_setting"
+      resources :themes, constraints: AdminConstraint.new do
+        member do
+          get "preview" => "themes#preview"
+          put "setting" => "themes#update_single_setting"
+        end
+        collection do
+          post "import" => "themes#import"
+          post "upload_asset" => "themes#upload_asset"
+          post "generate_key_pair" => "themes#generate_key_pair"
+        end
+      end
 
       scope "/customize", constraints: AdminConstraint.new do
         resources :user_fields, constraints: AdminConstraint.new
@@ -239,7 +252,13 @@ Discourse::Application.routes.draw do
 
         resource :email_style, only: [:show, :update]
         get 'email_style/:field' => 'email_styles#show', constraints: { field: /html|css/ }
+      end
 
+      resources :embeddable_hosts, constraints: AdminConstraint.new
+      resources :color_schemes, constraints: AdminConstraint.new
+      resources :permalinks, constraints: AdminConstraint.new
+
+      scope "/customize" do
         resources :watched_words, only: [:index, :create, :update, :destroy] do
           collection do
             get "action/:id" => "watched_words#index"
@@ -249,11 +268,6 @@ Discourse::Application.routes.draw do
         end
         post "watched_words/upload" => "watched_words#upload"
       end
-
-      resources :embeddable_hosts, constraints: AdminConstraint.new
-      resources :color_schemes, constraints: AdminConstraint.new
-
-      resources :permalinks, constraints: AdminConstraint.new
 
       get "version_check" => "versions#show"
 
@@ -301,6 +315,12 @@ Discourse::Application.routes.draw do
           post "restore" => "backups#restore", constraints: { id: RouteFormat.backup }
         end
         collection do
+          # multipart uploads
+          post "create-multipart" => "backups#create_multipart", format: :json
+          post "complete-multipart" => "backups#complete_multipart", format: :json
+          post "abort-multipart" => "backups#abort_multipart", format: :json
+          post "batch-presign-multipart-parts" => "backups#batch_presign_multipart_parts", format: :json
+
           get "logs" => "backups#logs"
           get "status" => "backups#status"
           delete "cancel" => "backups#cancel"
@@ -346,6 +366,7 @@ Discourse::Application.routes.draw do
     get "review/count" => "reviewables#count"
     get "review/topics" => "reviewables#topics"
     get "review/settings" => "reviewables#settings"
+    get "review/user-menu-list" => "reviewables#user_menu_list", format: :json
     put "review/settings" => "reviewables#settings"
     put "review/:reviewable_id/perform/:action_id" => "reviewables#perform", constraints: {
       reviewable_id: /\d+/,
@@ -366,7 +387,14 @@ Discourse::Application.routes.draw do
     post "session/email-login/:token" => "session#email_login"
     get "session/otp/:token" => "session#one_time_password", constraints: { token: /[0-9a-f]+/ }
     post "session/otp/:token" => "session#one_time_password", constraints: { token: /[0-9a-f]+/ }
+    get "session/2fa" => "session#second_factor_auth_show"
+    post "session/2fa" => "session#second_factor_auth_perform"
+    if Rails.env.test?
+      post "session/2fa/test-action" => "session#test_second_factor_restricted_route"
+    end
+    get "session/scopes" => "session#scopes"
     get "composer_messages" => "composer_messages#index"
+    get "composer_messages/user_not_seen_in_a_while" => "composer_messages#user_not_seen_in_a_while"
 
     resources :static
     post "login" => "static#enter"
@@ -383,9 +411,12 @@ Discourse::Application.routes.draw do
     end
 
     get "my/*path", to: 'users#my_redirect'
-    get ".well-known/change-password", to: redirect(relative_url_root + 'my/preferences/account', status: 302)
+    get ".well-known/change-password", to: redirect(relative_url_root + 'my/preferences/security', status: 302)
 
     get "user-cards" => "users#cards", format: :json
+    get "directory-columns" => "directory_columns#index", format: :json
+    get "edit-directory-columns" => "edit_directory_columns#index", format: :json
+    put "edit-directory-columns" => "edit_directory_columns#update", format: :json
 
     %w{users u}.each_with_index do |root_path, index|
       get "#{root_path}" => "users#index", constraints: { format: 'html' }
@@ -416,6 +447,8 @@ Discourse::Application.routes.draw do
       put "#{root_path}/admin-login" => "users#admin_login"
       post "#{root_path}/toggle-anon" => "users#toggle_anon"
       post "#{root_path}/read-faq" => "users#read_faq"
+      get "#{root_path}/recent-searches" => "users#recent_searches", constraints: { format: 'json' }
+      delete "#{root_path}/recent-searches" => "users#reset_recent_searches", constraints: { format: 'json' }
       get "#{root_path}/search/users" => "users#search_users"
 
       get({ "#{root_path}/account-created/" => "users#account_created" }.merge(index == 1 ? { as: :users_account_created } : { as: :old_account_created }))
@@ -444,8 +477,8 @@ Discourse::Application.routes.draw do
       get "#{root_path}/:username/messages" => "user_actions#private_messages", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/messages/:filter" => "user_actions#private_messages", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/messages/group/:group_name" => "user_actions#private_messages", constraints: { username: RouteFormat.username, group_name: RouteFormat.username }
-      get "#{root_path}/:username/messages/group/:group_name/archive" => "user_actions#private_messages", constraints: { username: RouteFormat.username, group_name: RouteFormat.username }
-      get "#{root_path}/:username/messages/tags/:tag_id" => "user_actions#private_messages", constraints: StaffConstraint.new
+      get "#{root_path}/:username/messages/group/:group_name/:filter" => "user_actions#private_messages", constraints: { username: RouteFormat.username, group_name: RouteFormat.username }
+      get "#{root_path}/:username/messages/tags/:tag_id" => "list#private_messages_tag", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username.json" => "users#show", constraints: { username: RouteFormat.username }, defaults: { format: :json }
       get({ "#{root_path}/:username" => "users#show", constraints: { username: RouteFormat.username } }.merge(index == 1 ? { as: 'user' } : {}))
       put "#{root_path}/:username" => "users#update", constraints: { username: RouteFormat.username }, defaults: { format: :json }
@@ -465,6 +498,7 @@ Discourse::Application.routes.draw do
       get "#{root_path}/:username/preferences/users" => "users#preferences", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/preferences/tags" => "users#preferences", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/preferences/interface" => "users#preferences", constraints: { username: RouteFormat.username }
+      get "#{root_path}/:username/preferences/sidebar" => "users#preferences", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/preferences/apps" => "users#preferences", constraints: { username: RouteFormat.username }
       post "#{root_path}/:username/preferences/email" => "users_email#create", constraints: { username: RouteFormat.username }
       put "#{root_path}/:username/preferences/email" => "users_email#update", constraints: { username: RouteFormat.username }
@@ -493,6 +527,8 @@ Discourse::Application.routes.draw do
       get "#{root_path}/:username/activity/:filter" => "users#show", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/badges" => "users#badges", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/bookmarks" => "users#bookmarks", constraints: { username: RouteFormat.username, format: /(json|ics)/ }
+      get "#{root_path}/:username/user-menu-bookmarks" => "users#user_menu_bookmarks", constraints: { username: RouteFormat.username, format: :json }
+      get "#{root_path}/:username/user-menu-private-messages" => "users#user_menu_messages", constraints: { username: RouteFormat.username, format: :json }
       get "#{root_path}/:username/notifications" => "users#show", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/notifications/:filter" => "users#show", constraints: { username: RouteFormat.username }
       delete "#{root_path}/:username" => "users#destroy", constraints: { username: RouteFormat.username }
@@ -501,6 +537,7 @@ Discourse::Application.routes.draw do
       get "#{root_path}/:username/flagged-posts" => "users#show", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/deleted-posts" => "users#show", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/topic-tracking-state" => "users#topic_tracking_state", constraints: { username: RouteFormat.username }
+      get "#{root_path}/:username/private-message-topic-tracking-state" => "users#private_message_topic_tracking_state", constraints: { username: RouteFormat.username }
       get "#{root_path}/:username/profile-hidden" => "users#profile_hidden"
       put "#{root_path}/:username/feature-topic" => "users#feature_topic", constraints: { username: RouteFormat.username }
       put "#{root_path}/:username/clear-featured-topic" => "users#clear_featured_topic", constraints: { username: RouteFormat.username }
@@ -516,7 +553,7 @@ Discourse::Application.routes.draw do
 
     get "letter_avatar_proxy/:version/letter/:letter/:color/:size.png" => "user_avatars#show_proxy_letter", constraints: { format: :png }
 
-    get "svg-sprite/:hostname/svg-:theme_ids-:version.js" => "svg_sprite#show", constraints: { hostname: /[\w\.-]+/, version: /\h{40}/, theme_ids: /([0-9]+(,[0-9]+)*)?/, format: :js }
+    get "svg-sprite/:hostname/svg-:theme_id-:version.js" => "svg_sprite#show", constraints: { hostname: /[\w\.-]+/, version: /\h{40}/, theme_id: /([0-9]+)?/, format: :js }
     get "svg-sprite/search/:keyword" => "svg_sprite#search", format: false, constraints: { keyword: /[-a-z0-9\s\%]+/ }
     get "svg-sprite/picker-search" => "svg_sprite#icon_picker_search", defaults: { format: :json }
     get "svg-sprite/:hostname/icon(/:color)/:name.svg" => "svg_sprite#svg_icon", constraints: { hostname: /[\w\.-]+/, name: /[-a-z0-9\s\%]+/, color: /(\h{3}{1,2})/, format: :svg }
@@ -527,11 +564,22 @@ Discourse::Application.routes.draw do
     get "stylesheets/:name.css" => "stylesheets#show", constraints: { name: /[-a-z0-9_]+/ }
     get "color-scheme-stylesheet/:id(/:theme_id)" => "stylesheets#color_scheme", constraints: { format: :json }
     get "theme-javascripts/:digest.js" => "theme_javascripts#show", constraints: { digest: /\h{40}/ }
-    get "theme-javascripts/tests/:theme_id.js" => "theme_javascripts#show_tests"
+    get "theme-javascripts/:digest.map" => "theme_javascripts#show_map", constraints: { digest: /\h{40}/ }
+    get "theme-javascripts/tests/:theme_id-:digest.js" => "theme_javascripts#show_tests"
 
     post "uploads/lookup-metadata" => "uploads#metadata"
     post "uploads" => "uploads#create"
     post "uploads/lookup-urls" => "uploads#lookup_urls"
+
+    # direct to s3 uploads
+    post "uploads/generate-presigned-put" => "uploads#generate_presigned_put", format: :json
+    post "uploads/complete-external-upload" => "uploads#complete_external_upload", format: :json
+
+    # multipart uploads
+    post "uploads/create-multipart" => "uploads#create_multipart", format: :json
+    post "uploads/complete-multipart" => "uploads#complete_multipart", format: :json
+    post "uploads/abort-multipart" => "uploads#abort_multipart", format: :json
+    post "uploads/batch-presign-multipart-parts" => "uploads#batch_presign_multipart_parts", format: :json
 
     # used to download original images
     get "uploads/:site/:sha(.:extension)" => "uploads#show", constraints: { site: /\w+/, sha: /\h{40}/, extension: /[a-z0-9\._]+/i }
@@ -543,7 +591,12 @@ Discourse::Application.routes.draw do
     end
     # used to download attachments (old route)
     get "uploads/:site/:id/:sha" => "uploads#show", constraints: { site: /\w+/, id: /\d+/, sha: /\h{16}/, format: /.*/ }
-    get "secure-media-uploads/*path(.:extension)" => "uploads#show_secure", constraints: { extension: /[a-z0-9\._]+/i }
+
+    # NOTE: secure-media-uploads is the old form, all new URLs generated for
+    # secure uploads will be secure-uploads, this is left in for backwards
+    # compat without needing to rebake all posts for each site.
+    get "secure-media-uploads/*path(.:extension)" => "uploads#_show_secure_deprecated", constraints: { extension: /[a-z0-9\._]+/i }
+    get "secure-uploads/*path(.:extension)" => "uploads#show_secure", constraints: { extension: /[a-z0-9\._]+/i }
 
     get "posts" => "posts#latest", id: "latest_posts", constraints: { format: /(json|rss)/ }
     get "private-posts" => "posts#latest", id: "private_posts", constraints: { format: /(json|rss)/ }
@@ -554,6 +607,7 @@ Discourse::Application.routes.draw do
     get "posts/:id/reply-ids/all" => "posts#all_reply_ids"
     get "posts/:username/deleted" => "posts#deleted_posts", constraints: { username: RouteFormat.username }
     get "posts/:username/flagged" => "posts#flagged_posts", constraints: { username: RouteFormat.username }
+    get "posts/:username/pending" => "posts#pending", constraints: { username: RouteFormat.username }
 
     %w{groups g}.each do |root_path|
       resources :groups, id: RouteFormat.username, path: root_path do
@@ -567,6 +621,7 @@ Discourse::Application.routes.draw do
         get 'mentionable'
         get 'messageable'
         get 'logs' => 'groups#histories'
+        post 'test_email_settings'
 
         collection do
           get "check-name" => 'groups#check_name'
@@ -597,13 +652,17 @@ Discourse::Application.routes.draw do
 
           get "permissions" => "groups#permissions"
           put "members" => "groups#add_members"
+          put "join" => "groups#join"
           delete "members" => "groups#remove_member"
+          delete "leave" => "groups#leave"
           post "request_membership" => "groups#request_membership"
           put "handle_membership_request" => "groups#handle_membership_request"
           post "notifications" => "groups#set_notifications"
         end
       end
     end
+
+    resources :associated_groups, only: %i[index], constraints: AdminConstraint.new
 
     # aliases so old API code works
     delete "admin/groups/:id/members" => "groups#remove_member", constraints: AdminConstraint.new
@@ -669,7 +728,9 @@ Discourse::Application.routes.draw do
 
     resources :badges, only: [:index]
     get "/badges/:id(/:slug)" => "badges#show", constraints: { format: /(json|html|rss)/ }
-    resources :user_badges, only: [:index, :create, :destroy]
+    resources :user_badges, only: [:index, :create, :destroy] do
+      put "toggle_favorite" => "user_badges#toggle_favorite", constraints: { format: :json }
+    end
 
     get '/c', to: redirect(relative_url_root + 'categories')
 
@@ -688,6 +749,7 @@ Discourse::Application.routes.draw do
     get "categories_and_top" => "categories#categories_and_top"
 
     get "c/:id/show" => "categories#show"
+    get "c/:id/visible_groups" => "categories#visible_groups"
 
     get "c/*category_slug/find_by_slug" => "categories#find_by_slug"
     get "c/*category_slug/edit(/:tab)" => "categories#find_by_slug", constraints: { format: 'html' }
@@ -698,8 +760,8 @@ Discourse::Application.routes.draw do
       get "/none" => "list#category_none_latest"
 
       TopTopic.periods.each do |period|
-        get "/none/l/top/#{period}" => "list#category_none_top_#{period}", as: "category_none_top_#{period}"
-        get "/l/top/#{period}" => "list#category_top_#{period}", as: "category_top_#{period}"
+        get "/none/l/top/#{period}", to: redirect("/none/l/top?period=#{period}", status: 301)
+        get "/l/top/#{period}", to: redirect("/l/top?period=#{period}", status: 301)
       end
 
       Discourse.filters.each do |filter|
@@ -712,10 +774,12 @@ Discourse::Application.routes.draw do
     end
 
     get "hashtags" => "hashtags#show"
+    get "hashtags/search" => "hashtags#search"
 
     TopTopic.periods.each do |period|
-      get "top/#{period}.rss" => "list#top_#{period}_feed", format: :rss
-      get "top/#{period}" => "list#top_#{period}"
+      get "top/#{period}.rss", to: redirect("top.rss?period=#{period}", status: 301)
+      get "top/#{period}.json", to: redirect("top.json?period=#{period}", status: 301)
+      get "top/#{period}", to: redirect("top?period=#{period}", status: 301)
     end
 
     Discourse.anonymous_filters.each do |filter|
@@ -732,7 +796,7 @@ Discourse::Application.routes.draw do
 
     # Topics resource
     get "t/:id" => "topics#show"
-    put "t/:id" => "topics#update"
+    put "t/:topic_id" => "topics#update", constraints: { topic_id: /\d+/ }
     delete "t/:id" => "topics#destroy"
     put "t/:id/archive-message" => "topics#archive_message"
     put "t/:id/move-to-inbox" => "topics#move_to_inbox"
@@ -742,6 +806,7 @@ Discourse::Application.routes.draw do
     put "t/:id/reset-bump-date" => "topics#reset_bump_date"
     put "topics/bulk"
     put "topics/reset-new" => 'topics#reset_new'
+    put "topics/pm-reset-new" => 'topics#private_message_reset_new'
     post "topics/timings"
 
     get 'topics/similar_to' => 'similar_topics#index'
@@ -756,11 +821,15 @@ Discourse::Application.routes.draw do
       get "private-messages-archive/:username" => "list#private_messages_archive", as: "topics_private_messages_archive", defaults: { format: :json }
       get "private-messages-unread/:username" => "list#private_messages_unread", as: "topics_private_messages_unread", defaults: { format: :json }
       get "private-messages-tags/:username/:tag_id.json" => "list#private_messages_tag", as: "topics_private_messages_tag", defaults: { format: :json }
+      get "private-messages-new/:username" => "list#private_messages_new", as: "topics_private_messages_new", defaults: { format: :json }
+      get "private-messages-warnings/:username" => "list#private_messages_warnings", as: "topics_private_messages_warnings", defaults: { format: :json }
       get "groups/:group_name" => "list#group_topics", as: "group_topics", group_name: RouteFormat.username
 
       scope "/private-messages-group/:username", group_name: RouteFormat.username do
         get ":group_name.json" => "list#private_messages_group", as: "topics_private_messages_group"
         get ":group_name/archive.json" => "list#private_messages_group_archive", as: "topics_private_messages_group_archive"
+        get ":group_name/new.json" => "list#private_messages_group_new", as: "topics_private_messages_group_new"
+        get ":group_name/unread.json" => "list#private_messages_group_unread", as: "topics_private_messages_group_unread"
       end
     end
 
@@ -769,12 +838,13 @@ Discourse::Application.routes.draw do
     get 'embed/count' => 'embed#count'
     get 'embed/info' => 'embed#info'
 
-    get "new-topic" => "list#latest"
-    get "new-message" => "list#latest"
+    get "new-topic" => "new_topic#index"
+    get "new-message" => "new_topic#index"
 
     # Topic routes
     get "t/id_for/:slug" => "topics#id_for_slug"
-    get "t/:slug/:topic_id/print" => "topics#show", format: :html, print: true, constraints: { topic_id: /\d+/ }
+    get "t/external_id/:external_id" => "topics#show_by_external_id", format: :json, constraints: { external_id: /[\w-]+/ }
+    get "t/:slug/:topic_id/print" => "topics#show", format: :html, print: 'true', constraints: { topic_id: /\d+/ }
     get "t/:slug/:topic_id/wordpress" => "topics#wordpress", constraints: { topic_id: /\d+/ }
     get "t/:topic_id/wordpress" => "topics#wordpress", constraints: { topic_id: /\d+/ }
     get "t/:slug/:topic_id/moderator-liked" => "topics#moderator_liked", constraints: { topic_id: /\d+/ }
@@ -851,21 +921,16 @@ Discourse::Application.routes.draw do
 
     get "message-bus/poll" => "message_bus#poll"
 
-    resources :drafts, only: [:index]
-    get "draft" => "draft#show"
-    post "draft" => "draft#update"
-    delete "draft" => "draft#destroy"
+    resources :drafts, only: [:index, :create, :show, :destroy]
 
+    get "/service-worker.js" => "static#service_worker_asset", format: :js
     if service_worker_asset = Rails.application.assets_manifest.assets['service-worker.js']
       # https://developers.google.com/web/fundamentals/codelabs/debugging-service-workers/
       # Normally the browser will wait until a user closes all tabs that contain the
       # current site before updating to a new Service Worker.
       # Support the old Service Worker path to avoid routing error filling up the
       # logs.
-      get "/service-worker.js" => redirect(relative_url_root + service_worker_asset, status: 302), format: :js
       get service_worker_asset => "static#service_worker_asset", format: :js
-    elsif Rails.env.development?
-      get "/service-worker.js" => "static#service_worker_asset", format: :js
     end
 
     get "cdn_asset/:site/*path" => "static#cdn_asset", format: false, constraints: { format: /.*/ }
@@ -907,7 +972,7 @@ Discourse::Application.routes.draw do
       get '/' => 'tags#index'
       get '/filter/list' => 'tags#index'
       get '/filter/search' => 'tags#search'
-      get '/personal_messages/:username' => 'tags#personal_messages'
+      get '/personal_messages/:username' => 'tags#personal_messages', constraints: { username: RouteFormat.username }
       post '/upload' => 'tags#upload'
       get '/unused' => 'tags#list_unused'
       delete '/unused' => 'tags#destroy_unused'
@@ -916,9 +981,11 @@ Discourse::Application.routes.draw do
         scope path: '/c/*category_slug_path_with_id' do
           Discourse.filters.each do |filter|
             get "/none/:tag_id/l/#{filter}" => "tags#show_#{filter}", as: "tag_category_none_show_#{filter}", defaults: { no_subcategories: true }
+            get "/all/:tag_id/l/#{filter}" => "tags#show_#{filter}", as: "tag_category_all_show_#{filter}", defaults: { no_subcategories: false }
           end
 
           get '/none/:tag_id' => 'tags#show', as: 'tag_category_none_show', defaults: { no_subcategories: true }
+          get '/all/:tag_id' => 'tags#show', as: 'tag_category_all_show', defaults: { no_subcategories: false }
 
           Discourse.filters.each do |filter|
             get "/:tag_id/l/#{filter}" => "tags#show_#{filter}", as: "tag_category_show_#{filter}"
@@ -954,10 +1021,7 @@ Discourse::Application.routes.draw do
     get "/safe-mode" => "safe_mode#index"
     post "/safe-mode" => "safe_mode#enter", as: "safe_mode_enter"
 
-    unless Rails.env.production?
-      get "/qunit" => "qunit#index"
-      get "/wizard/qunit" => "wizard#qunit"
-    end
+    get "/theme-qunit" => "qunit#theme"
 
     post "/push_notifications/subscribe" => "push_notification#subscribe"
     post "/push_notifications/unsubscribe" => "push_notification#unsubscribe"
@@ -969,9 +1033,11 @@ Discourse::Application.routes.draw do
     post "/do-not-disturb" => "do_not_disturb#create"
     delete "/do-not-disturb" => "do_not_disturb#destroy"
 
-    if Rails.env.development?
-      mount DiscourseDev::Engine => "/dev/"
-    end
+    post "/presence/update" => "presence#update"
+    get "/presence/get" => "presence#get"
+
+    put "user-status" => "user_status#set"
+    delete "user-status" => "user_status#clear"
 
     get "*url", to: 'permalinks#show', constraints: PermalinkConstraint.new
   end

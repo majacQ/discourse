@@ -1,16 +1,11 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-require 'jobs/regular/process_post'
-
-describe Jobs::ProcessPost do
-
+RSpec.describe Jobs::ProcessPost do
   it "returns when the post cannot be found" do
     expect { Jobs::ProcessPost.new.perform(post_id: 1, sync_exec: true) }.not_to raise_error
   end
 
   context 'with a post' do
-
     fab!(:post) { Fabricate(:post) }
 
     it 'does not erase posts when CookedPostProcessor malfunctions' do
@@ -37,6 +32,7 @@ describe Jobs::ProcessPost do
     it 'processes posts' do
       post = Fabricate(:post, raw: "<img src='#{Discourse.base_url_no_prefix}/awesome/picture.png'>")
       expect(post.cooked).to match(/http/)
+      stub_image_size
 
       Jobs::ProcessPost.new.execute(post_id: post.id)
       post.reload
@@ -53,6 +49,7 @@ describe Jobs::ProcessPost do
     it "extracts links to quoted posts" do
       quoted_post = Fabricate(:post, raw: "This is a post with a link to https://www.discourse.org", post_number: 42)
       post.update_columns(raw: "This quote is the best\n\n[quote=\"#{quoted_post.user.username}, topic:#{quoted_post.topic_id}, post:#{quoted_post.post_number}\"]\n#{quoted_post.excerpt}\n[/quote]")
+      stub_image_size
       # when creating a quote, we also create the reflexion link
       expect { Jobs::ProcessPost.new.execute(post_id: post.id) }.to change { TopicLink.count }.by(2)
     end
@@ -60,6 +57,7 @@ describe Jobs::ProcessPost do
     it "extracts links to oneboxed topics" do
       oneboxed_post = Fabricate(:post)
       post.update_columns(raw: "This post is the best\n\n#{oneboxed_post.full_url}")
+      stub_image_size
       # when creating a quote, we also create the reflexion link
       expect { Jobs::ProcessPost.new.execute(post_id: post.id) }.to change { TopicLink.count }.by(2)
     end
@@ -89,43 +87,36 @@ describe Jobs::ProcessPost do
       Jobs::ProcessPost.new.execute(post_id: post2.id)
       expect(post.topic.reload.excerpt).to eq("Some OP content")
     end
-
-    it "automatically tags first posts" do
-      SiteSetting.tagging_enabled = true
-
-      Fabricate(:watched_word, action: WatchedWord.actions[:tag], word: "Greetings?", replacement: "hello , world")
-
-      post = Fabricate(:post, raw: "Greeting", cooked: "")
-      Jobs::ProcessPost.new.execute(post_id: post.id)
-      expect(post.topic.reload.tags.pluck(:name)).to contain_exactly()
-
-      post = Fabricate(:post, raw: "Greetings", cooked: "")
-      Jobs::ProcessPost.new.execute(post_id: post.id)
-      expect(post.topic.reload.tags.pluck(:name)).to contain_exactly()
-
-      post = Fabricate(:post, raw: "Greetings?", cooked: "")
-      Jobs::ProcessPost.new.execute(post_id: post.id)
-      expect(post.topic.reload.tags.pluck(:name)).to contain_exactly("hello", "world")
-    end
-
-    it "automatically tags first posts (regex)" do
-      SiteSetting.tagging_enabled = true
-      SiteSetting.watched_words_regular_expressions = true
-
-      Fabricate(:watched_word, action: WatchedWord.actions[:tag], word: "Greetings?", replacement: "hello , world")
-
-      post = Fabricate(:post, raw: "Greeting", cooked: "")
-      Jobs::ProcessPost.new.execute(post_id: post.id)
-      expect(post.topic.reload.tags.pluck(:name)).to contain_exactly("hello", "world")
-
-      post = Fabricate(:post, raw: "Greetings", cooked: "")
-      Jobs::ProcessPost.new.execute(post_id: post.id)
-      expect(post.topic.reload.tags.pluck(:name)).to contain_exactly("hello", "world")
-
-      post = Fabricate(:post, raw: "Greetings?", cooked: "")
-      Jobs::ProcessPost.new.execute(post_id: post.id)
-      expect(post.topic.reload.tags.pluck(:name)).to contain_exactly("hello", "world")
-    end
   end
 
+  describe "#enqueue_pull_hotlinked_images" do
+    fab!(:post) { Fabricate(:post, created_at: 20.days.ago) }
+    let(:job) { Jobs::ProcessPost.new }
+
+    it "runs even when download_remote_images_to_local is disabled" do
+      # We want to run it to pull hotlinked optimized images
+      SiteSetting.download_remote_images_to_local = false
+      expect_enqueued_with(job: :pull_hotlinked_images, args: { post_id: post.id }) do
+        job.execute({ post_id: post.id })
+      end
+    end
+
+    context "when download_remote_images_to_local? is enabled" do
+      before do
+        SiteSetting.download_remote_images_to_local = true
+      end
+
+      it "enqueues" do
+        expect_enqueued_with(job: :pull_hotlinked_images, args: { post_id: post.id }) do
+          job.execute({ post_id: post.id })
+        end
+      end
+
+      it "does not run when requested to skip" do
+        job.execute({ post_id: post.id, skip_pull_hotlinked_images: true })
+        expect(Jobs::PullHotlinkedImages.jobs.size).to eq(0)
+      end
+    end
+
+  end
 end

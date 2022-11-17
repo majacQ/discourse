@@ -19,9 +19,14 @@ class Auth::ManagedAuthenticator < Auth::Authenticator
     info["email"] || info["nickname"] || info["name"]
   end
 
-  # These three methods are designed to be overriden by child classes
+  # These three methods are designed to be overridden by child classes
   def match_by_email
     true
+  end
+
+  # Depending on the authenticator, this could be insecure, so it's disabled by default
+  def match_by_username
+    false
   end
 
   def primary_email_verified?(auth_token)
@@ -67,6 +72,16 @@ class Auth::ManagedAuthenticator < Auth::Authenticator
       association.user = user
     end
 
+    # Matching an account by username
+    if match_by_username &&
+        association.user.nil? &&
+        SiteSetting.username_change_period.zero? &&
+        (user = find_user_by_username(auth_token))
+
+      UserAssociatedAccount.where(user: user, provider_name: auth_token[:provider]).destroy_all # Destroy existing associations for the new user
+      association.user = user
+    end
+
     # Update all the metadata in the association:
     association.info = auth_token[:info] || {}
     association.credentials = auth_token[:credentials] || {}
@@ -76,17 +91,6 @@ class Auth::ManagedAuthenticator < Auth::Authenticator
 
     # Save to the DB. Do this even if we don't have a user - it might be linked up later in after_create_account
     association.save!
-
-    # Update the user's email address from the auth payload
-    if association.user &&
-        (always_update_user_email? || association.user.email.end_with?(".invalid")) &&
-        primary_email_verified?(auth_token) &&
-        (email = auth_token.dig(:info, :email)) &&
-        (email != association.user.email) &&
-        !User.find_by_email(email)
-
-      association.user.update!(email: email)
-    end
 
     # Update avatar/profile
     retrieve_avatar(association.user, association.info["image"])
@@ -104,6 +108,7 @@ class Auth::ManagedAuthenticator < Auth::Authenticator
     end
     result.username = info[:nickname]
     result.email_valid = primary_email_verified?(auth_token) if result.email.present?
+    result.overrides_email = always_update_user_email?
     result.extra_data = {
       provider: auth_token[:provider],
       uid: auth_token[:uid]
@@ -113,20 +118,29 @@ class Auth::ManagedAuthenticator < Auth::Authenticator
     result
   end
 
-  def after_create_account(user, auth)
-    auth_token = auth[:extra_data]
+  def after_create_account(user, auth_result)
+    auth_token = auth_result[:extra_data]
     association = UserAssociatedAccount.find_or_initialize_by(provider_name: auth_token[:provider], provider_uid: auth_token[:uid])
     association.user = user
     association.save!
 
     retrieve_avatar(user, association.info["image"])
     retrieve_profile(user, association.info)
+
+    auth_result.apply_associated_attributes!
   end
 
   def find_user_by_email(auth_token)
     email = auth_token.dig(:info, :email)
     if email && primary_email_verified?(auth_token)
       User.find_by_email(email)
+    end
+  end
+
+  def find_user_by_username(auth_token)
+    username = auth_token.dig(:info, :nickname)
+    if username
+      User.find_by_username(username)
     end
   end
 

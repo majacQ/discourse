@@ -7,9 +7,13 @@ Discourse::Application.configure do
   # every request.  This slows down response time but is perfect for development
   # since you don't have to restart the web server when you make code changes.
   config.cache_classes = false
+  config.file_watcher = ActiveSupport::EventedFileUpdateChecker
 
   # Log error messages when you accidentally call methods on nil.
   config.eager_load = false
+
+  # Use the schema_cache.yml file generated during db:migrate (via db:schema:cache:dump)
+  config.active_record.use_schema_cache_dump = true
 
   # Show full error reports and disable caching
   config.consider_all_requests_local       = true
@@ -38,7 +42,7 @@ Discourse::Application.configure do
 
   config.handlebars.precompile = true
 
-  # we recommend you use mailcatcher https://github.com/sj26/mailcatcher
+  # we recommend you use mailhog https://github.com/mailhog/MailHog
   config.action_mailer.smtp_settings = { address: "localhost", port: 1025 }
 
   config.action_mailer.raise_delivery_errors = true
@@ -63,6 +67,7 @@ Discourse::Application.configure do
   end
 
   if hosts = ENV['DISCOURSE_DEV_HOSTS']
+    Discourse.deprecate("DISCOURSE_DEV_HOSTS is deprecated. Use RAILS_DEVELOPMENT_HOSTS instead.")
     config.hosts.concat(hosts.split(","))
   end
 
@@ -80,7 +85,7 @@ Discourse::Application.configure do
     config.developer_emails = emails.split(",").map(&:downcase).map(&:strip)
   end
 
-  if defined?(Rails::Server) || defined?(Puma) || defined?(Unicorn)
+  if ENV["DISCOURSE_SKIP_CSS_WATCHER"] != "1" && (defined?(Rails::Server) || defined?(Puma) || defined?(Unicorn))
     require 'stylesheet/watcher'
     STDERR.puts "Starting CSS change watcher"
     @watcher = Stylesheet::Watcher.watch
@@ -106,4 +111,6 @@ Discourse::Application.configure do
       Bullet.rails_logger = true
     end
   end
+
+  config.hosts << /\A(([a-z0-9-]+)\.)*localhost(\:\d+)?\Z/
 end

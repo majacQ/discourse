@@ -32,7 +32,8 @@ module Oneboxer
   end
 
   def self.force_get_hosts
-    hosts = ['http://us.battle.net', 'https://news.yahoo.com']
+    hosts = []
+    hosts += SiteSetting.force_get_hosts.split('|').collect { |domain| "https://#{domain}" }
     hosts += SiteSetting.cache_onebox_response_body_domains.split('|').collect { |domain| "https://www.#{domain}" }
     hosts += amazon_domains
 
@@ -45,6 +46,14 @@ module Oneboxer
 
   def self.allowed_post_types
     @allowed_post_types ||= [Post.types[:regular], Post.types[:moderator_action]]
+  end
+
+  def self.local_handlers
+    @local_handlers ||= {}
+  end
+
+  def self.register_local_handler(controller, &handler)
+    local_handlers[controller] = handler
   end
 
   def self.preview(url, options = nil)
@@ -228,7 +237,7 @@ module Oneboxer
   end
 
   def self.onebox_raw(url, opts = {})
-    url = UrlHelper.escape_uri(url).to_s
+    url = UrlHelper.normalized_encode(url).to_s
     local_onebox(url, opts) || external_onebox(url)
   rescue => e
     # no point warning here, just cause we have an issue oneboxing a url
@@ -247,6 +256,10 @@ module Oneboxer
       when "topics"  then local_topic_html(url, route, opts)
       when "users"   then local_user_html(url, route)
       when "list"    then local_category_html(url, route)
+      else
+        if handler = local_handlers[route[:controller]]
+          handler.call(url, route)
+        end
       end
 
     html = html.presence || "<a href='#{URI(url).to_s}'>#{URI(url).to_s}</a>"
@@ -320,7 +333,7 @@ module Oneboxer
       args = {
         topic_id: topic.id,
         post_number: post.post_number,
-        avatar: PrettyText.avatar_img(post.user.avatar_template, "tiny"),
+        avatar: PrettyText.avatar_img(post.user.avatar_template_url, "tiny"),
         original_url: url,
         title: PrettyText.unescape_emoji(CGI::escapeHTML(topic.title)),
         category_html: CategoryBadge.html_for(topic.category),
@@ -378,10 +391,6 @@ module Oneboxer
     end
   end
 
-  def self.blocked_domains
-    SiteSetting.blocked_onebox_domains.split("|")
-  end
-
   def self.preserve_fragment_url_hosts
     @preserve_fragment_url_hosts ||= ['http://github.com']
   end
@@ -394,26 +403,34 @@ module Oneboxer
     allowed += SiteSetting.allowed_iframes.split("|")
   end
 
-  def self.external_onebox(url)
+  def self.external_onebox(url, available_strategies = nil)
     Discourse.cache.fetch(onebox_cache_key(url), expires_in: 1.day) do
-      fd_options = {
-        ignore_redirects: ignore_redirects,
-        ignore_hostnames: blocked_domains,
-        force_get_hosts: force_get_hosts,
-        force_custom_user_agent_hosts: force_custom_user_agent_hosts,
-        preserve_fragment_url_hosts: preserve_fragment_url_hosts
-      }
+      uri = URI(url)
+      available_strategies ||= Oneboxer.ordered_strategies(uri.hostname)
+      strategy = available_strategies.shift
 
-      user_agent_override = SiteSetting.cache_onebox_user_agent if Oneboxer.cache_response_body?(url) && SiteSetting.cache_onebox_user_agent.present?
-      fd_options[:default_user_agent] = user_agent_override if user_agent_override
-
-      fd = FinalDestination.new(url, fd_options)
+      if SiteSetting.block_onebox_on_redirect
+        max_redirects = 0
+      end
+      fd = FinalDestination.new(
+        url,
+        get_final_destination_options(url, strategy).merge(
+          stop_at_blocked_pages: true,
+          max_redirects: max_redirects,
+          initial_https_redirect_ignore_limit: SiteSetting.block_onebox_on_redirect
+        )
+      )
       uri = fd.resolve
+
+      return blank_onebox if fd.status == :blocked_page
 
       if fd.status != :resolved
         args = { link: url }
         if fd.status == :invalid_address
           args[:error_message] = I18n.t("errors.onebox.invalid_address", hostname: fd.hostname)
+        elsif (fd.status_code || uri.nil?) && available_strategies.present?
+          # Try a different oneboxing strategy, if we have any options left:
+          return external_onebox(url, available_strategies)
         elsif fd.status_code
           args[:error_message] = I18n.t("errors.onebox.error_response", status_code: fd.status_code)
         end
@@ -423,32 +440,38 @@ module Oneboxer
         return error_box
       end
 
-      return blank_onebox if uri.blank? || blocked_domains.any? { |hostname| uri.hostname.match?(hostname) }
+      return blank_onebox if uri.blank?
 
       onebox_options = {
         max_width: 695,
-        sanitize_config: Onebox::DiscourseOneboxSanitizeConfig::Config::DISCOURSE_ONEBOX,
+        sanitize_config: Onebox::SanitizeConfig::DISCOURSE_ONEBOX,
         allowed_iframe_origins: allowed_iframe_origins,
         hostname: GlobalSetting.hostname,
         facebook_app_access_token: SiteSetting.facebook_app_access_token,
         disable_media_download_controls: SiteSetting.disable_onebox_media_download_controls,
-        body_cacher: self
+        body_cacher: self,
+        content_type: fd.content_type
       }
 
       onebox_options[:cookie] = fd.cookie if fd.cookie
+
+      user_agent_override = SiteSetting.cache_onebox_user_agent if Oneboxer.cache_response_body?(url) && SiteSetting.cache_onebox_user_agent.present?
       onebox_options[:user_agent] = user_agent_override if user_agent_override
 
-      r = Onebox.preview(uri.to_s, onebox_options)
-      result = { onebox: r.to_s, preview: r&.placeholder_html.to_s }
+      preview_result = Onebox.preview(uri.to_s, onebox_options)
+      result = {
+        onebox: WordWatcher.censor(preview_result.to_s),
+        preview: WordWatcher.censor(preview_result.placeholder_html.to_s)
+      }
 
-      # NOTE: Call r.errors after calling placeholder_html
-      if r.errors.any?
-        error_keys = r.errors.keys
+      # NOTE: Call preview_result.errors after calling placeholder_html
+      if preview_result.errors.any?
+        error_keys = preview_result.errors.keys
         skip_if_only_error = [:image]
         unless error_keys.length == 1 && skip_if_only_error.include?(error_keys.first)
           missing_attributes = error_keys.map(&:to_s).sort.join(I18n.t("word_connector.comma"))
           error_message = I18n.t("errors.onebox.missing_data", missing_attributes: missing_attributes, count: error_keys.size)
-          args = r.data.merge(error_message: error_message)
+          args = preview_result.verified_data.merge(error_message: error_message)
 
           if result[:preview].blank?
             result[:preview] = preview_error_onebox(args)
@@ -465,6 +488,8 @@ module Oneboxer
           end
         end
       end
+
+      Oneboxer.cache_preferred_strategy(uri.hostname, strategy)
 
       result
     end
@@ -490,4 +515,71 @@ module Oneboxer
     end
   end
 
+  def self.ordered_strategies(hostname)
+    all = strategies.keys
+    preferred = Oneboxer.preferred_strategy(hostname)
+
+    all.insert(0, all.delete(preferred)) if all.include?(preferred)
+
+    all
+  end
+
+  def self.strategies
+    {
+      default: {}, # don't override anything by default
+      force_get_and_ua: {
+        force_get_host: true,
+        force_custom_user_agent_host: true,
+      },
+    }
+  end
+
+  def self.cache_preferred_strategy(hostname, strategy)
+    return if strategy == :default
+
+    key = redis_oneboxer_strategy_key(hostname)
+    Discourse.redis.without_namespace.setex(key, 2.weeks.to_i, strategy.to_s)
+  end
+
+  def self.clear_preferred_strategy!(hostname)
+    key = redis_oneboxer_strategy_key(hostname)
+    Discourse.redis.without_namespace.del(key)
+  end
+
+  def self.preferred_strategy(hostname)
+    key = redis_oneboxer_strategy_key(hostname)
+    Discourse.redis.without_namespace.get(key)&.to_sym
+  end
+
+  def self.redis_oneboxer_strategy_key(hostname)
+    "ONEBOXER_STRATEGY_#{hostname}"
+  end
+
+  def self.get_final_destination_options(url, strategy = nil)
+    fd_options = {
+      ignore_redirects: ignore_redirects,
+      force_get_hosts: force_get_hosts,
+      force_custom_user_agent_hosts: force_custom_user_agent_hosts,
+      preserve_fragment_url_hosts: preserve_fragment_url_hosts,
+      timeout: 5
+    }
+
+    uri = URI(url)
+
+    if strategy.blank?
+      strategy = Oneboxer.ordered_strategies(uri.hostname).shift
+    end
+
+    if strategy && Oneboxer.strategies[strategy][:force_get_host]
+      fd_options[:force_get_hosts] = ["https://#{uri.hostname}"]
+    end
+    if strategy && Oneboxer.strategies[strategy][:force_custom_user_agent_host]
+      fd_options[:force_custom_user_agent_hosts] = ["https://#{uri.hostname}"]
+    end
+
+    user_agent_override = SiteSetting.cache_onebox_user_agent if Oneboxer.cache_response_body?(url) && SiteSetting.cache_onebox_user_agent.present?
+    fd_options[:default_user_agent] = user_agent_override if user_agent_override
+
+    fd_options
+  end
 end

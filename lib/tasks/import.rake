@@ -57,8 +57,8 @@ def insert_topic_users
   log "Inserting topic users..."
 
   DB.exec <<-SQL
-    INSERT INTO topic_users (user_id, topic_id, posted, last_read_post_number, highest_seen_post_number, first_visited_at, last_visited_at, total_msecs_viewed)
-         SELECT user_id, topic_id, 't' , MAX(post_number), MAX(post_number), MIN(created_at), MAX(created_at), COUNT(id) * #{MS_SPEND_CREATING_POST}
+    INSERT INTO topic_users (user_id, topic_id, posted, last_read_post_number, first_visited_at, last_visited_at, total_msecs_viewed)
+         SELECT user_id, topic_id, 't' , MAX(post_number), MIN(created_at), MAX(created_at), COUNT(id) * #{MS_SPEND_CREATING_POST}
            FROM posts
           WHERE user_id > 0
        GROUP BY user_id, topic_id
@@ -160,7 +160,8 @@ def insert_user_options
                   auto_track_topics_after_msecs,
                   notification_level_when_replying,
                   like_notification_frequency,
-                  skip_new_user_tips
+                  skip_new_user_tips,
+                  hide_profile_and_presence
                 )
              SELECT u.id
                   , #{SiteSetting.default_email_mailing_list_mode}
@@ -181,6 +182,7 @@ def insert_user_options
                   , #{SiteSetting.default_other_notification_level_when_replying}
                   , #{SiteSetting.default_other_like_notification_frequency}
                   , #{SiteSetting.default_other_skip_new_user_tips}
+                  , #{SiteSetting.default_hide_profile_and_presence}
                FROM users u
           LEFT JOIN user_options uo ON uo.user_id = u.id
               WHERE uo.user_id IS NULL

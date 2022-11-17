@@ -23,7 +23,11 @@ export function startPageTracking(router, appEvents, documentTitle) {
     return;
   }
   router.on("routeDidChange", (transition) => {
-    // we ocassionally prevent tracking of replaced pages when only query params changed
+    if (transition.isAborted) {
+      return;
+    }
+
+    // we occasionally prevent tracking of replaced pages when only query params changed
     // eg: google analytics
     const replacedOnlyQueryParams =
       transition.urlMethod === "replace" && transition.queryParamsOnly;
@@ -38,6 +42,8 @@ export function startPageTracking(router, appEvents, documentTitle) {
         url,
         title: documentTitle.getTitle(),
         currentRouteName: router.currentRouteName,
+        currentRouteParams: router.currentRoute.params,
+        currentRouteParentName: router.currentRoute.parent?.name,
         replacedOnlyQueryParams,
       });
     });

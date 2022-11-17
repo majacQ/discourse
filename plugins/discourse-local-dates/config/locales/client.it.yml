@@ -19,7 +19,7 @@ it:
           insert: Inserisci
           advanced_mode: Modalità avanzata
           simple_mode: Modalità semplice
-          format_description: "Formato utilizzato per visualizzare la data per l'utente. Usa Z per mostrare l'offset e zz per il nome del fuso orario."
+          format_description: "Formato utilizzato per visualizzare la data per l'utente. Usa Z per mostrare la differenza di orario e zz per il nome del fuso orario."
           timezones_title: Fusi orari da visualizzare
           timezones_description: I fusi orari verranno utilizzati per visualizzare le date nell'anteprima e nel fallback.
           recurring_title: Ricorrenza
@@ -31,6 +31,7 @@ it:
           format_title: Formato data
           timezone: Fuso orario
           until: Fino a...
+          current_timezone: "Fuso orario attuale:"
           recurring:
             every_day: "Ogni giorno"
             every_week: "Ogni settimana"
@@ -40,3 +41,4 @@ it:
             every_three_months: "Ogni tre mesi"
             every_six_months: "Ogni sei mesi"
             every_year: "Ogni anno"
+      default_title: "Evento %{site_name}"

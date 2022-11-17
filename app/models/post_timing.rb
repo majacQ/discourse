@@ -58,9 +58,9 @@ class PostTiming < ActiveRecord::Base
     record_new_timing(args) if rows == 0
   end
 
-  def self.destroy_last_for(user, topic_id)
-    topic = Topic.find(topic_id)
-    post_number = user.staff? ? topic.highest_staff_post_number : topic.highest_post_number
+  def self.destroy_last_for(user, topic_id: nil, topic: nil)
+    topic ||= Topic.find(topic_id)
+    post_number = user.whisperer? ? topic.highest_staff_post_number : topic.highest_post_number
 
     last_read = post_number - 1
 
@@ -71,7 +71,6 @@ class PostTiming < ActiveRecord::Base
       end
 
       TopicUser.where(user_id: user.id, topic_id: topic.id).update_all(
-        highest_seen_post_number: last_read,
         last_read_post_number: last_read
       )
 
@@ -226,6 +225,5 @@ end
 # Indexes
 #
 #  index_post_timings_on_user_id  (user_id)
-#  post_timings_summary           (topic_id,post_number)
 #  post_timings_unique            (topic_id,post_number,user_id) UNIQUE
 #

@@ -10,9 +10,9 @@ import {
 } from "discourse/tests/helpers/qunit-helpers";
 import AppEvents from "discourse/services/app-events";
 import EmberObject from "@ember/object";
-import Post from "discourse/models/post";
 import createStore from "discourse/tests/helpers/create-store";
 import { test } from "qunit";
+import { getOwner } from "discourse-common/lib/get-owner";
 
 function createComposer(opts) {
   opts = opts || {};
@@ -31,7 +31,7 @@ discourseModule("Unit | Model | composer", function () {
   test("replyLength", function (assert) {
     const replyLength = function (val, expectedLength) {
       const composer = createComposer({ reply: val });
-      assert.equal(composer.get("replyLength"), expectedLength);
+      assert.strictEqual(composer.get("replyLength"), expectedLength);
     };
 
     replyLength("basic reply", 11, "basic reply length");
@@ -47,7 +47,7 @@ discourseModule("Unit | Model | composer", function () {
       2,
       "handles nested quotes correctly"
     );
-    replyLength("<!-- a commnent -->", 0, "remove comments");
+    replyLength("<!-- a comment -->", 0, "remove comments");
 
     replyLength(
       "<!-- a comment -->\n more text \n<!-- a comment -->",
@@ -79,7 +79,11 @@ discourseModule("Unit | Model | composer", function () {
         action = CREATE_TOPIC;
       }
       const composer = createComposer({ reply: val, action });
-      assert.equal(composer.get("missingReplyCharacters"), expected, message);
+      assert.strictEqual(
+        composer.get("missingReplyCharacters"),
+        expected,
+        message
+      );
     };
 
     missingReplyCharacters(
@@ -115,7 +119,7 @@ discourseModule("Unit | Model | composer", function () {
       reply: link,
     });
 
-    assert.equal(
+    assert.strictEqual(
       composer.get("missingReplyCharacters"),
       0,
       "don't require any post content"
@@ -128,7 +132,11 @@ discourseModule("Unit | Model | composer", function () {
         title: val,
         action: isPM ? PRIVATE_MESSAGE : REPLY,
       });
-      assert.equal(composer.get("missingTitleCharacters"), expected, message);
+      assert.strictEqual(
+        composer.get("missingTitleCharacters"),
+        expected,
+        message
+      );
     };
 
     missingTitleCharacters(
@@ -168,9 +176,13 @@ discourseModule("Unit | Model | composer", function () {
     assert.blank(composer.get("reply"), "the reply is blank by default");
 
     composer.appendText("hello");
-    assert.equal(composer.get("reply"), "hello", "it appends text to nothing");
+    assert.strictEqual(
+      composer.get("reply"),
+      "hello",
+      "it appends text to nothing"
+    );
     composer.appendText(" world");
-    assert.equal(
+    assert.strictEqual(
       composer.get("reply"),
       "hello world",
       "it appends text to existing text"
@@ -180,19 +192,19 @@ discourseModule("Unit | Model | composer", function () {
     composer.appendText("a\n\n\n\nb");
     composer.appendText("c", 3, { block: true });
 
-    assert.equal(composer.get("reply"), "a\n\nc\n\nb");
+    assert.strictEqual(composer.get("reply"), "a\n\nc\n\nb");
 
     composer.clearState();
     composer.appendText("ab");
     composer.appendText("c", 1, { block: true });
 
-    assert.equal(composer.get("reply"), "a\n\nc\n\nb");
+    assert.strictEqual(composer.get("reply"), "a\n\nc\n\nb");
 
     composer.clearState();
     composer.appendText("\nab");
     composer.appendText("c", 0, { block: true });
 
-    assert.equal(composer.get("reply"), "c\n\nab");
+    assert.strictEqual(composer.get("reply"), "c\n\nab");
   });
 
   test("prependText", function (assert) {
@@ -201,17 +213,21 @@ discourseModule("Unit | Model | composer", function () {
     assert.blank(composer.get("reply"), "the reply is blank by default");
 
     composer.prependText("hello");
-    assert.equal(composer.get("reply"), "hello", "it prepends text to nothing");
+    assert.strictEqual(
+      composer.get("reply"),
+      "hello",
+      "it prepends text to nothing"
+    );
 
     composer.prependText("world ");
-    assert.equal(
+    assert.strictEqual(
       composer.get("reply"),
       "world hello",
       "it prepends text to existing text"
     );
 
     composer.prependText("before new line", { new_line: true });
-    assert.equal(
+    assert.strictEqual(
       composer.get("reply"),
       "before new line\n\nworld hello",
       "it prepends text with new line to existing text"
@@ -253,15 +269,16 @@ discourseModule("Unit | Model | composer", function () {
       topic: EmberObject.create({ pm_with_non_human_user: true }),
     });
 
-    assert.equal(composer.get("minimumPostLength"), 1);
+    assert.strictEqual(composer.get("minimumPostLength"), 1);
   });
 
   test("editingFirstPost", function (assert) {
     const composer = createComposer();
     assert.ok(!composer.get("editingFirstPost"), "it's false by default");
 
-    const post = Post.create({ id: 123, post_number: 2 });
-    composer.setProperties({ post: post, action: EDIT });
+    const store = getOwner(this).lookup("service:store");
+    const post = store.createRecord("post", { id: 123, post_number: 2 });
+    composer.setProperties({ post, action: EDIT });
     assert.ok(
       !composer.get("editingFirstPost"),
       "it's false when not editing the first post"
@@ -275,10 +292,11 @@ discourseModule("Unit | Model | composer", function () {
   });
 
   test("clearState", function (assert) {
+    const store = getOwner(this).lookup("service:store");
     const composer = createComposer({
       originalText: "asdf",
       reply: "asdf2",
-      post: Post.create({ id: 1 }),
+      post: store.createRecord("post", { id: 1 }),
       title: "wat",
     });
 
@@ -321,19 +339,19 @@ discourseModule("Unit | Model | composer", function () {
         action: REPLY,
         draftKey: "asfd",
         draftSequence: 1,
-        quote: quote,
+        quote,
       });
     };
 
-    assert.equal(
+    assert.strictEqual(
       newComposer().get("originalText"),
       quote,
       "originalText is the quote"
     );
-    assert.equal(
+    assert.strictEqual(
       newComposer().get("replyDirty"),
       false,
-      "replyDirty is initally false with a quote"
+      "replyDirty is initially false with a quote"
     );
   });
 
@@ -342,12 +360,13 @@ discourseModule("Unit | Model | composer", function () {
     this.siteSettings.max_topic_title_length = 10;
     const composer = createComposer();
 
-    const post = Post.create({
+    const store = getOwner(this).lookup("service:store");
+    const post = store.createRecord("post", {
       id: 123,
       post_number: 2,
       static_doc: true,
     });
-    composer.setProperties({ post: post, action: EDIT });
+    composer.setProperties({ post, action: EDIT });
 
     composer.set("title", "asdf");
     assert.ok(composer.get("titleLengthValid"), "admins can use short titles");
@@ -366,15 +385,16 @@ discourseModule("Unit | Model | composer", function () {
   });
 
   test("title placeholder depends on what you're doing", function (assert) {
+    this.siteSettings.topic_featured_link_enabled = false;
     let composer = createComposer({ action: CREATE_TOPIC });
-    assert.equal(
+    assert.strictEqual(
       composer.get("titlePlaceholder"),
       "composer.title_placeholder",
       "placeholder for normal topic"
     );
 
     composer = createComposer({ action: PRIVATE_MESSAGE });
-    assert.equal(
+    assert.strictEqual(
       composer.get("titlePlaceholder"),
       "composer.title_placeholder",
       "placeholder for private message"
@@ -383,14 +403,14 @@ discourseModule("Unit | Model | composer", function () {
     this.siteSettings.topic_featured_link_enabled = true;
 
     composer = createComposer({ action: CREATE_TOPIC });
-    assert.equal(
+    assert.strictEqual(
       composer.get("titlePlaceholder"),
       "composer.title_or_link_placeholder",
       "placeholder invites you to paste a link"
     );
 
     composer = createComposer({ action: PRIVATE_MESSAGE });
-    assert.equal(
+    assert.strictEqual(
       composer.get("titlePlaceholder"),
       "composer.title_placeholder",
       "placeholder for private message with topic links enabled"
@@ -401,7 +421,7 @@ discourseModule("Unit | Model | composer", function () {
     this.siteSettings.topic_featured_link_enabled = true;
     this.siteSettings.allow_uncategorized_topics = false;
     let composer = createComposer({ action: CREATE_TOPIC });
-    assert.equal(
+    assert.strictEqual(
       composer.get("titlePlaceholder"),
       "composer.title_or_link_placeholder",
       "placeholder invites you to paste a link"

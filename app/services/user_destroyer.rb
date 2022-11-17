@@ -15,7 +15,7 @@ class UserDestroyer
   # Returns a frozen instance of the User if the delete succeeded.
   def destroy(user, opts = {})
     raise Discourse::InvalidParameters.new('user is nil') unless user && user.is_a?(User)
-    raise PostsExistError if !opts[:delete_posts] && user.posts.count != 0
+    raise PostsExistError if !opts[:delete_posts] && user.posts.joins(:topic).count != 0
     @guardian.ensure_can_delete_user!(user)
 
     # default to using a transaction
@@ -40,20 +40,17 @@ class UserDestroyer
         delete_posts(user, category_topic_ids, opts)
       end
 
-      user.post_actions.each do |post_action|
+      user.post_actions.find_each do |post_action|
         post_action.remove_act!(Discourse.system_user)
       end
 
       # Add info about the user to staff action logs
       UserHistory.staff_action_records(
         Discourse.system_user, acting_user: user.username
-      ).each do |log|
-        log.details ||= ''
-        log.details = (log.details.split("\n") +
-            ["user_id: #{user.id}", "username: #{user.username}"]
-          ).join("\n")
-        log.save!
-      end
+      ).update_all([
+        "details = CONCAT(details, ?)",
+        "\nuser_id: #{user.id}\nusername: #{user.username}"
+      ])
 
       # keep track of emails used
       user_emails = user.user_emails.pluck(:email)
@@ -85,6 +82,13 @@ class UserDestroyer
           end
         end
 
+        Invite.where(email: user_emails).each do |invite|
+          # invited_users will be removed by dependent destroy association when user is destroyed
+          invite.invited_groups.destroy_all
+          invite.topic_invites.destroy_all
+          invite.destroy
+        end
+
         unless opts[:quiet]
           if @actor == user
             deleted_by = Discourse.system_user
@@ -101,7 +105,7 @@ class UserDestroyer
 
     # After the user is deleted, remove the reviewable
     if reviewable = ReviewableUser.pending.find_by(target: user)
-      reviewable.perform(@actor, :reject_user_delete)
+      reviewable.perform(@actor, :delete_user)
     end
 
     result
@@ -118,7 +122,7 @@ class UserDestroyer
 
   def agree_with_flags(user)
     ReviewableFlaggedPost.where(target_created_by: user).find_each do |reviewable|
-      reviewable.perform(@actor, :agree_and_keep)
+      reviewable.perform(@actor, :agree_and_keep) if reviewable.actions_for(@guardian).has?(:agree_and_keep)
     end
   end
 

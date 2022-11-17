@@ -114,115 +114,132 @@ task 'multisite:migrate' => ['db:load_config', 'environment', 'set_locale'] do |
     raise "Multisite migrate is only supported in production"
   end
 
-  # TODO: Switch to processes for concurrent migrations because Rails migration
-  # is not thread safe by default.
-  concurrency = 1
+  DistributedMutex.synchronize('db_migration', redis: Discourse.redis.without_namespace, validity: 1200) do
+    # TODO: Switch to processes for concurrent migrations because Rails migration
+    # is not thread safe by default.
+    concurrency = 1
 
-  puts "Multisite migrator is running using #{concurrency} threads"
-  puts
+    puts "Multisite migrator is running using #{concurrency} threads"
+    puts
 
-  exceptions = Queue.new
+    exceptions = Queue.new
 
-  old_stdout = $stdout
-  $stdout = StdOutDemux.new($stdout)
-
-  SeedFu.quiet = true
-
-  def execute_concurently(concurrency, exceptions)
-    queue = Queue.new
-
-    RailsMultisite::ConnectionManagement.each_connection do |db|
-      queue << db
+    if concurrency > 1
+      old_stdout = $stdout
+      $stdout = StdOutDemux.new($stdout)
     end
 
-    concurrency.times { queue << :done }
+    SeedFu.quiet = true
 
-    (1..concurrency).map do
-      Thread.new {
-        while true
-          db = queue.pop
-          break if db == :done
+    def execute_concurrently(concurrency, exceptions)
+      queue = Queue.new
 
-          RailsMultisite::ConnectionManagement.with_connection(db) do
-            begin
-              yield(db) if block_given?
-            rescue => e
-              exceptions << [db, e]
-            ensure
+      RailsMultisite::ConnectionManagement.each_connection do |db|
+        queue << db
+      end
+
+      concurrency.times { queue << :done }
+
+      (1..concurrency).map do
+        Thread.new {
+          while true
+            db = queue.pop
+            break if db == :done
+
+            RailsMultisite::ConnectionManagement.with_connection(db) do
               begin
-                $stdout.finish_chunk
-              rescue => ex
-                STDERR.puts ex.inspect
-                STDERR.puts ex.backtrace
+                yield(db) if block_given?
+              rescue => e
+                exceptions << [db, e]
+              ensure
+                begin
+                  $stdout.finish_chunk if concurrency > 1
+                rescue => ex
+                  STDERR.puts ex.inspect
+                  STDERR.puts ex.backtrace
+                end
               end
             end
           end
+        }
+      end.each(&:join)
+    end
+
+    def check_exceptions(exceptions)
+      if exceptions.length > 0
+        STDERR.puts
+        STDERR.puts "-" * 80
+        STDERR.puts "#{exceptions.length} migrations failed!"
+        while !exceptions.empty?
+          db, e = exceptions.pop
+          STDERR.puts
+          STDERR.puts "Failed to migrate #{db}"
+          STDERR.puts e.inspect
+          STDERR.puts e.backtrace
+          STDERR.puts
         end
-      }
-    end.each(&:join)
-  end
-
-  def check_exceptions(exceptions)
-    if exceptions.length > 0
-      STDERR.puts
-      STDERR.puts "-" * 80
-      STDERR.puts "#{exceptions.length} migrations failed!"
-      while !exceptions.empty?
-        db, e = exceptions.pop
-        STDERR.puts
-        STDERR.puts "Failed to migrate #{db}"
-        STDERR.puts e.inspect
-        STDERR.puts e.backtrace
-        STDERR.puts
+        exit 1
       end
-      exit 1
     end
-  end
 
-  execute_concurently(concurrency, exceptions) do |db|
-    puts "Migrating #{db}"
-    ActiveRecord::Tasks::DatabaseTasks.migrate
-  end
-
-  check_exceptions(exceptions)
-
-  SeedFu.seed(SeedHelper.paths, /001_refresh/)
-
-  execute_concurently(concurrency, exceptions) do |db|
-    puts "Seeding #{db}"
-    SeedFu.seed(SeedHelper.paths, SeedHelper.filter)
-
-    if !Discourse.skip_post_deployment_migrations? && ENV['SKIP_OPTIMIZE_ICONS'] != '1'
-      SiteIconManager.ensure_optimized!
+    execute_concurrently(concurrency, exceptions) do |db|
+      puts "Migrating #{db}"
+      ActiveRecord::Tasks::DatabaseTasks.migrate
     end
+
+    check_exceptions(exceptions)
+
+    SeedFu.seed(SeedHelper.paths, /001_refresh/)
+
+    execute_concurrently(concurrency, exceptions) do |db|
+      puts "Seeding #{db}"
+      SeedFu.seed(SeedHelper.paths, SeedHelper.filter)
+
+      if !Discourse.skip_post_deployment_migrations? && ENV['SKIP_OPTIMIZE_ICONS'] != '1'
+        SiteIconManager.ensure_optimized!
+      end
+    end
+
+    if concurrency > 1
+      $stdout = old_stdout
+    end
+    check_exceptions(exceptions)
+
+    Rake::Task['db:_dump'].invoke
   end
-
-  $stdout = old_stdout
-  check_exceptions(exceptions)
-
-  Rake::Task['db:_dump'].invoke
 end
 
 # we need to run seed_fu every time we run rake db:migrate
 task 'db:migrate' => ['load_config', 'environment', 'set_locale'] do |_, args|
-  migrations = ActiveRecord::Base.connection.migration_context.migrations
-  now_timestamp = Time.now.utc.strftime('%Y%m%d%H%M%S').to_i
-  epoch_timestamp = Time.at(0).utc.strftime('%Y%m%d%H%M%S').to_i
+  DistributedMutex.synchronize('db_migration', redis: Discourse.redis.without_namespace, validity: 300) do
+    migrations = ActiveRecord::Base.connection.migration_context.migrations
+    now_timestamp = Time.now.utc.strftime('%Y%m%d%H%M%S').to_i
+    epoch_timestamp = Time.at(0).utc.strftime('%Y%m%d%H%M%S').to_i
 
-  raise "Migration #{migrations.last.version} is timestamped in the future" if migrations.last.version > now_timestamp
-  raise "Migration #{migrations.first.version} is timestamped before the epoch" if migrations.first.version < epoch_timestamp
+    raise "Migration #{migrations.last.version} is timestamped in the future" if migrations.last.version > now_timestamp
+    raise "Migration #{migrations.first.version} is timestamped before the epoch" if migrations.first.version < epoch_timestamp
 
-  ActiveRecord::Tasks::DatabaseTasks.migrate
+    %i[pg_trgm unaccent].each do |extension|
+      begin
+        DB.exec "CREATE EXTENSION IF NOT EXISTS #{extension}"
+      rescue => e
+        STDERR.puts "Cannot enable database extension #{extension}"
+        STDERR.puts e
+      end
+    end
 
-  if !Discourse.is_parallel_test?
-    Rake::Task['db:_dump'].invoke
-  end
+    ActiveRecord::Tasks::DatabaseTasks.migrate
 
-  SeedFu.quiet = true
-  SeedFu.seed(SeedHelper.paths, SeedHelper.filter)
+    SeedFu.quiet = true
+    SeedFu.seed(SeedHelper.paths, SeedHelper.filter)
 
-  if !Discourse.skip_post_deployment_migrations? && ENV['SKIP_OPTIMIZE_ICONS'] != '1'
-    SiteIconManager.ensure_optimized!
+    if Rails.env.development? && !ENV["RAILS_DB"]
+      Rake::Task['db:schema:cache:dump'].invoke
+    end
+
+    if !Discourse.skip_post_deployment_migrations? && ENV['SKIP_OPTIMIZE_ICONS'] != '1'
+      SiteIconManager.ensure_optimized!
+    end
   end
 
   if !Discourse.is_parallel_test? && MultisiteTestHelpers.load_multisite?
@@ -329,26 +346,7 @@ task 'db:validate_indexes', [:arg] => ['db:ensure_post_migrations', 'environment
 
   db = TemporaryDb.new
   db.start
-
-  ActiveRecord::Base.establish_connection(
-    adapter: 'postgresql',
-    database: 'discourse',
-    port: db.pg_port,
-    host: 'localhost'
-  )
-
-  puts "Running migrations on blank database!"
-
-  old_stdout = $stdout.clone
-  old_stderr = $stderr.clone
-  $stdout.reopen(File.new('/dev/null', 'w'))
-  $stderr.reopen(File.new('/dev/null', 'w'))
-
-  SeedFu.quiet = true
-  Rake::Task["db:migrate"].invoke
-
-  $stdout.reopen(old_stdout)
-  $stderr.reopen(old_stderr)
+  db.migrate
 
   ActiveRecord::Base.establish_connection(
     adapter: 'postgresql',
@@ -554,5 +552,17 @@ task 'db:rebuild_indexes' => 'environment' do
     raise
   ensure
     Discourse.disable_readonly_mode
+  end
+end
+
+desc 'Check that the DB can be accessed'
+task 'db:status:json' do
+  begin
+    Rake::Task['environment'].invoke
+    DB.query('SELECT 1')
+  rescue
+    puts({ status: 'error' }.to_json)
+  else
+    puts({ status: 'ok' }.to_json)
   end
 end

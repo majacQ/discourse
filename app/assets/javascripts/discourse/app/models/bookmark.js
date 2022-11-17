@@ -1,22 +1,28 @@
-import Category from "discourse/models/category";
+import categoryFromId from "discourse-common/utils/category-macro";
 import I18n from "I18n";
 import { Promise } from "rsvp";
 import RestModel from "discourse/models/rest";
 import User from "discourse/models/user";
+import Topic from "discourse/models/topic";
 import { ajax } from "discourse/lib/ajax";
 import { computed } from "@ember/object";
 import discourseComputed from "discourse-common/utils/decorators";
-import { fancyTitle } from "discourse/lib/topic-fancy-title";
 import { formattedReminderTime } from "discourse/lib/bookmark";
 import getURL from "discourse-common/lib/get-url";
 import { longDate } from "discourse/lib/formatter";
 import { none } from "@ember/object/computed";
+import { capitalize } from "@ember/string";
+import { applyModelTransformations } from "discourse/lib/model-transformers";
 
 export const AUTO_DELETE_PREFERENCES = {
   NEVER: 0,
+  CLEAR_REMINDER: 3,
   WHEN_REMINDER_SENT: 1,
   ON_OWNER_REPLY: 2,
 };
+
+export const NO_REMINDER_ICON = "bookmark";
+export const WITH_REMINDER_ICON = "discourse-bookmark-clock";
 
 const Bookmark = RestModel.extend({
   newBookmark: none("id"),
@@ -34,6 +40,13 @@ const Bookmark = RestModel.extend({
     return ajax(this.url, {
       type: "DELETE",
     });
+  },
+
+  attachedTo() {
+    return {
+      target: this.bookmarkable_type.toLowerCase(),
+      targetId: this.bookmarkable_id,
+    };
   },
 
   togglePin() {
@@ -89,11 +102,6 @@ const Bookmark = RestModel.extend({
     });
   },
 
-  @discourseComputed("title")
-  fancyTitle(title) {
-    return fancyTitle(title, this.siteSettings.support_mixed_text_direction);
-  },
-
   @discourseComputed("created_at")
   createdAt(created_at) {
     return new Date(created_at);
@@ -109,7 +117,7 @@ const Bookmark = RestModel.extend({
     const newTags = [];
 
     tags.forEach(function (tag) {
-      if (title.toLowerCase().indexOf(tag) === -1) {
+      if (!title.toLowerCase().includes(tag)) {
         newTags.push(tag);
       }
     });
@@ -117,64 +125,40 @@ const Bookmark = RestModel.extend({
     return newTags;
   },
 
-  @discourseComputed("category_id")
-  category(categoryId) {
-    return Category.findById(categoryId);
-  },
+  category: categoryFromId("category_id"),
 
   @discourseComputed("reminder_at", "currentUser")
   formattedReminder(bookmarkReminderAt, currentUser) {
-    return formattedReminderTime(
-      bookmarkReminderAt,
-      currentUser.resolvedTimezone(currentUser)
-    ).capitalize();
+    return capitalize(
+      formattedReminderTime(bookmarkReminderAt, currentUser.timezone)
+    );
   },
 
-  loadItems(params) {
-    let url = `/u/${this.user.username}/bookmarks.json`;
-
-    if (params) {
-      url += "?" + $.param(params);
-    }
-
-    return ajax(url, { cache: "false" });
+  @discourseComputed("reminder_at")
+  reminderAtExpired(bookmarkReminderAt) {
+    return moment(bookmarkReminderAt) < moment();
   },
 
-  loadMore(additionalParams) {
-    if (!this.more_bookmarks_url) {
-      return Promise.resolve();
-    }
+  @discourseComputed()
+  topicForList() {
+    // for topic level bookmarks we want to jump to the last unread post URL,
+    // which the topic-link helper does by default if no linked post number is
+    // provided
+    const linkedPostNumber =
+      this.bookmarkable_type === "Topic" ? null : this.linked_post_number;
 
-    let moreUrl = this.more_bookmarks_url;
-    if (moreUrl) {
-      let [url, params] = moreUrl.split("?");
-      moreUrl = url;
-      if (params) {
-        moreUrl += "?" + params;
-      }
-      if (additionalParams) {
-        if (moreUrl.includes("?")) {
-          moreUrl += "&" + $.param(additionalParams);
-        } else {
-          moreUrl += "?" + $.param(additionalParams);
-        }
-      }
-    }
-
-    return ajax({ url: moreUrl });
-  },
-
-  @discourseComputed(
-    "post_user_username",
-    "post_user_avatar_template",
-    "post_user_name"
-  )
-  postUser(post_user_username, avatarTemplate, name) {
-    return User.create({
-      username: post_user_username,
-      avatar_template: avatarTemplate,
-      name: name,
+    return Topic.create({
+      id: this.topic_id,
+      fancy_title: this.fancy_title,
+      linked_post_number: linkedPostNumber,
+      last_read_post_number: this.last_read_post_number,
+      highest_post_number: this.highest_post_number,
     });
+  },
+
+  @discourseComputed("bookmarkable_type")
+  bookmarkableTopicAlike(bookmarkable_type) {
+    return ["Topic", "Post"].includes(bookmarkable_type);
   },
 });
 
@@ -182,7 +166,12 @@ Bookmark.reopenClass({
   create(args) {
     args = args || {};
     args.currentUser = args.currentUser || User.current();
+    args.user = User.create(args.user);
     return this._super(args);
+  },
+
+  async applyTransformations(bookmarks) {
+    await applyModelTransformations("bookmark", bookmarks);
   },
 });
 

@@ -3,12 +3,14 @@
 require 'mail'
 
 module Email
-  # cute little guy ain't he?
-  MESSAGE_ID_REGEX = /<(.*@.*)+>/
+  # See https://www.iana.org/assignments/smtp-enhanced-status-codes/smtp-enhanced-status-codes.xhtml#smtp-enhanced-status-codes-1
+  SMTP_STATUS_SUCCESS = "2."
+  SMTP_STATUS_TRANSIENT_FAILURE = "4."
+  SMTP_STATUS_PERMANENT_FAILURE = "5."
 
   def self.is_valid?(email)
     return false unless String === email
-    !!(EmailValidator.email_regex =~ email)
+    EmailAddressValidator.valid_value?(email)
   end
 
   def self.downcase(email)
@@ -53,17 +55,6 @@ module Email
 
   def self.site_title
     SiteSetting.email_site_title.presence || SiteSetting.title
-  end
-
-  # https://tools.ietf.org/html/rfc850#section-2.1.7
-  def self.message_id_rfc_format(message_id)
-    return message_id if message_id =~ MESSAGE_ID_REGEX
-    "<#{message_id}>"
-  end
-
-  def self.message_id_clean(message_id)
-    return message_id if !(message_id =~ MESSAGE_ID_REGEX)
-    message_id.tr("<>", "")
   end
 
   private

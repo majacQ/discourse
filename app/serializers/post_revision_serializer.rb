@@ -190,7 +190,12 @@ class PostRevisionSerializer < ApplicationSerializer
   def all_revisions
     return @all_revisions if @all_revisions
 
-    post_revisions = PostRevision.where(post_id: object.post_id).order(:number).to_a
+    post_revisions = PostRevision
+      .where(post_id: object.post_id)
+      .order(number: :desc)
+      .limit(99)
+      .to_a
+      .reverse
 
     latest_modifications = {
       "raw" => [post.raw],
@@ -203,6 +208,7 @@ class PostRevisionSerializer < ApplicationSerializer
 
     # Retrieve any `tracked_topic_fields`
     PostRevisor.tracked_topic_fields.each_key do |field|
+      next if field == :tags # Special handling below
       if topic.respond_to?(field)
         latest_modifications[field.to_s] = [topic.public_send(field)]
       end

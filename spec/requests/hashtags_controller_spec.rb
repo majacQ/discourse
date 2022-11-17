@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-describe HashtagsController do
+RSpec.describe HashtagsController do
   fab!(:category) { Fabricate(:category) }
   fab!(:tag) { Fabricate(:tag) }
 
@@ -34,6 +32,16 @@ describe HashtagsController do
           )
         end
 
+        it "handles tags with the TAG_HASHTAG_POSTFIX" do
+          get "/hashtags.json", params: { slugs: ["#{tag.name}#{PrettyText::Helpers::TAG_HASHTAG_POSTFIX}"] }
+
+          expect(response.status).to eq(200)
+          expect(response.parsed_body).to eq(
+            "categories" => {},
+            "tags" => { tag.name => tag.full_url }
+          )
+        end
+
         it "does not return restricted categories or hidden tags" do
           get "/hashtags.json", params: { slugs: [private_category.slug, hidden_tag.name] }
 
@@ -49,7 +57,7 @@ describe HashtagsController do
           sign_in(admin)
         end
 
-        it "returns restricted categories and hidden tagss" do
+        it "returns restricted categories and hidden tags" do
           group.add(admin)
 
           get "/hashtags.json", params: { slugs: [private_category.slug, hidden_tag.name] }

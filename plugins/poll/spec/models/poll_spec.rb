@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe ::DiscoursePoll::Poll do
+RSpec.describe ::DiscoursePoll::Poll do
   describe ".transform_for_user_field_override" do
     it "Transforms UserField name if a matching CustomUserField is present" do
       user_field_name = "Something Cool"
@@ -56,7 +54,7 @@ describe ::DiscoursePoll::Poll do
       expect(poll.can_see_results?(user)).to eq(true)
     end
 
-    it "only staff memebers can see results when results setting is staff_only" do
+    it "only staff members can see results when results setting is staff_only" do
       post = Fabricate(:post, raw: "[poll results=staff_only]\n- A\n- B\n[/poll]")
       user = Fabricate(:user)
       poll = post.polls.first
@@ -81,6 +79,10 @@ describe ::DiscoursePoll::Poll do
 
       expect(poll.post).to eq(post)
     end
+  end
 
+  it "is not throwing an error when double save" do
+    post = Fabricate(:post, raw: "[poll]\n- A\n- B\n[/poll]")
+    expect { post.save! }.not_to raise_error
   end
 end

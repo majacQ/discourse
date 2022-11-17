@@ -51,6 +51,10 @@ Fabricator(:moderator, from: :user) do
   username { sequence(:username) { |i| "moderator#{i}" } }
   email { sequence(:email) { |i| "moderator#{i}@discourse.org" } }
   moderator true
+
+  after_create do |user|
+    user.group_users << Fabricate(:group_user, user: user, group: Group[:moderators])
+  end
 end
 
 Fabricator(:admin, from: :user) do
@@ -58,6 +62,10 @@ Fabricator(:admin, from: :user) do
   username { sequence(:username) { |i| "anne#{i}" } }
   email { sequence(:email) { |i| "anne#{i}@discourse.org" } }
   admin true
+
+  after_create do |user|
+    user.group_users << Fabricate(:group_user, user: user, group: Group[:admins])
+  end
 end
 
 Fabricator(:newuser, from: :user) do
@@ -85,6 +93,14 @@ Fabricator(:leader, from: :user) do
   username { sequence(:username) { |i| "leader#{i}" } }
   email { sequence(:email) { |i| "leader#{i}@leaderfun.com" } }
   trust_level TrustLevel[3]
+end
+
+Fabricator(:trust_level_0, from: :user) do
+  trust_level TrustLevel[0]
+end
+
+Fabricator(:trust_level_1, from: :user) do
+  trust_level TrustLevel[1]
 end
 
 Fabricator(:trust_level_4, from: :user) do
@@ -115,4 +131,11 @@ end
 
 Fabricator(:unicode_user, from: :user) do
   username { sequence(:username) { |i| "Löwe#{i}" } }
+end
+
+Fabricator(:bot, from: :user) do
+  id do
+    min_id = User.minimum(:id)
+    [(min_id || 0) - 1, -10].min
+  end
 end

@@ -1,17 +1,11 @@
 # encoding: UTF-8
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe 'rate limiter integration' do
+RSpec.describe 'rate limiter integration' do
 
   before do
     RateLimiter.enable
     RateLimiter.clear_all!
-  end
-
-  after do
-    RateLimiter.disable
   end
 
   it "will rate limit message bus requests once queueing" do
@@ -53,12 +47,13 @@ describe 'rate limiter integration' do
 
   it 'can cleanly limit requests and sets a Retry-After header' do
     freeze_time
-    #request.set_header("action_dispatch.show_exceptions", true)
+
+    RateLimiter.clear_all!
 
     admin = Fabricate(:admin)
     api_key = Fabricate(:api_key, user: admin)
 
-    global_setting :max_admin_api_reqs_per_key_per_minute, 1
+    global_setting :max_admin_api_reqs_per_minute, 1
 
     get '/admin/api/keys.json', headers: {
       HTTP_API_KEY: api_key.key,

@@ -12,11 +12,11 @@ class ReviewablesController < ApplicationController
     offset = params[:offset].to_i
 
     if params[:type].present?
-      raise Discourse::InvalidParameter.new(:type) unless Reviewable.valid_type?(params[:type])
+      raise Discourse::InvalidParameters.new(:type) unless Reviewable.valid_type?(params[:type])
     end
 
     status = (params[:status] || 'pending').to_sym
-    raise Discourse::InvalidParameter.new(:status) unless allowed_statuses.include?(status)
+    raise Discourse::InvalidParameters.new(:status) unless allowed_statuses.include?(status)
 
     topic_id = params[:topic_id] ? params[:topic_id].to_i : nil
     category_id = params[:category_id] ? params[:category_id].to_i : nil
@@ -58,7 +58,8 @@ class ReviewablesController < ApplicationController
       end,
       meta: filters.merge(
         total_rows_reviewables: total_rows, types: meta_types, reviewable_types: Reviewable.types,
-        reviewable_count: Reviewable.list_for(current_user).count
+        reviewable_count: current_user.reviewable_count,
+        unseen_reviewable_count: current_user.unseen_reviewable_count
       )
     }
     if (offset + PER_PAGE) < total_rows
@@ -66,6 +67,16 @@ class ReviewablesController < ApplicationController
     end
     json.merge!(hash)
 
+    render_json_dump(json, rest_serializer: true)
+  end
+
+  def user_menu_list
+    json = {
+      reviewables: Reviewable.basic_serializers_for_list(
+        Reviewable.user_menu_list_for(current_user),
+        current_user
+      ).as_json
+    }
     render_json_dump(json, rest_serializer: true)
   end
 
@@ -199,8 +210,12 @@ class ReviewablesController < ApplicationController
 
       result = reviewable.perform(current_user, params[:action_id].to_sym, args)
     rescue Reviewable::InvalidAction => e
-      # Consider InvalidAction an InvalidAccess
-      raise Discourse::InvalidAccess.new(e.message)
+      if reviewable.type == 'ReviewableUser' && !reviewable.pending? && reviewable.target.blank?
+        raise Discourse::NotFound.new(e.message, custom_message: "reviewables.already_handled_and_user_not_exist")
+      else
+        # Consider InvalidAction an InvalidAccess
+        raise Discourse::InvalidAccess.new(e.message)
+      end
     rescue Reviewable::UpdateConflict
       return render_json_error(I18n.t('reviewables.conflict'), status: 409)
     end
@@ -255,7 +270,7 @@ protected
   end
 
   def allowed_statuses
-    @allowed_statuses ||= (%i[reviewed all] + Reviewable.statuses.keys)
+    @allowed_statuses ||= (%i[reviewed all] + Reviewable.statuses.symbolize_keys.keys)
   end
 
   def version_required

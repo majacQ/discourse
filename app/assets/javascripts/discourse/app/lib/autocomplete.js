@@ -1,4 +1,5 @@
-import { cancel, later } from "@ember/runloop";
+import { cancel } from "@ember/runloop";
+import discourseLater from "discourse-common/lib/later";
 import { caretPosition, setCaretPosition } from "discourse/lib/utilities";
 import { INPUT_DELAY } from "discourse-common/config/environment";
 import Site from "discourse/models/site";
@@ -46,8 +47,6 @@ const keys = {
 let inputTimeout;
 
 export default function (options) {
-  const autocompletePlugin = this;
-
   if (this.length === 0) {
     return;
   }
@@ -55,13 +54,11 @@ export default function (options) {
   if (options === "destroy" || options.updateData) {
     cancel(inputTimeout);
 
-    $(this)
-      .off("keyup.autocomplete")
-      .off("keydown.autocomplete")
-      .off("paste.autocomplete")
-      .off("click.autocomplete");
-
-    $(window).off("click.autocomplete");
+    this[0].removeEventListener("keydown", handleKeyDown);
+    this[0].removeEventListener("keyup", handleKeyUp);
+    this[0].removeEventListener("paste", handlePaste);
+    this[0].removeEventListener("click", closeAutocomplete);
+    window.removeEventListener("click", closeAutocomplete);
 
     if (options === "destroy") {
       return;
@@ -85,6 +82,10 @@ export default function (options) {
     return this;
   }
 
+  if (options && typeof options.preserveKey === "undefined") {
+    options.preserveKey = true;
+  }
+
   const disabled = options && options.disabled;
   let wrap = null;
   let autocompleteOptions = null;
@@ -95,7 +96,7 @@ export default function (options) {
   let div = null;
   let prevTerm = null;
 
-  // By default, when the autcomplete popup is rendered it has the
+  // By default, when the autocomplete popup is rendered it has the
   // first suggestion 'selected', and pressing enter key inserts
   // the first suggestion into the input box.
   // If you want to stop that behavior, i.e. have the popup renders
@@ -112,8 +113,12 @@ export default function (options) {
   const isInput = me[0].tagName === "INPUT" && !options.treatAsTextarea;
   let inputSelectedItems = [];
 
+  function handlePaste() {
+    discourseLater(() => me.trigger("keydown"), 50);
+  }
+
   function closeAutocomplete() {
-    _autoCompletePopper && _autoCompletePopper.destroy();
+    _autoCompletePopper?.destroy();
 
     if (div) {
       div.hide().remove();
@@ -182,7 +187,7 @@ export default function (options) {
       });
   }
 
-  let completeTerm = function (term) {
+  let completeTerm = async function (term) {
     if (term) {
       if (isInput) {
         me.val("");
@@ -192,22 +197,27 @@ export default function (options) {
         addInputSelectedItem(term, true);
       } else {
         if (options.transformComplete) {
-          term = options.transformComplete(term);
+          term = await options.transformComplete(term);
         }
 
         if (term) {
           let text = me.val();
+
           text =
             text.substring(0, completeStart) +
-            (options.key || "") +
+            (options.preserveKey ? options.key || "" : "") +
             term +
             " " +
             text.substring(completeEnd + 1, text.length);
+
           me.val(text);
+
           let newCaretPos = completeStart + 1 + term.length;
+
           if (options.key) {
             newCaretPos++;
           }
+
           setCaretPosition(me[0], newCaretPos);
 
           if (options && options.afterComplete) {
@@ -272,7 +282,7 @@ export default function (options) {
     this.val("");
     completeStart = 0;
     wrap.click(function () {
-      autocompletePlugin.focus();
+      this.focus();
       return true;
     });
   }
@@ -305,9 +315,22 @@ export default function (options) {
     }
     ul.find("li").click(function () {
       selectedOption = ul.find("li").index(this);
-      completeTerm(autocompleteOptions[selectedOption]);
-      if (!options.single) {
-        me.focus();
+      // hack for Gboard, see meta.discourse.org/t/-/187009/24
+      if (autocompleteOptions == null) {
+        const opts = { ...options, _gboard_hack_force_lookup: true };
+        const forcedAutocompleteOptions = dataSource(prevTerm, opts);
+        forcedAutocompleteOptions?.then((data) => {
+          updateAutoComplete(data);
+          completeTerm(autocompleteOptions[selectedOption]);
+          if (!options.single) {
+            me.focus();
+          }
+        });
+      } else {
+        completeTerm(autocompleteOptions[selectedOption]);
+        if (!options.single) {
+          me.focus();
+        }
       }
       return false;
     });
@@ -394,7 +417,11 @@ export default function (options) {
   }
 
   function dataSource(term, opts) {
-    if (prevTerm === term) {
+    const force = opts._gboard_hack_force_lookup;
+    if (force) {
+      delete opts._gboard_hack_force_lookup;
+    }
+    if (prevTerm === term && !force) {
       return SKIP;
     }
 
@@ -443,27 +470,20 @@ export default function (options) {
     closeAutocomplete();
   });
 
-  $(window).on("click.autocomplete", () => closeAutocomplete());
-  $(this).on("click.autocomplete", () => closeAutocomplete());
-
-  $(this).on("paste.autocomplete", () => {
-    later(() => me.trigger("keydown"), 50);
-  });
-
   function checkTriggerRule(opts) {
     return options.triggerRule ? options.triggerRule(me[0], opts) : true;
   }
 
-  $(this).on("keyup.autocomplete", function (e) {
+  function handleKeyUp(e) {
     if (options.debounced) {
       discourseDebounce(this, performAutocomplete, e, INPUT_DELAY);
     } else {
       performAutocomplete(e);
     }
-  });
+  }
 
   function performAutocomplete(e) {
-    if ([keys.esc, keys.enter].indexOf(e.which) !== -1) {
+    if ([keys.esc, keys.enter].includes(e.which)) {
       return true;
     }
 
@@ -473,6 +493,7 @@ export default function (options) {
     if (options.key) {
       if (options.onKeyUp && key !== options.key) {
         let match = options.onKeyUp(me.val(), cp);
+
         if (match) {
           completeStart = cp - match[0].length;
           completeEnd = completeStart + match[0].length - 1;
@@ -499,7 +520,7 @@ export default function (options) {
     }
   }
 
-  $(this).on("keydown.autocomplete", function (e) {
+  function handleKeyDown(e) {
     let c, i, initial, prev, prevIsGood, stopFound, term, total, userToComplete;
     let cp;
 
@@ -511,7 +532,7 @@ export default function (options) {
       // saves us wiring up a change event as well
 
       cancel(inputTimeout);
-      inputTimeout = later(function () {
+      inputTimeout = discourseLater(function () {
         if (inputSelectedItems.length === 0) {
           inputSelectedItems.push("");
         }
@@ -529,26 +550,36 @@ export default function (options) {
     if (!options.key) {
       completeStart = 0;
     }
+
     if (e.which === keys.shift) {
       return;
     }
+
     if (completeStart === null && e.which === keys.backSpace && options.key) {
       c = caretPosition(me[0]);
       c -= 1;
       initial = c;
       prevIsGood = true;
+
       while (prevIsGood && c >= 0) {
         c -= 1;
         prev = me[0].value[c];
         stopFound = prev === options.key;
+
         if (stopFound) {
           prev = me[0].value[c - 1];
+
           if (
             checkTriggerRule({ backSpace: true }) &&
             (!prev || allowedLettersRegex.test(prev))
           ) {
             completeStart = c;
             term = me[0].value.substring(c + 1, initial);
+
+            if (!completeEnd) {
+              completeEnd = c + term.length;
+            }
+
             updateAutoComplete(dataSource(term, options));
             return true;
           }
@@ -561,6 +592,8 @@ export default function (options) {
     if (e.which === keys.esc) {
       if (div !== null) {
         closeAutocomplete();
+        e.preventDefault();
+        e.stopImmediatePropagation();
         return false;
       }
       return true;
@@ -598,7 +631,9 @@ export default function (options) {
             // We're cancelling it, really.
             return true;
           }
+
           e.stopImmediatePropagation();
+          e.preventDefault();
           return false;
         case keys.upArrow:
           selectedOption = selectedOption - 1;
@@ -606,6 +641,7 @@ export default function (options) {
             selectedOption = 0;
           }
           markSelected();
+          e.preventDefault();
           return false;
         case keys.downArrow:
           total = autocompleteOptions.length;
@@ -617,14 +653,16 @@ export default function (options) {
             selectedOption = 0;
           }
           markSelected();
+          e.preventDefault();
           return false;
         case keys.backSpace:
           autocompleteOptions = null;
-          completeEnd = cp;
           cp--;
+          completeEnd = cp;
 
           if (cp < 0) {
             closeAutocomplete();
+
             if (isInput) {
               i = wrap.find("a:last");
               if (i) {
@@ -648,7 +686,13 @@ export default function (options) {
           return true;
       }
     }
-  });
+  }
+
+  window.addEventListener("click", closeAutocomplete);
+  this[0].addEventListener("click", closeAutocomplete);
+  this[0].addEventListener("paste", handlePaste);
+  this[0].addEventListener("keyup", handleKeyUp);
+  this[0].addEventListener("keydown", handleKeyDown);
 
   return this;
 }

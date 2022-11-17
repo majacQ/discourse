@@ -2,14 +2,17 @@
 
 require "uri"
 require "mini_mime"
-require_dependency "file_store/base_store"
-require_dependency "s3_helper"
-require_dependency "file_helper"
+require "file_store/base_store"
+require "s3_helper"
+require "file_helper"
 
 module FileStore
 
   class S3Store < BaseStore
     TOMBSTONE_PREFIX ||= "tombstone/"
+
+    delegate :abort_multipart, :presign_multipart_part, :list_multipart_parts,
+      :complete_multipart, to: :s3_helper
 
     def initialize(s3_helper = nil)
       @s3_helper = s3_helper
@@ -22,6 +25,7 @@ module FileStore
     end
 
     def store_upload(file, upload, content_type = nil)
+      upload.url = nil
       path = get_path_for_upload(upload)
       url, upload.etag = store_file(
         file,
@@ -34,16 +38,45 @@ module FileStore
       url
     end
 
+    def move_existing_stored_upload(
+      existing_external_upload_key:,
+      upload: nil,
+      content_type: nil
+    )
+      upload.url = nil
+      path = get_path_for_upload(upload)
+      url, upload.etag = store_file(
+        nil,
+        path,
+        filename: upload.original_filename,
+        content_type: content_type,
+        cache_locally: false,
+        private_acl: upload.secure?,
+        move_existing: true,
+        existing_external_upload_key: existing_external_upload_key
+      )
+      url
+    end
+
     def store_optimized_image(file, optimized_image, content_type = nil, secure: false)
+      optimized_image.url = nil
       path = get_path_for_optimized_image(optimized_image)
       url, optimized_image.etag = store_file(file, path, content_type: content_type, private_acl: secure)
       url
     end
 
+    # File is an actual Tempfile on disk
+    #
+    # An existing_external_upload_key is given for cases where move_existing is specified.
+    # This is an object already uploaded directly to S3 that we are now moving
+    # to its final resting place with the correct sha and key.
+    #
     # options
     #   - filename
     #   - content_type
     #   - cache_locally
+    #   - move_existing
+    #   - existing_external_upload_key
     def store_file(file, path, opts = {})
       path = path.dup
 
@@ -70,10 +103,27 @@ module FileStore
       path.prepend(File.join(upload_path, "/")) if Rails.configuration.multisite
 
       # if this fails, it will throw an exception
-      path, etag = s3_helper.upload(file, path, options)
+      if opts[:move_existing] && opts[:existing_external_upload_key]
+        original_path = opts[:existing_external_upload_key]
+        options[:apply_metadata_to_destination] = true
+        path, etag = s3_helper.copy(
+          original_path,
+          path,
+          options: options
+        )
+        delete_file(original_path)
+      else
+        path, etag = s3_helper.upload(file, path, options)
+      end
 
       # return the upload url and etag
       [File.join(absolute_base_url, path), etag]
+    end
+
+    def delete_file(path)
+      # delete the object outright without moving to tombstone,
+      # not recommended for most use cases
+      s3_helper.delete_object(path)
     end
 
     def remove_file(url, path)
@@ -93,7 +143,7 @@ module FileStore
       begin
         parsed_url = URI.parse(UrlHelper.encode(url))
       rescue
-        # There are many exceptions possible here including Addressable::URI:: excpetions
+        # There are many exceptions possible here including Addressable::URI:: exceptions
         # and URI:: exceptions, catch all may seem wide, but it makes no sense to raise ever
         # on an invalid url here
         return false
@@ -115,8 +165,11 @@ module FileStore
       end
 
       return false if SiteSetting.Upload.s3_cdn_url.blank?
-      cdn_hostname = URI.parse(SiteSetting.Upload.s3_cdn_url || "").hostname
-      return true if cdn_hostname.presence && url[cdn_hostname]
+
+      s3_cdn_url = URI.parse(SiteSetting.Upload.s3_cdn_url || "")
+      cdn_hostname = s3_cdn_url.hostname
+
+      return true if cdn_hostname.presence && url[cdn_hostname] && (s3_cdn_url.path.blank? || parsed_url.path.starts_with?(s3_cdn_url.path))
       false
     end
 
@@ -160,7 +213,7 @@ module FileStore
 
     def url_for(upload, force_download: false)
       upload.secure? || force_download ?
-        presigned_url(get_upload_key(upload), force_download: force_download, filename: upload.original_filename) :
+        presigned_get_url(get_upload_key(upload), force_download: force_download, filename: upload.original_filename) :
         upload.url
     end
 
@@ -171,9 +224,33 @@ module FileStore
       url.sub(File.join("#{schema}#{absolute_base_url}", folder), File.join(SiteSetting.Upload.s3_cdn_url, "/"))
     end
 
-    def signed_url_for_path(path, expires_in: S3Helper::DOWNLOAD_URL_EXPIRES_AFTER_SECONDS, force_download: false)
+    def signed_url_for_path(path, expires_in: SiteSetting.s3_presigned_get_url_expires_after_seconds, force_download: false)
       key = path.sub(absolute_base_url + "/", "")
-      presigned_url(key, expires_in: expires_in, force_download: force_download)
+      presigned_get_url(key, expires_in: expires_in, force_download: force_download)
+    end
+
+    def signed_url_for_temporary_upload(file_name, expires_in: S3Helper::UPLOAD_URL_EXPIRES_AFTER_SECONDS, metadata: {})
+      key = temporary_upload_path(file_name)
+      s3_helper.presigned_url(
+        key,
+        method: :put_object,
+        expires_in: expires_in,
+        opts: {
+          metadata: metadata,
+          acl: "private"
+        }
+      )
+    end
+
+    def temporary_upload_path(file_name)
+      folder_prefix = s3_bucket_folder_path.nil? ? upload_path : File.join(s3_bucket_folder_path, upload_path)
+      FileStore::BaseStore.temporary_upload_path(
+        file_name, folder_prefix: folder_prefix
+      )
+    end
+
+    def object_from_path(path)
+      s3_helper.object(path)
     end
 
     def cache_avatar(avatar, user_id)
@@ -202,13 +279,24 @@ module FileStore
       end
     end
 
-    def update_upload_ACL(upload)
+    def update_upload_ACL(upload, optimized_images_preloaded: false)
       key = get_upload_key(upload)
       update_ACL(key, upload.secure?)
 
-      upload.optimized_images.find_each do |optimized_image|
-        optimized_image_key = get_path_for_optimized_image(optimized_image)
-        update_ACL(optimized_image_key, upload.secure?)
+      # if we do find_each when the images have already been preloaded with
+      # includes(:optimized_images), then the optimized_images are fetched
+      # from the database again, negating the preloading if this operation
+      # is done on a large amount of uploads at once (see Jobs::SyncAclsForUploads)
+      if optimized_images_preloaded
+        upload.optimized_images.each do |optimized_image|
+          optimized_image_key = get_path_for_optimized_image(optimized_image)
+          update_ACL(optimized_image_key, upload.secure?)
+        end
+      else
+        upload.optimized_images.find_each do |optimized_image|
+          optimized_image_key = get_path_for_optimized_image(optimized_image)
+          update_ACL(optimized_image_key, upload.secure?)
+        end
       end
 
       true
@@ -244,13 +332,18 @@ module FileStore
       FileUtils.mv(old_upload_path, public_upload_path) if old_upload_path
     end
 
+    def create_multipart(file_name, content_type, metadata: {})
+      key = temporary_upload_path(file_name)
+      s3_helper.create_multipart(key, content_type, metadata: metadata)
+    end
+
     private
 
-    def presigned_url(
+    def presigned_get_url(
       url,
       force_download: false,
       filename: false,
-      expires_in: S3Helper::DOWNLOAD_URL_EXPIRES_AFTER_SECONDS
+      expires_in: SiteSetting.s3_presigned_get_url_expires_after_seconds
     )
       opts = { expires_in: expires_in }
 
@@ -260,7 +353,7 @@ module FileStore
         )
       end
 
-      obj = s3_helper.object(url)
+      obj = object_from_path(url)
       obj.presigned_url(:get, opts)
     end
 
@@ -274,7 +367,7 @@ module FileStore
 
     def update_ACL(key, secure)
       begin
-        s3_helper.object(key).acl.put(acl: secure ? "private" : "public-read")
+        object_from_path(key).acl.put(acl: secure ? "private" : "public-read")
       rescue Aws::S3::Errors::NoSuchKey
         Rails.logger.warn("Could not update ACL on upload with key: '#{key}'. Upload is missing.")
       end

@@ -26,51 +26,32 @@ module Jobs
       s3_cdn_hostname = URI.parse(SiteSetting.Upload.s3_cdn_url || "").hostname
 
       result = Upload.by_users
+      Upload.unused_callbacks&.each { |handler| result = handler.call(result) }
+      result = result
         .where("uploads.retain_hours IS NULL OR uploads.created_at < current_timestamp - interval '1 hour' * uploads.retain_hours")
         .where("uploads.created_at < ?", grace_period.hour.ago)
         .where("uploads.access_control_post_id IS NULL")
-        .joins(<<~SQL)
-          LEFT JOIN site_settings ss
-          ON NULLIF(ss.value, '')::integer = uploads.id
-          AND ss.data_type = #{SiteSettings::TypeSupervisor.types[:upload].to_i}
-        SQL
-        .joins("LEFT JOIN post_uploads pu ON pu.upload_id = uploads.id")
-        .joins("LEFT JOIN users u ON u.uploaded_avatar_id = uploads.id")
-        .joins("LEFT JOIN user_avatars ua ON ua.gravatar_upload_id = uploads.id OR ua.custom_upload_id = uploads.id")
-        .joins("LEFT JOIN user_profiles up ON up.profile_background_upload_id = uploads.id OR up.card_background_upload_id = uploads.id")
-        .joins("LEFT JOIN categories c ON c.uploaded_logo_id = uploads.id OR c.uploaded_background_id = uploads.id")
-        .joins("LEFT JOIN custom_emojis ce ON ce.upload_id = uploads.id")
-        .joins("LEFT JOIN theme_fields tf ON tf.upload_id = uploads.id")
-        .joins("LEFT JOIN user_exports ue ON ue.upload_id = uploads.id")
-        .joins("LEFT JOIN groups g ON g.flair_upload_id = uploads.id")
-        .joins("LEFT JOIN badges b ON b.image_upload_id = uploads.id")
-        .where("pu.upload_id IS NULL")
-        .where("u.uploaded_avatar_id IS NULL")
-        .where("ua.gravatar_upload_id IS NULL AND ua.custom_upload_id IS NULL")
-        .where("up.profile_background_upload_id IS NULL AND up.card_background_upload_id IS NULL")
-        .where("c.uploaded_logo_id IS NULL AND c.uploaded_background_id IS NULL")
-        .where("ce.upload_id IS NULL")
-        .where("tf.upload_id IS NULL")
-        .where("ue.upload_id IS NULL")
-        .where("g.flair_upload_id IS NULL")
-        .where("b.image_upload_id IS NULL")
-        .where("ss.value IS NULL")
-
-      if SiteSetting.selectable_avatars.present?
-        result = result.where.not(id: SiteSetting.selectable_avatars.map(&:id))
-      end
+        .joins("LEFT JOIN upload_references ON upload_references.upload_id = uploads.id")
+        .where("upload_references.upload_id IS NULL")
+        .with_no_non_post_relations
 
       result.find_each do |upload|
+        next if Upload.in_use_callbacks&.any? { |callback| callback.call(upload) }
+
         if upload.sha1.present?
+          # TODO: Remove this check after UploadReferences records were created
           encoded_sha = Base62.encode(upload.sha1.hex)
-          next if ReviewableQueuedPost.pending.where("payload->>'raw' LIKE '%#{upload.sha1}%' OR payload->>'raw' LIKE '%#{encoded_sha}%'").exists?
-          next if Draft.where("data LIKE '%#{upload.sha1}%' OR data LIKE '%#{encoded_sha}%'").exists?
-          next if ThemeSetting.where(data_type: ThemeSetting.types[:upload]).where("value LIKE ?", "%#{upload.sha1}%").exists?
+          next if ReviewableQueuedPost.pending.where("payload->>'raw' LIKE ? OR payload->>'raw' LIKE ?", "%#{upload.sha1}%", "%#{encoded_sha}%").exists?
+          next if Draft.where("data LIKE ? OR data LIKE ?", "%#{upload.sha1}%", "%#{encoded_sha}%").exists?
+          next if UserProfile.where("bio_raw LIKE ? OR bio_raw LIKE ?", "%#{upload.sha1}%", "%#{encoded_sha}%").exists?
+
           upload.destroy
         else
           upload.delete
         end
       end
+
+      ExternalUploadStub.cleanup!
 
       self.last_cleanup = Time.zone.now.to_i
     end

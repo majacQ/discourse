@@ -27,8 +27,8 @@ task "admin:invite", [:email] => [:environment] do |_, args|
   user.email_tokens.update_all confirmed: true
 
   puts "Sending email!"
-  email_token = user.email_tokens.create(email: user.email)
-  Jobs.enqueue(:user_email, type: :account_created, user_id: user.id, email_token: email_token.token)
+  email_token = user.email_tokens.create!(email: user.email, scope: EmailToken.scopes[:password_reset])
+  Jobs.enqueue(:user_email, type: "account_created", user_id: user.id, email_token: email_token.token)
 end
 
 desc "Creates a forum administrator"
@@ -39,7 +39,7 @@ task "admin:create" => :environment do
     email = ask("Email:  ")
     existing_user = User.find_by_email(email)
 
-    # check if user account already exixts
+    # check if user account already exists
     if existing_user
       # user already exists, ask for password reset
       admin = existing_user

@@ -8,6 +8,19 @@ module Jobs
 
     sidekiq_options queue: 'low'
 
+    sidekiq_retry_in do |count, exception|
+      # retry in an hour when SMTP server is busy
+      # or use default sidekiq retry formula. returning
+      # nil/0 will trigger the default sidekiq
+      # retry formula
+      #
+      # See https://github.com/mperham/sidekiq/blob/3330df0ee37cfd3e0cd3ef01e3e66b584b99d488/lib/sidekiq/job_retry.rb#L216-L234
+      case exception.wrapped
+      when Net::SMTPServerBusy
+        return 1.hour + (rand(30) * (count + 1))
+      end
+    end
+
     # Can be overridden by subclass, for example critical email
     # should always consider being sent
     def quit_email_early?
@@ -118,11 +131,14 @@ module Jobs
       end
 
       seen_recently = (user.last_seen_at.present? && user.last_seen_at > SiteSetting.email_time_window_mins.minutes.ago)
-      seen_recently = false if always_email_regular?(user, type) || always_email_private_message?(user, type) || user.staged
+      if !args[:force_respect_seen_recently] &&
+          (always_email_regular?(user, type) || always_email_private_message?(user, type) || user.staged)
+        seen_recently = false
+      end
 
       email_args = {}
 
-      if (post || notification || notification_type) &&
+      if (post || notification || notification_type || args[:force_respect_seen_recently]) &&
          (seen_recently && !user.suspended?)
 
         return skip_message(SkippedEmailLog.reason_types[:user_email_seen_recently])
@@ -206,22 +222,6 @@ module Jobs
       [message, nil]
     end
 
-    sidekiq_retry_in do |count, exception|
-      # retry in an hour when SMTP server is busy
-      # or use default sidekiq retry formula
-      case exception.wrapped
-      when Net::SMTPServerBusy
-        1.hour + (rand(30) * (count + 1))
-      else
-        ::Jobs::UserEmail.seconds_to_delay(count)
-      end
-    end
-
-    # extracted from sidekiq
-    def self.seconds_to_delay(count)
-      (count**4) + 15 + (rand(30) * (count + 1))
-    end
-
     private
 
     def skip_message(reason)
@@ -230,29 +230,27 @@ module Jobs
 
     # If this email has a related post, don't send an email if it's been deleted or seen recently.
     def skip_email_for_post(post, user)
-      if post
-        if post.topic.blank?
-          return SkippedEmailLog.reason_types[:user_email_topic_nil]
-        end
+      return false unless post
 
-        if post.user.blank?
-          return SkippedEmailLog.reason_types[:user_email_post_user_deleted]
-        end
+      if post.topic.blank?
+        return SkippedEmailLog.reason_types[:user_email_topic_nil]
+      end
 
-        if post.user_deleted?
-          return SkippedEmailLog.reason_types[:user_email_post_deleted]
-        end
+      if post.user.blank?
+        return SkippedEmailLog.reason_types[:user_email_post_user_deleted]
+      end
 
-        if user.suspended? && (!post.user&.staff? || !post.user&.human?)
-          return SkippedEmailLog.reason_types[:user_email_user_suspended]
-        end
+      if post.user_deleted?
+        return SkippedEmailLog.reason_types[:user_email_post_deleted]
+      end
 
-        already_read = user.user_option.email_level != UserOption.email_level_types[:always] && PostTiming.exists?(topic_id: post.topic_id, post_number: post.post_number, user_id: user.id)
-        if already_read
-          SkippedEmailLog.reason_types[:user_email_already_read]
-        end
-      else
-        false
+      if user.suspended? && (!post.user&.staff? || !post.user&.human?)
+        return SkippedEmailLog.reason_types[:user_email_user_suspended]
+      end
+
+      already_read = user.user_option.email_level != UserOption.email_level_types[:always] && PostTiming.exists?(topic_id: post.topic_id, post_number: post.post_number, user_id: user.id)
+      if already_read
+        SkippedEmailLog.reason_types[:user_email_already_read]
       end
     end
 

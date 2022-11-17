@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe GroupUser do
+RSpec.describe GroupUser do
 
   it 'correctly sets notification level' do
     moderator = Fabricate(:moderator)
@@ -33,13 +31,13 @@ describe GroupUser do
   end
 
   describe "default category notifications" do
-    let(:group) { Fabricate(:group) }
-    let(:user) { Fabricate(:user) }
-    let(:category1) { Fabricate(:category) }
-    let(:category2) { Fabricate(:category) }
-    let(:category3) { Fabricate(:category) }
-    let(:category4) { Fabricate(:category) }
-    let(:category5) { Fabricate(:category) }
+    fab!(:group) { Fabricate(:group) }
+    fab!(:user) { Fabricate(:user) }
+    fab!(:category1) { Fabricate(:category) }
+    fab!(:category2) { Fabricate(:category) }
+    fab!(:category3) { Fabricate(:category) }
+    fab!(:category4) { Fabricate(:category) }
+    fab!(:category5) { Fabricate(:category) }
 
     def levels
       CategoryUser.notification_levels
@@ -57,7 +55,7 @@ describe GroupUser do
       group.watching_first_post_category_ids = [category5.id]
       group.save!
       expect { group.add(user) }.to change { CategoryUser.count }.by(5)
-      h = CategoryUser.notification_levels_for(Guardian.new(user))
+      h = CategoryUser.notification_levels_for(user)
       expect(h[category1.id]).to eq(levels[:muted])
       expect(h[category2.id]).to eq(levels[:regular])
       expect(h[category3.id]).to eq(levels[:tracking])
@@ -74,7 +72,7 @@ describe GroupUser do
       group.watching_first_post_category_ids = [category2.id, category3.id, category4.id]
       group.save!
       group.add(user)
-      h = CategoryUser.notification_levels_for(Guardian.new(user))
+      h = CategoryUser.notification_levels_for(user)
       expect(h[category1.id]).to eq(levels[:regular])
       expect(h[category2.id]).to eq(levels[:watching_first_post])
       expect(h[category3.id]).to eq(levels[:watching_first_post])
@@ -89,7 +87,7 @@ describe GroupUser do
       group.tracking_category_ids = [category4.id]
       group.save!
       group.add(user)
-      h = CategoryUser.notification_levels_for(Guardian.new(user))
+      h = CategoryUser.notification_levels_for(user)
       expect(h[category1.id]).to eq(levels[:tracking])
       expect(h[category2.id]).to eq(levels[:watching])
       expect(h[category3.id]).to eq(levels[:muted])
@@ -98,14 +96,14 @@ describe GroupUser do
   end
 
   describe "default tag notifications" do
-    let(:group) { Fabricate(:group) }
-    let(:user) { Fabricate(:user) }
-    let(:tag1) { Fabricate(:tag) }
-    let(:tag2) { Fabricate(:tag) }
-    let(:tag3) { Fabricate(:tag) }
-    let(:tag4) { Fabricate(:tag) }
-    let(:tag5) { Fabricate(:tag) }
-    let(:synonym1) { Fabricate(:tag, target_tag: tag1) }
+    fab!(:group) { Fabricate(:group) }
+    fab!(:user) { Fabricate(:user) }
+    fab!(:tag1) { Fabricate(:tag) }
+    fab!(:tag2) { Fabricate(:tag) }
+    fab!(:tag3) { Fabricate(:tag) }
+    fab!(:tag4) { Fabricate(:tag) }
+    fab!(:tag5) { Fabricate(:tag) }
+    fab!(:synonym1) { Fabricate(:tag, target_tag: tag1) }
 
     def levels
       TagUser.notification_levels
@@ -222,6 +220,37 @@ describe GroupUser do
       expect(group.group_users.find_by(user_id: user.id).first_unread_pm_at).to eq_time(post.topic.updated_at)
       expect(group_2.group_users.find_by(user_id: user.id).first_unread_pm_at).to eq_time(10.minutes.ago)
       expect(group.group_users.find_by(user_id: user_2.id).first_unread_pm_at).to eq_time(10.minutes.ago)
+    end
+  end
+
+  describe '#destroy!' do
+    fab!(:group) { Fabricate(:group) }
+
+    it "removes `primary_group_id`, `flair_group_id` and exec `match_primary_group_changes` method on user model" do
+      user = Fabricate(:user, primary_group: group, flair_group: group)
+      group_user = Fabricate(:group_user, group: group, user: user)
+
+      user.expects(:match_primary_group_changes).once
+      group_user.destroy!
+
+      user.reload
+      expect(user.primary_group_id).to be_nil
+      expect(user.flair_group_id).to be_nil
+    end
+
+    it "restores previous trust level" do
+      user = Fabricate(:user)
+      expect(user.trust_level).to eq(1)
+
+      user.change_trust_level!(2, log_action_for: Discourse.system_user)
+      user.change_trust_level!(3, log_action_for: Discourse.system_user)
+      group.update!(grant_trust_level: 4)
+
+      group_user = Fabricate(:group_user, group: group, user: user)
+      expect(user.reload.trust_level).to eq(4)
+
+      group_user.destroy!
+      expect(user.reload.trust_level).to eq(3)
     end
   end
 end

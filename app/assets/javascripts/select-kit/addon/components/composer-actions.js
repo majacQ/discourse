@@ -5,14 +5,14 @@ import {
   PRIVATE_MESSAGE,
   REPLY,
 } from "discourse/models/composer";
+import discourseComputed from "discourse-common/utils/decorators";
 import Draft from "discourse/models/draft";
 import DropdownSelectBoxComponent from "select-kit/components/dropdown-select-box";
 import I18n from "I18n";
-import bootbox from "bootbox";
 import { camelize } from "@ember/string";
-import { computed } from "@ember/object";
-import { equal } from "@ember/object/computed";
+import { equal, gt } from "@ember/object/computed";
 import { isEmpty } from "@ember/utils";
+import { inject as service } from "@ember/service";
 
 // Component can get destroyed and lose state
 let _topicSnapshot = null;
@@ -26,35 +26,41 @@ export function _clearSnapshots() {
 }
 
 export default DropdownSelectBoxComponent.extend({
+  dialog: service(),
   seq: 0,
   pluginApiIdentifiers: ["composer-actions"],
   classNames: ["composer-actions"],
   isEditing: equal("action", EDIT),
+  isInSlowMode: gt("topic.slow_mode_seconds", 0),
 
   selectKitOptions: {
     icon: "iconForComposerAction",
     filterable: false,
     showFullTitle: false,
     preventHeaderFocus: true,
+    customStyle: true,
   },
 
-  iconForComposerAction: computed("action", "whisper", "noBump", function () {
-    if (this.isEditing) {
-      return "pencil-alt";
-    } else if (this.action === CREATE_TOPIC) {
+  @discourseComputed("isEditing", "action", "whisper", "noBump", "isInSlowMode")
+  iconForComposerAction(isEditing, action, whisper, noBump, isInSlowMode) {
+    if (action === CREATE_TOPIC) {
       return "plus";
-    } else if (this.action === PRIVATE_MESSAGE) {
+    } else if (action === PRIVATE_MESSAGE) {
       return "envelope";
-    } else if (this.action === CREATE_SHARED_DRAFT) {
+    } else if (action === CREATE_SHARED_DRAFT) {
       return "far-clipboard";
-    } else if (this.whisper) {
+    } else if (whisper) {
       return "far-eye-slash";
-    } else if (this.noBump) {
+    } else if (noBump) {
       return "anchor";
+    } else if (isInSlowMode) {
+      return "hourglass-start";
+    } else if (isEditing) {
+      return "pencil-alt";
     } else {
       return "share";
     }
-  }),
+  },
 
   contentChanged() {
     this.set("seq", this.seq + 1);
@@ -96,7 +102,8 @@ export default DropdownSelectBoxComponent.extend({
     return {};
   },
 
-  content: computed("seq", function () {
+  @discourseComputed("seq")
+  content() {
     let items = [];
 
     if (
@@ -124,7 +131,9 @@ export default DropdownSelectBoxComponent.extend({
     if (
       this.action !== CREATE_TOPIC &&
       this.action !== CREATE_SHARED_DRAFT &&
-      !(this.action === REPLY && this.topic && this.topic.isPrivateMessage) &&
+      this.action === REPLY &&
+      this.topic &&
+      !this.topic.isPrivateMessage &&
       !this.isEditing &&
       _topicSnapshot
     ) {
@@ -155,23 +164,6 @@ export default DropdownSelectBoxComponent.extend({
     }
 
     if (
-      this.siteSettings.enable_personal_messages &&
-      this.action !== PRIVATE_MESSAGE &&
-      !this.isEditing
-    ) {
-      items.push({
-        name: I18n.t(
-          "composer.composer_actions.reply_as_private_message.label"
-        ),
-        description: I18n.t(
-          "composer.composer_actions.reply_as_private_message.desc"
-        ),
-        icon: "envelope",
-        id: "reply_as_private_message",
-      });
-    }
-
-    if (
       !this.isEditing &&
       ((this.action !== REPLY && _topicSnapshot) ||
         (this.action === REPLY &&
@@ -191,7 +183,8 @@ export default DropdownSelectBoxComponent.extend({
     // if answered post is a whisper, we can only answer with a whisper so no need for toggle
     if (
       this.canWhisper &&
-      (!_postSnapshot ||
+      (!this.replyOptions.postLink ||
+        !_postSnapshot ||
         _postSnapshot.post_type !== this.site.post_types.whisper)
     ) {
       items.push({
@@ -200,11 +193,6 @@ export default DropdownSelectBoxComponent.extend({
         icon: "far-eye-slash",
         id: "toggle_whisper",
       });
-    }
-
-    let showCreateTopic = false;
-    if (this.action === CREATE_SHARED_DRAFT) {
-      showCreateTopic = true;
     }
 
     if (this.action === CREATE_TOPIC) {
@@ -217,24 +205,6 @@ export default DropdownSelectBoxComponent.extend({
           id: "shared_draft",
         });
       }
-
-      // Edge case: If personal messages are disabled, it is possible to have
-      // no items which stil renders a button that pops up nothing. In this
-      // case, add an option for what you're currently doing.
-      if (items.length === 0) {
-        showCreateTopic = true;
-      }
-    }
-
-    if (showCreateTopic) {
-      items.push({
-        name: I18n.t("composer.composer_actions.create_topic.label"),
-        description: I18n.t(
-          "composer.composer_actions.reply_as_new_topic.desc"
-        ),
-        icon: "share",
-        id: "create_topic",
-      });
     }
 
     const showToggleTopicBump =
@@ -250,8 +220,19 @@ export default DropdownSelectBoxComponent.extend({
       });
     }
 
+    if (items.length === 0) {
+      items.push({
+        name: I18n.t("composer.composer_actions.create_topic.label"),
+        description: I18n.t(
+          "composer.composer_actions.reply_as_new_topic.desc"
+        ),
+        icon: "share",
+        id: "create_topic",
+      });
+    }
+
     return items;
-  }),
+  },
 
   _replyFromExisting(options, post, topic) {
     this.closeComposer();
@@ -303,14 +284,13 @@ export default DropdownSelectBoxComponent.extend({
   replyAsNewTopicSelected(options) {
     Draft.get("new_topic").then((response) => {
       if (response.draft) {
-        bootbox.confirm(
-          I18n.t("composer.composer_actions.reply_as_new_topic.confirm"),
-          (result) => {
-            if (result) {
-              this._replyAsNewTopicSelect(options);
-            }
-          }
-        );
+        this.dialog.confirm({
+          message: I18n.t(
+            "composer.composer_actions.reply_as_new_topic.confirm"
+          ),
+          confirmButtonLabel: "composer.ok_proceed",
+          didConfirm: () => this._replyAsNewTopicSelect(options),
+        });
       } else {
         this._replyAsNewTopicSelect(options);
       }

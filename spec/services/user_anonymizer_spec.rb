@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-describe UserAnonymizer do
+RSpec.describe UserAnonymizer do
   let(:admin) { Fabricate(:admin) }
 
   describe "event" do
@@ -23,7 +21,7 @@ describe UserAnonymizer do
     end
   end
 
-  describe "make_anonymous" do
+  describe ".make_anonymous" do
     let(:original_email) { "edward@example.net" }
     let(:user) { Fabricate(:user, username: "edward", email: original_email) }
     fab!(:another_user) { Fabricate(:evil_trout) }
@@ -67,7 +65,7 @@ describe UserAnonymizer do
       expect(user.user_option.mailing_list_mode).to eq(false)
     end
 
-    context "Site Settings do not require full name" do
+    context "when Site Settings do not require full name" do
       before do
         SiteSetting.full_name_required = false
       end
@@ -115,7 +113,7 @@ describe UserAnonymizer do
       end
     end
 
-    context "Site Settings require full name" do
+    context "when Site Settings require full name" do
       before do
         SiteSetting.full_name_required = true
       end
@@ -153,6 +151,8 @@ describe UserAnonymizer do
 
       topic = Fabricate(:topic, user: user)
       quoted_post = create_post(user: user, topic: topic, post_number: 1, raw: "quoted post")
+
+      stub_image_size
       post = create_post(raw: <<~RAW)
         Lorem ipsum
 
@@ -198,15 +198,13 @@ describe UserAnonymizer do
       expect(history.details).not_to match(orig_username)
     end
 
-    it "removes external auth assocations" do
+    it "removes external auth associations" do
       user.user_associated_accounts = [UserAssociatedAccount.create(user_id: user.id, provider_uid: "example", provider_name: "facebook")]
       user.single_sign_on_record = SingleSignOnRecord.create(user_id: user.id, external_id: "example", last_payload: "looks good")
-      user.oauth2_user_infos = [Oauth2UserInfo.create(user_id: user.id, uid: "example", provider: "example")]
       make_anonymous
       user.reload
       expect(user.user_associated_accounts).to be_empty
       expect(user.single_sign_on_record).to eq(nil)
-      expect(user.oauth2_user_infos).to be_empty
     end
 
     it "removes api key" do
@@ -227,7 +225,7 @@ describe UserAnonymizer do
       expect(user.user_api_keys).to be_empty
     end
 
-    context "executes job" do
+    context "when executing jobs" do
       before do
         Jobs.run_immediately!
       end
@@ -368,4 +366,16 @@ describe UserAnonymizer do
 
   end
 
+  describe "anonymize_emails" do
+    it "destroys all associated invites" do
+      invite = Fabricate(:invite, email: 'test@example.com')
+      user = invite.redeem
+
+      Jobs.run_immediately!
+      described_class.make_anonymous(user, admin)
+
+      expect(user.email).not_to eq('test@example.com')
+      expect(Invite.exists?(id: invite.id)).to eq(false)
+    end
+  end
 end

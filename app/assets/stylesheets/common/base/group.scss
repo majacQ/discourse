@@ -48,13 +48,13 @@ span.mention-group {
   }
 
   .group-info-name {
-    font-size: $font-up-3;
+    font-size: var(--font-up-3);
     font-weight: bold;
     color: var(--primary);
   }
 
   .group-info-full-name {
-    font-size: $font-up-2;
+    font-size: var(--font-up-2);
     color: var(--primary-high-or-secondary-low);
   }
 
@@ -83,8 +83,10 @@ span.mention-group {
 
   .group-details-button {
     display: flex;
-    flex-shrink: 0;
-    gap: 10px;
+    flex-wrap: wrap;
+    button:not(:last-child) {
+      margin-right: 0.5em;
+    }
   }
 }
 
@@ -120,7 +122,6 @@ table.group-manage-logs {
 
 table.group-members {
   width: 100%;
-  table-layout: fixed;
 
   th {
     text-align: center;
@@ -132,20 +133,20 @@ table.group-members {
 
     &.bulk-select-buttons {
       text-align: left;
-      width: 20%;
+      white-space: nowrap;
+      width: 1%;
+
+      .bulk-select-buttons-wrap {
+        display: flex;
+      }
+
+      .btn {
+        margin-right: 0.25em;
+      }
     }
 
     &.username {
       text-align: left;
-      width: 30%;
-    }
-
-    &.bulk-select-buttons + .username {
-      width: 10%;
-    }
-
-    &.group-members-actions {
-      width: 5%;
     }
   }
 
@@ -238,4 +239,37 @@ table.group-category-permissions {
       font-size: 1.25em;
     }
   }
+}
+
+.group-smtp-email-settings,
+.group-imap-email-settings {
+  .groups-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    margin-bottom: 0;
+
+    &.groups-form-imap {
+      grid-template-columns: 1fr 1fr 2fr;
+    }
+  }
+
+  background-color: var(--primary-very-low);
+  padding: 1em;
+  margin: 1em 0;
+  border: 1px solid var(--primary-low);
+
+  .group-imap-mailboxes {
+    .combo-box {
+      width: 50%;
+    }
+  }
+}
+
+.group-manage-email-additional-settings-wrapper {
+  margin-top: 1em;
+}
+
+.groups-form .control-group.buttons {
+  margin-bottom: 0px;
+  padding: 1em 0;
 }

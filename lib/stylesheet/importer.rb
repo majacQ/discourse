@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_dependency 'global_path'
+require 'global_path'
 
 module Stylesheet
   class Importer
@@ -34,23 +34,23 @@ module Stylesheet
       contents = +""
 
       if body_font.present?
-        contents << <<~EOF
+        contents << <<~CSS
           #{font_css(body_font)}
 
           :root {
             --font-family: #{body_font[:stack]};
           }
-        EOF
+        CSS
       end
 
       if heading_font.present?
-        contents << <<~EOF
+        contents << <<~CSS
           #{font_css(heading_font)}
 
           :root {
             --heading-font-family: #{heading_font[:stack]};
           }
-        EOF
+        CSS
       end
 
       contents
@@ -70,14 +70,14 @@ module Stylesheet
         end
 
         contents << font_css(font)
-        contents << <<~EOF
+        contents << <<~CSS
           .body-font-#{font[:key].tr("_", "-")} {
             font-family: #{font[:stack]};
           }
           .heading-font-#{font[:key].tr("_", "-")} h2 {
             font-family: #{font[:stack]};
           }
-        EOF
+        CSS
       end
 
       contents
@@ -101,7 +101,7 @@ module Stylesheet
       end
 
       theme_id = @theme_id || SiteSetting.default_theme_id
-      resolved_ids = Theme.transform_ids([theme_id])
+      resolved_ids = Theme.transform_ids(theme_id)
 
       if resolved_ids
         theme = Theme.find_by_id(theme_id)
@@ -173,6 +173,8 @@ module Stylesheet
     end
 
     def theme_import(target)
+      return "" if !@theme_id
+
       attr = target == :embedded_theme ? :embedded_scss : :scss
       target = target.to_s.gsub("_theme", "").to_sym
 
@@ -182,11 +184,11 @@ module Stylesheet
       fields.map do |field|
         value = field.value
         if value.present?
-          contents << <<~COMMENT
+          contents << <<~SCSS
           // Theme: #{field.theme.name}
           // Target: #{field.target_name} #{field.name}
           // Last Edited: #{field.updated_at}
-          COMMENT
+          SCSS
 
           contents << value
         end
@@ -211,15 +213,16 @@ module Stylesheet
       contents = +""
 
       if font[:variants].present?
+        fonts_dir = UrlHelper.absolute("#{Discourse.base_path}/fonts")
         font[:variants].each do |variant|
-          src = variant[:src] ? variant[:src] : "asset-url(\"/fonts/#{variant[:filename]}?v=#{DiscourseFonts::VERSION}\") format(\"#{variant[:format]}\")"
-          contents << <<~EOF
+          src = variant[:src] ? variant[:src] : "url(\"#{fonts_dir}/#{variant[:filename]}?v=#{DiscourseFonts::VERSION}\") format(\"#{variant[:format]}\")"
+          contents << <<~CSS
             @font-face {
               font-family: #{font[:name]};
               src: #{src};
               font-weight: #{variant[:weight]};
             }
-          EOF
+          CSS
         end
       end
 

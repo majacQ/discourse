@@ -1,10 +1,7 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe ReviewablesController do
-
-  context "anonymous" do
+RSpec.describe ReviewablesController do
+  context "when anonymous" do
     it "denies listing" do
       get "/review.json"
       expect(response.code).to eq("403")
@@ -31,7 +28,7 @@ describe ReviewablesController do
     end
   end
 
-  context "regular user" do
+  context "when regular user" do
     before do
       sign_in(Fabricate(:user))
     end
@@ -49,7 +46,7 @@ describe ReviewablesController do
       sign_in(admin)
     end
 
-    context "#index" do
+    describe "#index" do
       it "returns empty JSON when nothing to review" do
         get "/review.json"
         expect(response.code).to eq("200")
@@ -78,6 +75,7 @@ describe ReviewablesController do
         expect(json['users'].any? { |u| u['id'] == reviewable.target_created_by_id }).to eq(true)
 
         expect(json['meta']['reviewable_count']).to eq(1)
+        expect(json['meta']['unseen_reviewable_count']).to eq(1)
         expect(json['meta']['status']).to eq("pending")
       end
 
@@ -105,7 +103,7 @@ describe ReviewablesController do
 
       it "raises an error with an invalid type" do
         get "/review.json?type=ReviewableMadeUp"
-        expect(response.code).to eq("500")
+        expect(response.code).to eq("400")
       end
 
       it "supports filtering by status" do
@@ -135,7 +133,7 @@ describe ReviewablesController do
 
       it "raises an error with an invalid status" do
         get "/review.json?status=xyz"
-        expect(response.code).to eq("500")
+        expect(response.code).to eq("400")
       end
 
       it "supports filtering by category_id" do
@@ -174,7 +172,26 @@ describe ReviewablesController do
         expect(json_review['user_id']).to eq(user.id)
       end
 
-      context "supports filtering by range" do
+      it "returns correct error message if ReviewableUser not found" do
+        sign_in(admin)
+        Jobs.run_immediately!
+        SiteSetting.must_approve_users = true
+        user = Fabricate(:user)
+        user.activate
+        reviewable = ReviewableUser.find_by(target: user)
+
+        put "/review/#{reviewable.id}/perform/delete_user.json?version=0"
+        expect(response.code).to eq("200")
+
+        put "/review/#{reviewable.id}/perform/delete_user.json?version=0&index=2"
+        expect(response.code).to eq("404")
+        json = response.parsed_body
+
+        expect(json["error_type"]).to eq("not_found")
+        expect(json["errors"][0]).to eq(I18n.t("reviewables.already_handled_and_user_not_exist"))
+      end
+
+      context "when filtering by range" do
         let(:from) { 3.days.ago.strftime('%F') }
         let(:to) { 1.day.ago.strftime('%F') }
 
@@ -237,8 +254,73 @@ describe ReviewablesController do
       end
     end
 
-    context "#show" do
-      context "basics" do
+    describe "#user_menu_list" do
+      it "renders each reviewable using its basic serializers" do
+        reviewable_user = Fabricate(:reviewable_user, payload: { username: "someb0dy" })
+        reviewable_flagged_post = Fabricate(:reviewable_flagged_post)
+        reviewable_queued_post = Fabricate(:reviewable_queued_post)
+
+        get "/review/user-menu-list.json"
+        expect(response.status).to eq(200)
+
+        reviewables = response.parsed_body["reviewables"]
+
+        reviewable_queued_post_json = reviewables.find { |r| r["id"] == reviewable_queued_post.id }
+        expect(reviewable_queued_post_json["is_new_topic"]).to eq(false)
+        expect(reviewable_queued_post_json["topic_fancy_title"]).to eq(
+          reviewable_queued_post.topic.fancy_title
+        )
+
+        reviewable_flagged_post_json = reviewables.find { |r| r["id"] == reviewable_flagged_post.id }
+        expect(reviewable_flagged_post_json["post_number"]).to eq(
+          reviewable_flagged_post.post.post_number
+        )
+        expect(reviewable_flagged_post_json["topic_fancy_title"]).to eq(
+          reviewable_flagged_post.topic.fancy_title
+        )
+
+        reviewable_user_json = reviewables.find { |r| r["id"] == reviewable_user.id }
+        expect(reviewable_user_json["username"]).to eq("someb0dy")
+      end
+
+      it "returns JSON containing basic information of reviewables" do
+        reviewable = Fabricate(:reviewable)
+        get "/review/user-menu-list.json"
+        expect(response.status).to eq(200)
+        reviewables = response.parsed_body["reviewables"]
+        expect(reviewables.size).to eq(1)
+        expect(reviewables[0]["flagger_username"]).to eq(reviewable.created_by.username)
+        expect(reviewables[0]["id"]).to eq(reviewable.id)
+        expect(reviewables[0]["type"]).to eq(reviewable.type)
+        expect(reviewables[0]["pending"]).to eq(true)
+      end
+
+      it "responds with pending reviewables only" do
+        Fabricate(
+          :reviewable,
+          status: Reviewable.statuses[:approved]
+        )
+        pending1 = Fabricate(
+          :reviewable,
+          status: Reviewable.statuses[:pending]
+        )
+        Fabricate(
+          :reviewable,
+          status: Reviewable.statuses[:approved]
+        )
+        pending2 = Fabricate(
+          :reviewable,
+          status: Reviewable.statuses[:pending]
+        )
+        get "/review/user-menu-list.json"
+        expect(response.status).to eq(200)
+        reviewables = response.parsed_body["reviewables"]
+        expect(reviewables.map { |r| r["id"] }).to eq([pending2.id, pending1.id])
+      end
+    end
+
+    describe "#show" do
+      context "with basics" do
         fab!(:reviewable) { Fabricate(:reviewable) }
         before do
           sign_in(Fabricate(:moderator))
@@ -258,7 +340,7 @@ describe ReviewablesController do
         end
       end
 
-      context "conversation" do
+      context "with conversation" do
         fab!(:post) { Fabricate(:post) }
         fab!(:user) { Fabricate(:user) }
         fab!(:admin) { Fabricate(:admin) }
@@ -303,8 +385,8 @@ describe ReviewablesController do
       end
     end
 
-    context "#explain" do
-      context "basics" do
+    describe "#explain" do
+      context "with basics" do
         fab!(:reviewable) { Fabricate(:reviewable) }
 
         before do
@@ -327,7 +409,7 @@ describe ReviewablesController do
       end
     end
 
-    context "#perform" do
+    describe "#perform" do
       fab!(:reviewable) { Fabricate(:reviewable) }
       before do
         sign_in(Fabricate(:moderator))
@@ -338,7 +420,7 @@ describe ReviewablesController do
         expect(response.code).to eq("404")
       end
 
-      it "validates the presenece of an action" do
+      it "validates the presence of an action" do
         put "/review/#{reviewable.id}/perform/nope.json?version=#{reviewable.version}"
         expect(response.code).to eq("403")
       end
@@ -398,7 +480,7 @@ describe ReviewablesController do
         expect(job).to be_blank
       end
 
-      context "claims" do
+      context "with claims" do
         fab!(:qp) { Fabricate(:reviewable_queued_post) }
 
         it "fails when reviewables must be claimed" do
@@ -460,20 +542,23 @@ describe ReviewablesController do
       fab!(:reviewable_phony) { Fabricate(:reviewable, type: "ReviewablePhony") }
 
       it "passes the added param into the reviewable class' perform method" do
-        MessageBus.expects(:publish)
-          .with("/phony-reviewable-test", { args: {
-            version: reviewable_phony.version,
-            "fake_id" => "2" }
+        MessageBus.expects(:publish).with(
+          "/phony-reviewable-test",
+          {
+            args: {
+              version: reviewable_phony.version,
+              "fake_id" => "2",
+            }
           },
-          { user_ids: [1] })
-          .once
+          user_ids: [1]
+        ).once
 
         put "/review/#{reviewable_phony.id}/perform/approve_phony.json?version=#{reviewable_phony.version}", params: { fake_id: 2 }
         expect(response.status).to eq(200)
       end
     end
 
-    context "#topics" do
+    describe "#topics" do
       fab!(:post0) { Fabricate(:post) }
       fab!(:post1) { Fabricate(:post, topic: post0.topic) }
       fab!(:post2) { Fabricate(:post) }
@@ -525,7 +610,7 @@ describe ReviewablesController do
       end
     end
 
-    context "#settings" do
+    describe "#settings" do
       it "renders the settings as JSON" do
         get "/review/settings.json"
         expect(response.code).to eq("200")
@@ -555,7 +640,7 @@ describe ReviewablesController do
       end
     end
 
-    context "#update" do
+    describe "#update" do
       fab!(:reviewable) { Fabricate(:reviewable) }
       fab!(:reviewable_post) { Fabricate(:reviewable_queued_post) }
       fab!(:reviewable_topic) { Fabricate(:reviewable_queued_post_topic) }
@@ -662,7 +747,7 @@ describe ReviewablesController do
 
     end
 
-    context "#destroy" do
+    describe "#destroy" do
       fab!(:user) { Fabricate(:user) }
 
       before do
@@ -688,7 +773,7 @@ describe ReviewablesController do
       end
     end
 
-    context "#count" do
+    describe "#count" do
       fab!(:admin) { Fabricate(:admin) }
 
       before do

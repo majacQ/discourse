@@ -24,9 +24,9 @@
       <stop offset=".66" stop-color="#d5ddd5"/>
       <stop offset="1" stop-color="#00261b"/>
     </linearGradient>
-    <linearGradient id="GradientFill_24-2" x1="191.602" y1="42.264" x2="176.257" y2="44.148" xlink:href="#GradientFill_24"/>
-    <linearGradient id="GradientFill_25-2" x1="154.552" y1="42.724" x2="228.015" y2="42.724" xlink:href="#GradientFill_25"/>
-    <linearGradient id="GradientFill_26-2" x1="197.635" y1="41.717" x2="240.259" y2="41.717" xlink:href="#GradientFill_26"/>
+    <linearGradient id="GradientFill_24-2" x1="191.602" y1="42.264" x2="176.257" y2="44.148" href="#GradientFill_24"/>
+    <linearGradient id="GradientFill_25-2" x1="154.552" y1="42.724" x2="228.015" y2="42.724" href="#GradientFill_25"/>
+    <linearGradient id="GradientFill_26-2" x1="197.635" y1="41.717" x2="240.259" y2="41.717" href="#GradientFill_26"/>
     <linearGradient id="GradientFill_27" x1="175.02" y1="48.198" x2="238.546" y2="47.089" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#416857"/>
       <stop offset="1" stop-color="#fff"/>
@@ -457,9 +457,11 @@
     <text x="<%= @width / 2 %>" y="240.94" text-anchor="middle" font-size="24" fill="#020403" font-family="Tangerine, Tangerine">
       <%= @name %>
     </text>
-    <g transform="translate(<%= @logo_group[:width] / 2 - (@logo_group[:size] / 2) %> <%= @logo_group[:height] %>)">
-      <image height="<%= @logo_group[:size] %>px" width="<%= @logo_group[:size] %>px" href="<%= @logo_group[:logo_uri] %>"/>
-    </g>
+    <% if @logo_group.present? %>
+      <g transform="translate(<%= @logo_group[:width] / 2 - (@logo_group[:size] / 2) %> <%= @logo_group[:height] %>)">
+        <image height="<%= @logo_group[:size] %>px" width="<%= @logo_group[:size] %>px" href="<%= @logo_group[:logo_uri] %>"/>
+      </g>
+    <% end %>
   </g>
   <g id="Layer_1-2" data-name="Layer 1">
     <path d="M339.328 47.187c-.034 1.193 3.25 2.2 6.51 3.383 5.5 1.994 13.1 3.73 17.68 3.112 5.05-.55 4.982-2.217 4.054-4.8-.1-4.647.258-9.493.156-14.142l-27.128-.458c.5 4.698-1.778 8.207-1.272 12.905z" transform="translate(-.108)" fill-rule="evenodd" fill="url(#GradientFill_24)"/>

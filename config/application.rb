@@ -21,7 +21,7 @@ require 'action_mailer/railtie'
 require 'sprockets/railtie'
 
 # Plugin related stuff
-require_relative '../lib/plugin_initialization_guard'
+require_relative '../lib/plugin'
 require_relative '../lib/discourse_event'
 require_relative '../lib/discourse_plugin_registry'
 
@@ -30,8 +30,14 @@ require_relative '../lib/plugin_gem'
 # Global config
 require_relative '../app/models/global_setting'
 GlobalSetting.configure!
-unless Rails.env.test? && ENV['LOAD_PLUGINS'] != "1"
-  require_relative '../lib/custom_setting_providers'
+if GlobalSetting.load_plugins?
+  # Support for plugins to register custom setting providers. They can do this
+  # by having a file, `register_provider.rb` in their root that will be run
+  # at this point.
+
+  Dir.glob(File.join(File.dirname(__FILE__), '../plugins', '*', "register_provider.rb")) do |p|
+    require p
+  end
 end
 GlobalSetting.load_defaults
 if GlobalSetting.try(:cdn_url).present? && GlobalSetting.cdn_url !~ /^https?:\/\//
@@ -52,10 +58,11 @@ if !GlobalSetting.skip_redis?
 end
 
 require 'pry-rails' if Rails.env.development?
+require 'pry-byebug' if Rails.env.development?
 
 require 'discourse_fonts'
 
-require_relative '../lib/zeitwerk_config.rb'
+require_relative '../lib/ember_cli'
 
 if defined?(Bundler)
   bundler_groups = [:default]
@@ -68,6 +75,8 @@ if defined?(Bundler)
 
   Bundler.require(*bundler_groups)
 end
+
+require_relative '../lib/require_dependency_backward_compatibility'
 
 module Discourse
   class Application < Rails::Application
@@ -83,114 +92,41 @@ module Discourse
     # Application configuration should go into files in config/initializers
     # -- all .rb files in that directory are automatically loaded.
 
-    # this pattern is somewhat odd but the reloader gets very
-    # confused here if we load the deps without `lib` it thinks
-    # discourse.rb is under the discourse folder incorrectly
-    require_dependency 'lib/discourse'
-    require_dependency 'lib/js_locale_helper'
+    require 'discourse'
+    require 'js_locale_helper'
 
     # tiny file needed by site settings
-    require_dependency 'lib/highlight_js/highlight_js'
+    require 'highlight_js'
+
+    config.load_defaults 6.1
+    config.active_record.cache_versioning = false # our custom cache class doesn’t support this
+    config.action_controller.forgery_protection_origin_check = false
+    config.active_record.belongs_to_required_by_default = false
+    config.active_record.legacy_connection_handling = true
+    config.active_record.yaml_column_permitted_classes = [Hash, HashWithIndifferentAccess, Time, Symbol]
 
     # we skip it cause we configure it in the initializer
-    # the railstie for message_bus would insert it in the
+    # the railtie for message_bus would insert it in the
     # wrong position
     config.skip_message_bus_middleware = true
     config.skip_multisite_middleware = true
     config.skip_rails_failover_active_record_middleware = true
 
-    # Disable so this is only run manually
-    # we may want to change this later on
-    # issue is image_optim crashes on missing dependencies
-    config.assets.image_optim = false
-
-    config.autoloader = :zeitwerk
+    multisite_config_path = ENV['DISCOURSE_MULTISITE_CONFIG_PATH'] || GlobalSetting.multisite_config_path
+    config.multisite_config_path = File.absolute_path(multisite_config_path, Rails.root)
 
     # Custom directories with classes and modules you want to be autoloadable.
-    config.autoload_paths += Dir["#{config.root}/app"]
-    config.autoload_paths += Dir["#{config.root}/app/jobs"]
-    config.autoload_paths += Dir["#{config.root}/app/serializers"]
-    config.autoload_paths += Dir["#{config.root}/lib"]
-    config.autoload_paths += Dir["#{config.root}/lib/active_record/connection_adapters"]
-    config.autoload_paths += Dir["#{config.root}/lib/common_passwords"]
-    config.autoload_paths += Dir["#{config.root}/lib/highlight_js"]
-    config.autoload_paths += Dir["#{config.root}/lib/i18n"]
-    config.autoload_paths += Dir["#{config.root}/lib/validators/"]
-
-    Rails.autoloaders.main.ignore(Dir["#{config.root}/app/models/reports"])
-    Rails.autoloaders.main.ignore(Dir["#{config.root}/lib/freedom_patches"])
+    config.autoload_paths << "#{root}/lib"
+    config.autoload_paths << "#{root}/lib/guardian"
+    config.autoload_paths << "#{root}/lib/i18n"
+    config.autoload_paths << "#{root}/lib/validators"
 
     # Only load the plugins named here, in the order given (default is alphabetical).
     # :all can be used as a placeholder for all plugins not explicitly named.
     # config.plugins = [ :exception_notification, :ssl_requirement, :all ]
 
-    config.assets.paths += %W(#{config.root}/config/locales #{config.root}/public/javascripts)
-
-    if Rails.env == "development" || Rails.env == "test"
-      config.assets.paths << "#{config.root}/app/assets/javascripts/discourse/tests"
-      config.assets.paths << "#{config.root}/node_modules"
-    end
-
-    # Allows us to skip minifincation on some files
+    # Allows us to skip minification on some files
     config.assets.skip_minification = []
-
-    # explicitly precompile any images in plugins ( /assets/images ) path
-    config.assets.precompile += [lambda do |filename, path|
-      path =~ /assets\/images/ && !%w(.js .css).include?(File.extname(filename))
-    end]
-
-    config.assets.precompile += %w{
-      vendor.js
-      admin.js
-      browser-detect.js
-      browser-update.js
-      break_string.js
-      ember_jquery.js
-      pretty-text-bundle.js
-      wizard-application.js
-      wizard-vendor.js
-      markdown-it-bundle.js
-      service-worker.js
-      google-tag-manager.js
-      google-universal-analytics-v3.js
-      google-universal-analytics-v4.js
-      start-discourse.js
-      print-page.js
-      omniauth-complete.js
-      activate-account.js
-      auto-redirect.js
-      wizard-start.js
-      locales/i18n.js
-      discourse/app/lib/webauthn.js
-      confirm-new-email/confirm-new-email.js
-      confirm-new-email/bootstrap.js
-      onpopstate-handler.js
-      embed-application.js
-    }
-
-    # Precompile all available locales
-    unless GlobalSetting.try(:omit_base_locales)
-      Dir.glob("#{config.root}/app/assets/javascripts/locales/*.js.erb").each do |file|
-        config.assets.precompile << "locales/#{file.match(/([a-z_A-Z]+\.js)\.erb$/)[1]}"
-      end
-    end
-
-    # out of the box sprockets 3 grabs loose files that are hanging in assets,
-    # the exclusion list does not include hbs so you double compile all this stuff
-    initializer :fix_sprockets_loose_file_searcher, after: :set_default_precompile do |app|
-      app.config.assets.precompile.delete(Sprockets::Railtie::LOOSE_APP_ASSETS)
-
-      # We don't want application from node_modules, only from the root
-      app.config.assets.precompile.delete(/(?:\/|\\|\A)application\.(css|js)$/)
-      app.config.assets.precompile += ['application.js']
-
-      start_path = ::Rails.root.join("app/assets").to_s
-      exclude = ['.es6', '.hbs', '.hbr', '.js', '.css', '']
-      app.config.assets.precompile << lambda do |logical_path, filename|
-        filename.start_with?(start_path) &&
-        !exclude.include?(File.extname(logical_path))
-      end
-    end
 
     # Set Time.zone default to the specified zone and make Active Record auto-convert to this zone.
     # Run "rake -D time" for a list of tasks for finding time zone names. Default is UTC.
@@ -203,26 +139,11 @@ module Discourse
     # Configure the default encoding used in templates for Ruby 1.9.
     config.encoding = 'utf-8'
 
-    # Configure sensitive parameters which will be filtered from the log file.
-    config.filter_parameters += [
-      :password,
-      :pop3_polling_password,
-      :api_key,
-      :s3_secret_access_key,
-      :twitter_consumer_secret,
-      :facebook_app_secret,
-      :github_client_secret,
-      :second_factor_token,
-    ]
-
-    # Enable the asset pipeline
-    config.assets.enabled = true
-
-    # Version of your assets, change this if you want to expire all your assets
-    config.assets.version = '1.2.4'
-
     # see: http://stackoverflow.com/questions/11894180/how-does-one-correctly-add-custom-sql-dml-in-migrations/11894420#11894420
     config.active_record.schema_format = :sql
+
+    # We use this in development-mode only (see development.rb)
+    config.active_record.use_schema_cache_dump = false
 
     # per https://www.owasp.org/index.php/Password_Storage_Cheat_Sheet
     config.pbkdf2_iterations = 64000
@@ -255,6 +176,7 @@ module Discourse
     config.handlebars.templates_root = {
       'discourse/app/templates' => '',
       'admin/addon/templates' => 'admin/templates/',
+      'wizard/addon/templates' => 'wizard/templates/',
       'select-kit/addon/templates' => 'select-kit/templates/'
     }
 
@@ -263,22 +185,33 @@ module Discourse
     Sprockets.register_transformer 'text/x-handlebars', 'application/javascript', Ember::Handlebars::Template
 
     require 'discourse_js_processor'
+    require 'discourse_sourcemapping_url_processor'
 
     Sprockets.register_mime_type 'application/javascript', extensions: ['.js', '.es6', '.js.es6'], charset: :unicode
     Sprockets.register_postprocessor 'application/javascript', DiscourseJsProcessor
+
+    Discourse::Application.initializer :prepend_ember_assets do |app|
+      # Needs to be in its own initializer so it runs after the append_assets_path initializer defined by Sprockets
+      app.config.assets.paths.unshift "#{app.config.root}/app/assets/javascripts/discourse/dist/assets"
+      Sprockets.unregister_postprocessor 'application/javascript', Sprockets::Rails::SourcemappingUrlProcessor
+      Sprockets.register_postprocessor 'application/javascript', DiscourseSourcemappingUrlProcessor
+    end
 
     require 'discourse_redis'
     require 'logster/redis_store'
     # Use redis for our cache
     config.cache_store = DiscourseRedis.new_redis_store
-    $redis = DiscourseRedis.new # rubocop:disable Style/GlobalVars
+    Discourse.redis = DiscourseRedis.new
     Logster.store = Logster::RedisStore.new(DiscourseRedis.new)
+
+    # Deprecated
+    $redis = Discourse.redis # rubocop:disable Style/GlobalVars
 
     # we configure rack cache on demand in an initializer
     # our setup does not use rack cache and instead defers to nginx
     config.action_dispatch.rack_cache = nil
 
-    # ember stuff only used for asset precompliation, production variant plays up
+    # ember stuff only used for asset precompilation, production variant plays up
     config.ember.variant = :development
     config.ember.ember_location = "#{Rails.root}/vendor/assets/javascripts/production/ember.js"
     config.ember.handlebars_location = "#{Rails.root}/vendor/assets/javascripts/handlebars.js"
@@ -289,77 +222,37 @@ module Discourse
       config.relative_url_root = GlobalSetting.relative_url_root
     end
 
-    if Rails.env == "test"
-      if ENV['LOAD_PLUGINS'] == "1"
+    if Rails.env.test? && GlobalSetting.load_plugins?
+      Discourse.activate_plugins!
+    elsif GlobalSetting.load_plugins?
+      Plugin.initialization_guard do
         Discourse.activate_plugins!
       end
-    else
-      plugin_initialization_guard do
-        Discourse.activate_plugins!
-      end
-    end
-
-    Discourse.find_plugin_js_assets(include_disabled: true).each do |file|
-      config.assets.precompile << "#{file}.js"
     end
 
     # Use discourse-fonts gem to symlink fonts and generate .scss file
     fonts_path = File.join(config.root, 'public/fonts')
     Discourse::Utils.atomic_ln_s(DiscourseFonts.path_for_fonts, fonts_path)
 
-    require_dependency 'stylesheet/manager'
-    require_dependency 'svg_sprite/svg_sprite'
+    require 'stylesheet/manager'
+    require 'svg_sprite'
 
     config.after_initialize do
-      # require common dependencies that are often required by plugins
-      # in the past observers would load them as side-effects
-      # correct behavior is for plugins to require stuff they need,
-      # however it would be a risky and breaking change not to require here
-      require_dependency 'category'
-      require_dependency 'post'
-      require_dependency 'topic'
-      require_dependency 'user'
-      require_dependency 'post_action'
-      require_dependency 'post_revision'
-      require_dependency 'notification'
-      require_dependency 'topic_user'
-      require_dependency 'topic_view'
-      require_dependency 'topic_list'
-      require_dependency 'group'
-      require_dependency 'user_field'
-      require_dependency 'post_action_type'
-      # Ensure that Discourse event triggers for web hooks are loaded
-      require_dependency 'web_hook'
-
       # Load plugins
-      plugin_initialization_guard do
+      Plugin.initialization_guard do
         Discourse.plugins.each(&:notify_after_initialize)
       end
 
       # we got to clear the pool in case plugins connect
       ActiveRecord::Base.connection_handler.clear_active_connections!
-
-      # This nasty hack is required for not precompiling QUnit assets
-      # in test mode. see: https://github.com/rails/sprockets-rails/issues/299#issuecomment-167701012
-      ActiveSupport.on_load(:action_view) do
-        default_checker = ActionView::Base.precompiled_asset_checker
-
-        ActionView::Base.precompiled_asset_checker = -> logical_path do
-          default_checker[logical_path] ||
-            %w{qunit.js
-              qunit.css
-              test_helper.css
-              discourse/tests/test_helper.js
-              wizard/test/test_helper.js
-            }.include?(logical_path) ||
-            logical_path =~ /\/node_modules/ ||
-            logical_path =~ /\/dist/
-        end
-      end
     end
 
     if ENV['RBTRACE'] == "1"
       require 'rbtrace'
+    end
+
+    if ENV['RAILS_QUERY_LOG_TAGS'] == "1"
+      config.active_record.query_log_tags_enabled = true
     end
 
     config.generators do |g|

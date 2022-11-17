@@ -1,11 +1,10 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe StylesheetsController do
+RSpec.describe StylesheetsController do
   it 'can survive cache miss' do
     StylesheetCache.destroy_all
-    builder = Stylesheet::Manager.new('desktop_rtl', nil)
+    manager = Stylesheet::Manager.new(theme_id: nil)
+    builder = Stylesheet::Manager::Builder.new(target: 'desktop_rtl', manager: manager, theme: nil)
     builder.compile
 
     digest = StylesheetCache.first.digest
@@ -19,7 +18,7 @@ describe StylesheetsController do
     expect(cached.digest).to eq digest
 
     # tmp folder destruction and cached
-    `rm #{Stylesheet::Manager.cache_fullpath}/*`
+    `rm -rf #{Stylesheet::Manager.cache_fullpath}`
 
     get "/stylesheets/desktop_rtl_#{digest}.css"
     expect(response.status).to eq(200)
@@ -31,10 +30,12 @@ describe StylesheetsController do
     scheme = ColorScheme.create_from_base(name: "testing", colors: [])
     theme = Fabricate(:theme, color_scheme_id: scheme.id)
 
-    builder = Stylesheet::Manager.new(:desktop, theme.id)
+    manager = Stylesheet::Manager.new(theme_id: theme.id)
+
+    builder = Stylesheet::Manager::Builder.new(target: :desktop, theme: theme, manager: manager)
     builder.compile
 
-    `rm #{Stylesheet::Manager.cache_fullpath}/*`
+    `rm -rf #{Stylesheet::Manager.cache_fullpath}`
 
     get "/stylesheets/#{builder.stylesheet_filename.sub(".css", "")}.css"
 
@@ -44,10 +45,10 @@ describe StylesheetsController do
 
     expect(response.status).to eq(200)
 
-    builder = Stylesheet::Manager.new(:desktop_theme, theme.id)
+    builder = Stylesheet::Manager::Builder.new(target: :desktop_theme, theme: theme, manager: manager)
     builder.compile
 
-    `rm #{Stylesheet::Manager.cache_fullpath}/*`
+    `rm -rf #{Stylesheet::Manager.cache_fullpath}`
 
     get "/stylesheets/#{builder.stylesheet_filename.sub(".css", "")}.css"
 
@@ -58,7 +59,7 @@ describe StylesheetsController do
     expect(response.status).to eq(200)
   end
 
-  context "#color_scheme" do
+  describe "#color_scheme" do
     it 'works as expected' do
       scheme = ColorScheme.last
       get "/color-scheme-stylesheet/#{scheme.id}.json"

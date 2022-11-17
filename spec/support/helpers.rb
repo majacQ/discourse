@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+GIT_INITIAL_BRANCH_SUPPORTED = Gem::Version.new(`git --version`.match(/[\d\.]+/)[0]) >= Gem::Version.new("2.28.0")
+
 module Helpers
   extend ActiveSupport::Concern
 
@@ -14,8 +16,9 @@ module Helpers
   end
 
   def log_in_user(user)
+    cookie_jar = ActionDispatch::Request.new(request.env).cookie_jar
     provider = Discourse.current_user_provider.new(request.env)
-    provider.log_on_user(user, session, cookies)
+    provider.log_on_user(user, session, cookie_jar)
     provider
   end
 
@@ -42,10 +45,18 @@ module Helpers
   end
 
   def create_post(args = {})
+    # Pretty much all the tests with `create_post` will fail without this
+    # since allow_uncategorized_topics is now false by default
+    unless args[:allow_uncategorized_topics] == false
+      SiteSetting.allow_uncategorized_topics = true
+    end
+
     args[:title] ||= "This is my title #{Helpers.next_seq}"
     args[:raw] ||= "This is the raw body of my post, it is cool #{Helpers.next_seq}"
     args[:topic_id] = args[:topic].id if args[:topic]
+    automated_group_refresh_required = args[:user].blank?
     user = args.delete(:user) || Fabricate(:user)
+    Group.refresh_automatic_groups! if automated_group_refresh_required
     args[:category] = args[:category].id if args[:category].is_a?(Category)
     creator = PostCreator.new(user, args)
     post = creator.create
@@ -55,11 +66,6 @@ module Helpers
     end
 
     post
-  end
-
-  def generate_username(length = 10)
-    range = [*'a'..'z']
-    Array.new(length) { range.sample }.join
   end
 
   def stub_guardian(user)
@@ -79,14 +85,6 @@ module Helpers
 
     on_fail&.call
     expect(result).to eq(true)
-  end
-
-  def fill_email(mail, from, to, body = nil, subject = nil, cc = nil)
-    result = mail.gsub("FROM", from).gsub("TO", to)
-    result.gsub!(/Hey.*/m, body)  if body
-    result.sub!(/We .*/, subject) if subject
-    result.sub!("CC", cc.presence || "")
-    result
   end
 
   def email(email_name)
@@ -169,7 +167,7 @@ module Helpers
 
   def setup_git_repo(files)
     repo_dir = Dir.mktmpdir
-    `cd #{repo_dir} && git init .`
+    `cd #{repo_dir} && git init . #{"--initial-branch=main" if GIT_INITIAL_BRANCH_SUPPORTED}`
     `cd #{repo_dir} && git config user.email 'someone@cool.com'`
     `cd #{repo_dir} && git config user.name 'The Cool One'`
     `cd #{repo_dir} && git config commit.gpgsign 'false'`
@@ -182,8 +180,26 @@ module Helpers
     repo_dir
   end
 
-  class StubbedJob
-    def initialize; end
-    def perform(args); end
+  def stub_const(target, const, value)
+    old = target.const_get(const)
+    target.send(:remove_const, const)
+    target.const_set(const, value)
+    yield
+  ensure
+    target.send(:remove_const, const)
+    target.const_set(const, old)
+  end
+
+  def track_sql_queries
+    queries = []
+    callback = ->(*, payload) {
+      queries << payload.fetch(:sql) unless ["CACHE", "SCHEMA"].include?(payload.fetch(:name))
+    }
+
+    ActiveSupport::Notifications.subscribed(callback, "sql.active_record") do
+      yield
+    end
+
+    queries
   end
 end

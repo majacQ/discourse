@@ -3,10 +3,11 @@ import {
   exists,
   queryAll,
 } from "discourse/tests/helpers/qunit-helpers";
-import hbs from "htmlbars-inline-precompile";
+import { hbs } from "ember-cli-htmlbars";
 import { test } from "qunit";
 import { visit } from "@ember/test-helpers";
 import { withPluginApi } from "discourse/lib/plugin-api";
+import Ember from "ember";
 
 const PREFIX = "javascripts/single-test/connectors";
 
@@ -52,8 +53,8 @@ acceptance("Plugin Outlet - Decorator", function (needs) {
     )[0];
 
     assert.ok(exists(fooConnector));
-    assert.equal(fooConnector.style.backgroundColor, "yellow");
-    assert.equal(barConnector.style.backgroundColor, "");
+    assert.strictEqual(fooConnector.style.backgroundColor, "yellow");
+    assert.strictEqual(barConnector.style.backgroundColor, "");
 
     await visit("/c/bug");
 

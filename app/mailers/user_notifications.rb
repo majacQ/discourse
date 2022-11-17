@@ -153,13 +153,23 @@ class UserNotifications < ActionMailer::Base
 
     return unless user_history = opts[:user_history]
 
-    build_email(
-      user.email,
-      template: "user_notifications.account_silenced",
-      locale: user_locale(user),
-      reason: user_history.details,
-      silenced_till: I18n.l(user.silenced_till, format: :long)
-    )
+    if user.silenced_forever?
+      build_email(
+        user.email,
+        template: "user_notifications.account_silenced_forever",
+        locale: user_locale(user),
+        reason: user_history.details
+      )
+    else
+      silenced_till = user.silenced_till.in_time_zone(user.user_option.timezone)
+      build_email(
+        user.email,
+        template: "user_notifications.account_silenced",
+        locale: user_locale(user),
+        reason: user_history.details,
+        silenced_till: I18n.l(silenced_till, format: :long)
+      )
+    end
   end
 
   def account_suspended(user, opts = nil)
@@ -167,13 +177,23 @@ class UserNotifications < ActionMailer::Base
 
     return unless user_history = opts[:user_history]
 
-    build_email(
-      user.email,
-      template: "user_notifications.account_suspended",
-      locale: user_locale(user),
-      reason: user_history.details,
-      suspended_till: I18n.l(user.suspended_till, format: :long)
-    )
+    if user.suspended_forever?
+      build_email(
+        user.email,
+        template: "user_notifications.account_suspended_forever",
+        locale: user_locale(user),
+        reason: user_history.details
+      )
+    else
+      suspended_till = user.suspended_till.in_time_zone(user.user_option.timezone)
+      build_email(
+        user.email,
+        template: "user_notifications.account_suspended",
+        locale: user_locale(user),
+        reason: user_history.details,
+        suspended_till: I18n.l(suspended_till, format: :long)
+      )
+    end
   end
 
   def account_exists(user, opts = {})
@@ -196,6 +216,8 @@ class UserNotifications < ActionMailer::Base
 
   def digest(user, opts = {})
     build_summary_for(user)
+    @unsubscribe_key = UnsubscribeKey.create_key_for(@user, UnsubscribeKey::DIGEST_TYPE)
+
     min_date = opts[:since] || user.last_emailed_at || user.last_seen_at || 1.month.ago
 
     # Fetch some topics and posts to show
@@ -422,7 +444,7 @@ class UserNotifications < ActionMailer::Base
     user_name = notification_data[:original_username]
 
     if post && SiteSetting.enable_names && SiteSetting.display_name_on_email_from
-      name = User.where(id: post.user_id).pluck_first(:name)
+      name = User.where(id: notification_data[:original_user_id] || post.user_id).pluck_first(:name)
       user_name = name unless name.blank?
     end
 
@@ -520,9 +542,11 @@ class UserNotifications < ActionMailer::Base
       show_tags_in_subject = tags.any? ? tags.join(" ") : nil
     end
 
+    group = post.topic.allowed_groups&.first
+
     if post.topic.private_message?
       subject_pm =
-        if opts[:show_group_in_subject] && group = post.topic.allowed_groups&.first
+        if opts[:show_group_in_subject] && group.present?
           if group.full_name
             "[#{group.full_name}] "
           else
@@ -532,22 +556,7 @@ class UserNotifications < ActionMailer::Base
           I18n.t('subject_pm')
         end
 
-      participants = ""
-      participant_list = []
-
-      post.topic.allowed_groups.each do |g|
-        participant_list.push "[#{g.name} (#{g.users.count})](#{Discourse.base_url}/groups/#{g.name})"
-      end
-
-      post.topic.allowed_users.each do |u|
-        if SiteSetting.prioritize_username_in_ux?
-          participant_list.push "[#{u.username}](#{Discourse.base_url}/u/#{u.username_lower})"
-        else
-          participant_list.push "[#{u.name.blank? ? u.username : u.name}](#{Discourse.base_url}/u/#{u.username_lower})"
-        end
-      end
-
-      participants += participant_list.join(", ")
+      participants = self.class.participants(post, user)
     end
 
     if SiteSetting.private_email?
@@ -616,7 +625,7 @@ class UserNotifications < ActionMailer::Base
         message = email_post_markdown(post) + (reached_limit ? "\n\n#{I18n.t "user_notifications.reached_limit", count: SiteSetting.max_emails_per_day_per_user}" : "")
       end
 
-      first_footer_classes = "hilight"
+      first_footer_classes = "highlight"
       if (allow_reply_by_email && user.staged) || (user.suspended? || user.staged?)
         first_footer_classes = ""
       end
@@ -630,7 +639,8 @@ class UserNotifications < ActionMailer::Base
                     post: post,
                     in_reply_to_post: in_reply_to_post,
                     classes: Rtl.new(user).css_class,
-                    first_footer_classes: first_footer_classes
+                    first_footer_classes: first_footer_classes,
+                    reply_above_line: false
           }
         )
       end
@@ -679,6 +689,51 @@ class UserNotifications < ActionMailer::Base
     build_email(user.email, email_opts)
   end
 
+  def self.participants(post, recipient_user, reveal_staged_email: false)
+    list = []
+
+    allowed_groups = post.topic.allowed_groups.order("user_count DESC")
+
+    allowed_groups.each do |g|
+      list.push("[#{g.name_full_preferred} (#{g.user_count})](#{g.full_url})")
+      break if list.size >= SiteSetting.max_participant_names
+    end
+
+    recent_posts_query = post.topic.posts
+      .select("user_id, MAX(post_number) AS post_number")
+      .where(post_type: Post.types[:regular], post_number: ..post.post_number)
+      .where.not(user_id: recipient_user.id)
+      .group(:user_id)
+      .order("post_number DESC")
+      .limit(SiteSetting.max_participant_names)
+      .to_sql
+
+    allowed_users = post.topic.allowed_users
+      .joins("LEFT JOIN (#{recent_posts_query}) pu ON topic_allowed_users.user_id = pu.user_id")
+      .order("post_number DESC NULLS LAST", :id)
+      .where.not(id: recipient_user.id)
+      .human_users
+
+    allowed_users.each do |u|
+      break if list.size >= SiteSetting.max_participant_names
+
+      if reveal_staged_email && u.staged?
+        list.push("#{u.email}")
+      else
+        list.push("[#{u.display_name}](#{u.full_url})")
+      end
+    end
+
+    participants = list.join(I18n.t("word_connector.comma"))
+    others_count = allowed_groups.size + allowed_users.size - list.size
+
+    if others_count > 0
+      I18n.t("user_notifications.more_pm_participants", participants: participants, count: others_count)
+    else
+      participants
+    end
+  end
+
   private
 
   def build_user_email_token_by_template(template, user, email_token)
@@ -700,7 +755,6 @@ class UserNotifications < ActionMailer::Base
     @header_bgcolor  = ColorScheme.hex_for_name('header_background')
     @anchor_color    = ColorScheme.hex_for_name('tertiary')
     @markdown_linker = MarkdownLinker.new(@base_url)
-    @unsubscribe_key = UnsubscribeKey.create_key_for(@user, "digest")
     @disable_email_custom_styles = !SiteSetting.apply_custom_styles_to_digest
   end
 

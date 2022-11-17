@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe PostRevisionSerializer do
+RSpec.describe PostRevisionSerializer do
   fab!(:post) { Fabricate(:post, version: 2) }
 
-  context 'hidden tags' do
+  context 'with hidden tags' do
     fab!(:public_tag) { Fabricate(:tag, name: 'public') }
     fab!(:public_tag2) { Fabricate(:tag, name: 'visible') }
     fab!(:hidden_tag) { Fabricate(:tag, name: 'hidden') }
@@ -47,7 +45,7 @@ describe PostRevisionSerializer do
       expect(json[:tags_changes][:current]).to eq([public_tag2.name])
     end
 
-    it 'does not show tag modificiatons if changes are not visible to the user' do
+    it 'does not show tag modifications if changes are not visible to the user' do
       json = PostRevisionSerializer.new(post_revision2, scope: Guardian.new(Fabricate(:user)), root: false).as_json
       expect(json[:tags_changes]).to_not be_present
     end

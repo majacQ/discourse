@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # If Mini Profiler is included via gem
-if Rails.configuration.respond_to?(:load_mini_profiler) && Rails.configuration.load_mini_profiler
+if Rails.configuration.respond_to?(:load_mini_profiler) && Rails.configuration.load_mini_profiler && RUBY_ENGINE == "ruby"
   require 'rack-mini-profiler'
   require 'stackprof'
 
@@ -45,10 +45,12 @@ if defined?(Rack::MiniProfiler) && defined?(Rack::MiniProfiler::Config)
     /^\/site_customizations/,
     /^\/uploads/,
     /^\/secure-media-uploads/,
+    /^\/secure-uploads/,
     /^\/javascripts\//,
     /^\/images\//,
     /^\/stylesheets\//,
-    /^\/favicon\/proxied/
+    /^\/favicon\/proxied/,
+    /^\/theme-javascripts/
   ]
 
   # we DO NOT WANT mini-profiler loading on anything but real desktops and laptops
@@ -68,13 +70,20 @@ if defined?(Rack::MiniProfiler) && defined?(Rack::MiniProfiler::Config)
     Digest::MD5.hexdigest(id)
   end
 
-  Rack::MiniProfiler.config.position = 'left'
+  # Cookie path should be set to the base path so Discourse's session cookie path
+  #  does not get clobbered.
+  Rack::MiniProfiler.config.cookie_path = Discourse.base_path.presence || "/"
+
+  Rack::MiniProfiler.config.position = "right"
+
   Rack::MiniProfiler.config.backtrace_ignores ||= []
   Rack::MiniProfiler.config.backtrace_ignores << /lib\/rack\/message_bus.rb/
   Rack::MiniProfiler.config.backtrace_ignores << /config\/initializers\/silence_logger/
   Rack::MiniProfiler.config.backtrace_ignores << /config\/initializers\/quiet_logger/
 
   Rack::MiniProfiler.config.backtrace_includes = [/^\/?(app|config|lib|test|plugins)/]
+
+  Rack::MiniProfiler.config.max_traces_to_show = 100 if Rails.env.development?
 
   Rack::MiniProfiler.counter_method(Redis::Client, :call) { 'redis' }
   # Rack::MiniProfiler.counter_method(ActiveRecord::QueryMethods, 'build_arel')

@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe StaffActionLogger do
+RSpec.describe StaffActionLogger do
 
   fab!(:admin)  { Fabricate(:admin) }
   let(:logger) { described_class.new(admin) }
@@ -134,7 +132,8 @@ describe StaffActionLogger do
 
     it 'creates a new UserHistory record' do
       expect { log_trust_level_change }.to change { UserHistory.count }.by(1)
-      expect(UserHistory.last.details).to include "new trust level: #{new_trust_level}"
+      expect(UserHistory.last.previous_value).to eq(old_trust_level.to_s)
+      expect(UserHistory.last.new_value).to eq(new_trust_level.to_s)
     end
   end
 
@@ -146,6 +145,18 @@ describe StaffActionLogger do
 
     it "creates a new UserHistory record" do
       expect { logger.log_site_setting_change('title', 'Discourse', 'My Site') }.to change { UserHistory.count }.by(1)
+    end
+
+    it "logs boolean values" do
+      log_record = logger.log_site_setting_change("allow_user_locale", true, false)
+      expect(log_record.previous_value).to eq("true")
+      expect(log_record.new_value).to eq("false")
+    end
+
+    it "logs nil values" do
+      log_record = logger.log_site_setting_change("title", nil, nil)
+      expect(log_record.previous_value).to be_nil
+      expect(log_record.new_value).to be_nil
     end
   end
 
@@ -309,13 +320,15 @@ describe StaffActionLogger do
   end
 
   describe 'log_roll_up' do
-    let(:subnets) { ["1.2.3.0/24", "42.42.42.0/24"] }
-    subject(:log_roll_up) { described_class.new(admin).log_roll_up(subnets) }
+    let(:subnet) { "1.2.3.0/24" }
+    let(:ips) { ["1.2.3.4", "1.2.3.100"] }
+
+    subject(:log_roll_up) { described_class.new(admin).log_roll_up(subnet, ips) }
 
     it 'creates a new UserHistory record' do
-      log_record = logger.log_roll_up(subnets)
+      log_record = logger.log_roll_up(subnet, ips)
       expect(log_record).to be_valid
-      expect(log_record.details).to eq(subnets.join(", "))
+      expect(log_record.details).to eq("#{subnet} from #{ips.join(", ")}")
     end
   end
 
@@ -352,8 +365,10 @@ describe StaffActionLogger do
 
       category.update!(attributes)
 
-      logger.log_category_settings_change(category, attributes,
-        category_group.group_name => category_group.permission_type
+      logger.log_category_settings_change(
+        category,
+        attributes,
+        old_permissions: { category_group.group_name => category_group.permission_type }
       )
 
       expect(UserHistory.count).to eq(2)
@@ -376,10 +391,46 @@ describe StaffActionLogger do
       old_permission = category.permissions_params
       category.update!(attributes)
 
-      logger.log_category_settings_change(category, attributes.merge(permissions: { "everyone" => 1 }), old_permission)
+      logger.log_category_settings_change(
+        category,
+        attributes.merge(permissions: { "everyone" => 1 }),
+        old_permissions: old_permission
+      )
 
       expect(UserHistory.count).to eq(1)
       expect(UserHistory.find_by_subject('name').category).to eq(category)
+    end
+
+    it "logs custom fields changes" do
+      attributes = {
+        custom_fields: { "auto_populated" => "t" }
+      }
+      category.update!(attributes)
+
+      logger.log_category_settings_change(
+        category,
+        attributes,
+        old_permissions: category.permissions_params,
+        old_custom_fields: {}
+      )
+
+      expect(UserHistory.count).to eq(1)
+    end
+
+    it "does not log custom fields changes if value is unchanged" do
+      attributes = {
+        custom_fields: { "auto_populated" => "t" }
+      }
+      category.update!(attributes)
+
+      logger.log_category_settings_change(
+        category,
+        attributes,
+        old_permissions: category.permissions_params,
+        old_custom_fields: { "auto_populated" => "t" }
+      )
+
+      expect(UserHistory.count).to eq(0)
     end
   end
 
@@ -544,7 +595,6 @@ describe StaffActionLogger do
       expect(user_history.action).to eq(UserHistory.actions[:post_rejected])
       expect(user_history.details).to include(reviewable.payload['raw'])
     end
-
   end
 
   describe 'log_topic_closed' do
@@ -617,4 +667,43 @@ describe StaffActionLogger do
     end
   end
 
+  describe '#log_watched_words_creation' do
+    fab!(:watched_word) { Fabricate(:watched_word, action: WatchedWord.actions[:block]) }
+
+    it "raises an error when watched_word is missing" do
+      expect { logger.log_watched_words_creation(nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      logger.log_watched_words_creation(watched_word)
+
+      expect(UserHistory.count).to eq(1)
+      user_history = UserHistory.last
+
+      expect(user_history.subject).to eq(nil)
+      expect(user_history.details).to include(watched_word.word)
+      expect(user_history.context).to eq("block")
+      expect(user_history.action).to eq(UserHistory.actions[:watched_word_create])
+    end
+  end
+
+  describe '#log_watched_words_deletion' do
+    fab!(:watched_word) { Fabricate(:watched_word, action: WatchedWord.actions[:block]) }
+
+    it "raises an error when watched_word is missing" do
+      expect { logger.log_watched_words_deletion(nil) }.to raise_error(Discourse::InvalidParameters)
+    end
+
+    it "creates a new UserHistory record" do
+      logger.log_watched_words_deletion(watched_word)
+
+      expect(UserHistory.count).to eq(1)
+      user_history = UserHistory.last
+
+      expect(user_history.subject).to eq(nil)
+      expect(user_history.details).to include(watched_word.word)
+      expect(user_history.context).to eq("block")
+      expect(user_history.action).to eq(UserHistory.actions[:watched_word_destroy])
+    end
+  end
 end

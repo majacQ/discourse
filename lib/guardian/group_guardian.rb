@@ -16,11 +16,8 @@ module GroupGuardian
   # Automatic groups are not represented in the GROUP_USERS
   # table and thus do not allow membership changes.
   def can_edit_group?(group)
-    !group.automatic && can_log_group_changes?(group)
-  end
-
-  def can_log_group_changes?(group)
-    can_admin_group?(group) || group.users.where('group_users.owner').include?(user)
+    !group.automatic &&
+      (can_admin_group?(group) || group.users.where('group_users.owner').include?(user))
   end
 
   def can_admin_group?(group)
@@ -36,7 +33,13 @@ module GroupGuardian
   def can_see_group_messages?(group)
     return true if is_admin?
     return true if is_moderator? && group.id == Group::AUTO_GROUPS[:moderators]
+    return false if user.blank?
 
-    SiteSetting.enable_personal_messages? && group.users.include?(user)
+    user.in_any_groups?(SiteSetting.personal_message_enabled_groups_map) &&
+      group.users.include?(user)
+  end
+
+  def can_associate_groups?
+    is_admin? && AssociatedGroup.has_provider?
   end
 end

@@ -4,12 +4,11 @@
 # about: Uses the lazyYT plugin to lazy load Youtube videos
 # version: 1.0.1
 # authors: Arpit Jalan
-# url: https://github.com/discourse/discourse/tree/master/plugins/lazy-yt
+# url: https://github.com/discourse/discourse/tree/main/plugins/lazy-yt
 
 hide_plugin if self.respond_to?(:hide_plugin)
 
-# javascript
-register_asset "javascripts/lazyYT.js"
+require "onebox"
 
 # stylesheet
 register_asset "stylesheets/lazyYT.css"
@@ -36,7 +35,7 @@ class Onebox::Engine::YoutubeOnebox
       # Put in the LazyYT div instead of the iframe
       escaped_title = ERB::Util.html_escape(video_title)
 
-      <<~EOF
+      <<~HTML
       <div class="onebox lazyYT lazyYT-container"
            data-youtube-id="#{video_id}"
            data-youtube-title="#{escaped_title}"
@@ -49,7 +48,7 @@ class Onebox::Engine::YoutubeOnebox
                title="#{escaped_title}">
         </a>
       </div>
-      EOF
+      HTML
     else
       yt_onebox_to_html
     end

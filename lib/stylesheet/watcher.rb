@@ -70,7 +70,7 @@ module Stylesheet
               end
 
               target = nil
-              target_match = long.match(/admin|desktop|mobile|publish/)
+              target_match = long.match(/admin|desktop|mobile|publish|wizard|wcag|color_definitions/)
               if target_match&.length
                 target = target_match[0]
               end
@@ -93,14 +93,15 @@ module Stylesheet
     end
 
     def core_assets_refresh(target)
+      if target&.match(/wcag|color_definitions/)
+        Stylesheet::Manager.clear_color_scheme_cache!
+        return
+      end
+
       targets = target ? [target] : ["desktop", "mobile", "admin"]
       Stylesheet::Manager.clear_core_cache!(targets)
       message = targets.map! do |name|
-        msgs = []
-        active_themes.each do |theme_id|
-          msgs << Stylesheet::Manager.stylesheet_data(name.to_sym, theme_id)
-        end
-        msgs
+        Stylesheet::Manager.new.stylesheet_data(name.to_sym)
       end.flatten!
       MessageBus.publish '/file-change', message
     end
@@ -114,11 +115,7 @@ module Stylesheet
         targets.push(plugin_name)
       end
       message = targets.map! do |name|
-        msgs = []
-        active_themes.each do |theme_id|
-          msgs << Stylesheet::Manager.stylesheet_data(name.to_sym, theme_id)
-        end
-        msgs
+        Stylesheet::Manager.new.stylesheet_data(name.to_sym)
       end.flatten!
       MessageBus.publish '/file-change', message
     end
@@ -141,10 +138,6 @@ module Stylesheet
       paths.each do |path|
         @queue.push path
       end
-    end
-
-    def active_themes
-      @active_themes ||= Theme.user_selectable.pluck(:id)
     end
 
   end

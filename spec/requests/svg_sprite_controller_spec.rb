@@ -1,10 +1,7 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe SvgSpriteController do
-
-  context 'show' do
+RSpec.describe SvgSpriteController do
+  describe '#show' do
     before do
       SvgSprite.expire_cache
     end
@@ -16,7 +13,7 @@ describe SvgSpriteController do
       theme = Fabricate(:theme)
       theme.set_field(target: :settings, name: :yaml, value: "custom_icon: dragon")
       theme.save!
-      get "/svg-sprite/#{Discourse.current_hostname}/svg-#{theme.id}-#{SvgSprite.version([theme.id])}.js"
+      get "/svg-sprite/#{Discourse.current_hostname}/svg-#{theme.id}-#{SvgSprite.version(theme.id)}.js"
       expect(response.status).to eq(200)
     end
 
@@ -24,12 +21,21 @@ describe SvgSpriteController do
       random_hash = Digest::SHA1.hexdigest("somerandomstring")
       get "/svg-sprite/#{Discourse.current_hostname}/svg--#{random_hash}.js"
 
-      expect(response.status).to eq(302)
-      expect(response.location).to include(SvgSprite.version)
+      expect(response).to redirect_to(
+        "/svg-sprite/test.localhost/svg--#{SvgSprite.version}.js"
+      )
+
+      set_cdn_url "//some-cdn.com/site"
+
+      get "/svg-sprite/#{Discourse.current_hostname}/svg--#{random_hash}.js"
+
+      expect(response).to redirect_to(
+        "https://some-cdn.com/site/svg-sprite/test.localhost/svg--#{SvgSprite.version}.js"
+      )
     end
   end
 
-  context 'search' do
+  describe '#search' do
     it "should not work for anons" do
       get "/svg-sprite/search/fa-bolt"
       expect(response.status).to eq(404)
@@ -69,7 +75,7 @@ describe SvgSpriteController do
     end
   end
 
-  context 'icon_picker_search' do
+  describe '#icon_picker_search' do
     it 'should work with no filter and max out at 200 results' do
       user = sign_in(Fabricate(:user))
       get '/svg-sprite/picker-search'
@@ -94,7 +100,7 @@ describe SvgSpriteController do
     end
   end
 
-  context 'svg_icon' do
+  describe '#svg_icon' do
     it "requires .svg extension" do
       get "/svg-sprite/#{Discourse.current_hostname}/icon/bolt"
       expect(response.status).to eq(404)

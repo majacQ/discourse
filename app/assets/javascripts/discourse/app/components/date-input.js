@@ -1,11 +1,19 @@
+/* global Pikaday:true */
 import discourseComputed, { on } from "discourse-common/utils/decorators";
 import Component from "@ember/component";
 import I18n from "I18n";
 import { Promise } from "rsvp";
 import { action } from "@ember/object";
-/* global Pikaday:true */
 import loadScript from "discourse/lib/load-script";
 import { schedule } from "@ember/runloop";
+
+function isInputDateSupported() {
+  const input = document.createElement("input");
+  const value = "a";
+  input.setAttribute("type", "date");
+  input.setAttribute("value", value);
+  return input.value !== value;
+}
 
 export default Component.extend({
   classNames: ["d-date-input"],
@@ -13,9 +21,11 @@ export default Component.extend({
   _picker: null,
 
   @discourseComputed("site.mobileView")
-  inputType(mobileView) {
-    return mobileView ? "date" : "text";
+  inputType() {
+    return this.useNativePicker ? "date" : "text";
   },
+
+  useNativePicker: isInputDateSupported(),
 
   click(event) {
     event.stopPropagation();
@@ -32,7 +42,7 @@ export default Component.extend({
       let promise;
       const container = document.getElementById(this.containerId);
 
-      if (this.site.mobileView) {
+      if (this.useNativePicker) {
         promise = this._loadNativePicker(container);
       } else {
         promise = this._loadPikadayPicker(container);
@@ -42,7 +52,9 @@ export default Component.extend({
         this._picker = picker;
 
         if (this._picker && this.date) {
-          this._picker.setDate(moment(this.date).toDate(), true);
+          const parsedDate =
+            this.date instanceof moment ? this.date : moment(this.date);
+          this._picker.setDate(parsedDate.toDate(), true);
         }
       });
     });
@@ -52,11 +64,18 @@ export default Component.extend({
     this._super(...arguments);
 
     if (this._picker && this.date) {
-      this._picker.setDate(moment(this.date).toDate(), true);
+      const parsedDate =
+        this.date instanceof moment ? this.date : moment(this.date);
+      this._picker.setDate(parsedDate.toDate(), true);
     }
 
     if (this._picker && this.relativeDate) {
-      this._picker.setMinDate(moment(this.relativeDate).toDate(), true);
+      const parsedRelativeDate =
+        this.relativeDate instanceof moment
+          ? this.relativeDate
+          : moment(this.relativeDate);
+
+      this._picker.setMinDate(parsedRelativeDate.toDate(), true);
     }
 
     if (this._picker && !this.date) {
@@ -134,9 +153,16 @@ export default Component.extend({
     }
   },
 
-  @discourseComputed()
-  placeholder() {
-    return I18n.t("dates.placeholder");
+  @discourseComputed("_placeholder")
+  placeholder: {
+    get(_placeholder) {
+      return _placeholder || I18n.t("dates.placeholder");
+    },
+
+    set(value) {
+      this.set("_placeholder", value);
+      return value;
+    },
   },
 
   _opts() {

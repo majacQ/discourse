@@ -125,6 +125,105 @@ class ColorScheme < ActiveRecord::Base
       "danger" =>            'BB1122',
       "success" =>           '3d854d',
       "love" =>              '9D256B'
+    },
+    # By @zenorocha
+    "Dracula": {
+      "primary_very_low" => "373A47",
+      "primary_low" => "414350",
+      "primary_low_mid" => "8C8D94",
+      "primary_medium" => "A3A4AA",
+      "primary_high" => "CCCCCF",
+      "primary" => 'f2f2f2',
+      "secondary_low" => "CCCCCF",
+      "secondary_medium" => "91939A",
+      "secondary_high" => "6A6C76",
+      "secondary_very_high" => "3D404C",
+      "secondary" => '2d303e',
+      "tertiary_low" => "4A4463",
+      "tertiary_medium" => "6E5D92",
+      "tertiary" => 'bd93f9',
+      "tertiary_high" => "9275C1",
+      "quaternary_low" => "6AA8BA",
+      "quaternary" => '8be9fd',
+      "header_background" => '373A47',
+      "header_primary" => 'f2f2f2',
+      "highlight_low" => "686D55",
+      "danger_medium" => "B6484D",
+      "highlight" => 'f1fa8c',
+      "highlight_high" => "C0C879",
+      "danger_low" => "957279",
+      "danger" => 'ff5555',
+      "success_low" => "386D50",
+      "success_medium" => "44B366",
+      "success" => '50fa7b',
+      "love_low" => "6C4667",
+      "love" => 'ff79c6'
+    },
+    # By @altercation
+    "Solarized Light": {
+      "primary_very_low" => "F0ECD7",
+      "primary_low" => "D6D8C7",
+      "primary_low_mid" => "A4AFA5",
+      "primary_medium" => "7E918C",
+      "primary_high" => "4C6869",
+      "primary" => '002B36',
+      "secondary_low" => "325458",
+      "secondary_medium" => "6C8280",
+      "secondary_high" => "97A59D",
+      "secondary_very_high" => "E8E6D3",
+      "secondary" => 'FCF6E1',
+      "tertiary_low" => "D6E6DE",
+      "tertiary_medium" => "7EBFD7",
+      "tertiary" => '0088cc',
+      "tertiary_high" => "329ED0",
+      "quaternary" => 'e45735',
+      "header_background" => 'FCF6E1',
+      "header_primary" => '002B36',
+      "highlight_low" => "FDF9AD",
+      "highlight_medium" => "E3D0A3",
+      "highlight" => 'ffff4d',
+      "highlight_high" => "BCAA7F",
+      "danger_low" => "F8D9C2",
+      "danger" => 'e45735',
+      "success_low" => "CFE5B9",
+      "success_medium" => "4CB544",
+      "success" => '009900',
+      "love_low" => "FCDDD2",
+      "love" => 'fa6c8d'
+    },
+    # By @altercation
+    "Solarized Dark": {
+      "primary_very_low" => "0D353F",
+      "primary_low" => "193F47",
+      "primary_low_mid" => "798C88",
+      "primary_medium" => "97A59D",
+      "primary_high" => "B5BDB1",
+      "primary" => 'FCF6E1',
+      "secondary_low" => "B5BDB1",
+      "secondary_medium" => "81938D",
+      "secondary_high" => "4E6A6B",
+      "secondary_very_high" => "143B44",
+      "secondary" => '002B36',
+      "tertiary_low" => "003E54",
+      "tertiary_medium" => "00557A",
+      "tertiary" => '0088cc',
+      "tertiary_high" => "006C9F",
+      "quaternary_low" => "944835",
+      "quaternary" => 'e45735',
+      "header_background" => '002B36',
+      "header_primary" => 'FCF6E1',
+      "highlight_low" => "4D6B3D",
+      "highlight_medium" => "464C33",
+      "highlight" => 'ffff4d',
+      "highlight_high" => "BFCA47",
+      "danger_low" => "443836",
+      "danger_medium" => "944835",
+      "danger" => 'e45735',
+      "success_low" => "004C26",
+      "success_medium" => "007313",
+      "success" => '009900',
+      "love_low" => "4B3F50",
+      "love" => 'fa6c8d',
     }
   }
 
@@ -133,10 +232,10 @@ class ColorScheme < ActiveRecord::Base
   LIGHT_THEME_ID = 'Light'
 
   def self.base_color_scheme_colors
-    base_with_hash = {}
+    base_with_hash = []
 
     base_colors.each do |name, color|
-      base_with_hash[name] = "#{color}"
+      base_with_hash << { name: name, hex: "#{color}" }
     end
 
     list = [
@@ -144,7 +243,11 @@ class ColorScheme < ActiveRecord::Base
     ]
 
     CUSTOM_SCHEMES.each do |k, v|
-      list.push(id: k.to_s, colors: v)
+      colors = []
+      v.each do |name, color|
+        colors << { name: name, hex: "#{color}" }
+      end
+      list.push(id: k.to_s, colors: colors)
     end
 
     list
@@ -155,14 +258,15 @@ class ColorScheme < ActiveRecord::Base
   end
 
   attr_accessor :is_base
+  attr_accessor :skip_publish
 
   has_many :color_scheme_colors, -> { order('id ASC') }, dependent: :destroy
 
   alias_method :colors, :color_scheme_colors
 
   before_save :bump_version
-  after_save :publish_discourse_stylesheet
-  after_save :dump_caches
+  after_save_commit :publish_discourse_stylesheet, unless: :skip_publish
+  after_save_commit :dump_caches
   after_destroy :dump_caches
   belongs_to :theme
 
@@ -204,7 +308,7 @@ class ColorScheme < ActiveRecord::Base
   def self.base_color_schemes
     base_color_scheme_colors.map do |hash|
       scheme = new(name: I18n.t("color_schemes.#{hash[:id].downcase.gsub(' ', '_')}"), base_scheme_id: hash[:id])
-      scheme.colors = hash[:colors].map { |k, v| { name: k.to_s, hex: v.sub("#", "") } }
+      scheme.colors = hash[:colors].map { |k| { name: k[:name], hex: k[:hex] } }
       scheme.is_base = true
       scheme
     end
@@ -227,7 +331,7 @@ class ColorScheme < ActiveRecord::Base
     new_color_scheme = new(name: params[:name])
     new_color_scheme.via_wizard = true if params[:via_wizard]
     new_color_scheme.base_scheme_id = params[:base_scheme_id]
-    new_color_scheme.user_selectable = true if params[:user_selectable]
+    new_color_scheme.user_selectable = true
 
     colors = CUSTOM_SCHEMES[params[:base_scheme_id].to_sym]&.map do |name, hex|
       { name: name, hex: hex }
@@ -241,6 +345,7 @@ class ColorScheme < ActiveRecord::Base
     end if params[:colors]
 
     new_color_scheme.colors = colors
+    new_color_scheme.skip_publish if params[:skip_publish]
     new_color_scheme.save
     new_color_scheme
   end
@@ -303,18 +408,28 @@ class ColorScheme < ActiveRecord::Base
 
   def publish_discourse_stylesheet
     if self.id
-      Stylesheet::Manager.clear_color_scheme_cache!
+      self.class.publish_discourse_stylesheets!(self.id)
+    end
+  end
 
-      theme_ids = Theme.where(color_scheme_id: self.id).pluck(:id)
-      if theme_ids.present?
-        Stylesheet::Manager.cache.clear
-        Theme.notify_theme_change(
-          theme_ids,
-          with_scheme: true,
-          clear_manager_cache: false,
-          all_themes: true
-        )
-      end
+  def self.publish_discourse_stylesheets!(id = nil)
+    Stylesheet::Manager.clear_color_scheme_cache!
+
+    theme_ids = []
+    if id
+      theme_ids = Theme.where(color_scheme_id: id).pluck(:id)
+    else
+      theme_ids = Theme.all.pluck(:id)
+    end
+    if theme_ids.present?
+      Stylesheet::Manager.cache.clear
+
+      Theme.notify_theme_change(
+        theme_ids,
+        with_scheme: true,
+        clear_manager_cache: false,
+        all_themes: true
+      )
     end
   end
 
@@ -330,7 +445,7 @@ class ColorScheme < ActiveRecord::Base
   end
 
   def is_dark?
-    return if colors.empty?
+    return if colors.to_a.empty?
 
     primary_b = brightness(colors_by_name["primary"].hex)
     secondary_b = brightness(colors_by_name["secondary"].hex)

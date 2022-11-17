@@ -6,7 +6,6 @@ class Discourse::InvalidMigration < StandardError; end
 
 class Migration::SafeMigrate
   module SafeMigration
-    UNSAFE_VERSION = 20180321015220
     @@enable_safe = true
 
     def self.enable_safe!
@@ -19,7 +18,7 @@ class Migration::SafeMigrate
 
     def migrate(direction)
       if direction == :up &&
-         version && version > UNSAFE_VERSION &&
+         version && version > Migration::SafeMigrate.earliest_post_deploy_version &&
          @@enable_safe != false &&
          !is_post_deploy_migration?
 
@@ -122,7 +121,7 @@ class Migration::SafeMigrate
 
   def self.protect!(sql)
     if sql =~ /^\s*(?:drop\s+table|alter\s+table.*rename\s+to)\s+/i
-      $stdout.puts("", <<~STR)
+      $stdout.puts("", <<~TEXT)
         WARNING
         -------------------------------------------------------------------------------------
         An attempt was made to drop or rename a table in a migration
@@ -132,10 +131,10 @@ class Migration::SafeMigrate
 
         This protection is in place to protect us against dropping tables that are currently
         in use by live applications.
-      STR
+      TEXT
       raise Discourse::InvalidMigration, "Attempt was made to drop a table"
     elsif sql =~ /^\s*alter\s+table.*(?:rename|drop)\s+/i
-      $stdout.puts("", <<~STR)
+      $stdout.puts("", <<~TEXT)
         WARNING
         -------------------------------------------------------------------------------------
         An attempt was made to drop or rename a column in a migration
@@ -149,8 +148,16 @@ class Migration::SafeMigrate
 
         This protection is in place to protect us against dropping columns that are currently
         in use by live applications.
-      STR
+      TEXT
       raise Discourse::InvalidMigration, "Attempt was made to rename or delete column"
+    end
+  end
+
+  def self.earliest_post_deploy_version
+    @@earliest_post_deploy_version ||= begin
+      first_file = Dir.glob("#{Discourse::DB_POST_MIGRATE_PATH}/*.rb").sort.first
+      file_name = File.basename(first_file, ".rb")
+      file_name.first(14).to_i
     end
   end
 end

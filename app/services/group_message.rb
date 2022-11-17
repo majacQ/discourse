@@ -14,6 +14,8 @@ class GroupMessage
 
   include Rails.application.routes.url_helpers
 
+  RECENT_MESSAGE_PERIOD = 3.months
+
   def self.create(group_name, message_type, opts = {})
     GroupMessage.new(group_name, message_type, opts).create
   end
@@ -25,19 +27,43 @@ class GroupMessage
   end
 
   def create
-    unless sent_recently?
-      post = PostCreator.create(
-        Discourse.system_user,
-        target_group_names: [@group_name],
+    return false if sent_recently?
+
+    post = PostCreator.create(
+      Discourse.system_user,
+      target_group_names: [@group_name],
+      archetype: Archetype.private_message,
+      subtype: TopicSubtype.system_message,
+      title: I18n.t("system_messages.#{@message_type}.subject_template", message_params),
+      raw: I18n.t("system_messages.#{@message_type}.text_body_template", message_params)
+    )
+    remember_message_sent
+    post
+  end
+
+  def delete_previous!(respect_sent_recently: true, match_raw: true)
+    return false if respect_sent_recently && sent_recently?
+
+    posts = Post
+      .joins(topic: { topic_allowed_groups: :group })
+      .where(topic: {
+        posts_count: 1,
+        user_id: Discourse.system_user,
         archetype: Archetype.private_message,
         subtype: TopicSubtype.system_message,
         title: I18n.t("system_messages.#{@message_type}.subject_template", message_params),
-        raw: I18n.t("system_messages.#{@message_type}.text_body_template", message_params)
-      )
-      remember_message_sent
-      post
-    else
-      false
+        topic_allowed_groups: {
+          groups: { name: @group_name }
+        }
+      })
+      .where("posts.created_at > ?", RECENT_MESSAGE_PERIOD.ago)
+
+    if match_raw
+      posts = posts.where(raw: I18n.t("system_messages.#{@message_type}.text_body_template", message_params).rstrip)
+    end
+
+    posts.find_each do |post|
+      PostDestroyer.new(Discourse.system_user, post).destroy
     end
   end
 

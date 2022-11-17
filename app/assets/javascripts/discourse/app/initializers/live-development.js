@@ -1,51 +1,36 @@
 import DiscourseURL from "discourse/lib/url";
-import Handlebars from "handlebars";
 import { isDevelopment } from "discourse-common/config/environment";
-import { refreshCSS } from "discourse/lib/theme-selector";
+import discourseLater from "discourse-common/lib/later";
 
 //  Use the message bus for live reloading of components for faster development.
 export default {
   name: "live-development",
+
   initialize(container) {
-    const messageBus = container.lookup("message-bus:main");
+    const messageBus = container.lookup("service:message-bus");
+    const session = container.lookup("service:session");
 
-    if (
-      window.history &&
-      window.location.search.indexOf("?preview_theme_id=") === 0
-    ) {
-      // force preview theme id to always be carried along
-      const themeId = parseInt(
-        window.location.search.slice(18).split("&")[0],
-        10
-      );
-      if (!isNaN(themeId)) {
-        const patchState = function (f) {
-          const patched = window.history[f];
+    // Preserve preview_theme_id=## and pp=async-flamegraph parameters across pages
+    const params = new URLSearchParams(window.location.search);
+    const previewThemeId = params.get("preview_theme_id");
+    const flamegraph = params.get("pp") === "async-flamegraph";
+    if (flamegraph || previewThemeId !== null) {
+      ["replaceState", "pushState"].forEach((funcName) => {
+        const originalFunc = window.history[funcName];
 
-          window.history[f] = function (stateObj, name, url) {
-            if (url.indexOf("preview_theme_id=") === -1) {
-              const joiner = url.indexOf("?") === -1 ? "?" : "&";
-              url = `${url}${joiner}preview_theme_id=${themeId}`;
-            }
+        window.history[funcName] = (stateObj, name, rawUrl) => {
+          const url = new URL(rawUrl, window.location);
+          if (previewThemeId !== null) {
+            url.searchParams.set("preview_theme_id", previewThemeId);
+          }
+          if (flamegraph) {
+            url.searchParams.set("pp", "async-flamegraph");
+          }
 
-            return patched.call(window.history, stateObj, name, url);
-          };
+          return originalFunc.call(window.history, stateObj, name, url.href);
         };
-        patchState("replaceState");
-        patchState("pushState");
-      }
+      });
     }
-
-    // Custom header changes
-    $("header.custom").each(function () {
-      const header = $(this);
-      return messageBus.subscribe(
-        "/header-change/" + $(this).data("id"),
-        function (data) {
-          return header.html(data);
-        }
-      );
-    });
 
     // Useful to export this for debugging purposes
     if (isDevelopment()) {
@@ -53,32 +38,41 @@ export default {
     }
 
     // Observe file changes
-    messageBus.subscribe("/file-change", function (data) {
-      if (Handlebars.compile && !Ember.TEMPLATES.empty) {
-        // hbs notifications only happen in dev
-        Ember.TEMPLATES.empty = Handlebars.compile("<div></div>");
-      }
-      data.forEach((me) => {
-        if (me === "refresh") {
-          // Refresh if necessary
-          document.location.reload(true);
-        } else {
-          $("link").each(function () {
-            if (me.hasOwnProperty("theme_id") && me.new_href) {
-              const target = $(this).data("target");
-              const themeId = $(this).data("theme-id");
+    messageBus.subscribe(
+      "/file-change",
+      (data) => {
+        data.forEach((me) => {
+          if (me === "refresh") {
+            // Refresh if necessary
+            document.location.reload(true);
+          } else if (me.new_href && me.target) {
+            const link_target = !!me.theme_id
+              ? `[data-target='${me.target}'][data-theme-id='${me.theme_id}']`
+              : `[data-target='${me.target}']`;
+
+            const links = document.querySelectorAll(`link${link_target}`);
+            if (links.length > 0) {
+              const lastLink = links[links.length - 1];
+              // this check is useful when message-bus has multiple file updates
+              // it avoids the browser doing a lot of work for nothing
+              // should the filenames be unchanged
               if (
-                target === me.target &&
-                (!themeId || themeId === me.theme_id)
+                lastLink.href.split("/").pop() !== me.new_href.split("/").pop()
               ) {
-                refreshCSS(this, null, me.new_href);
+                this.refreshCSS(lastLink, me.new_href);
               }
-            } else if (this.href.match(me.name) && (me.hash || me.new_href)) {
-              refreshCSS(this, me.hash, me.new_href);
             }
-          });
-        }
-      });
-    });
+          }
+        });
+      },
+      session.mbLastFileChangeId
+    );
+  },
+
+  refreshCSS(node, newHref) {
+    const reloaded = node.cloneNode(true);
+    reloaded.href = newHref;
+    node.insertAdjacentElement("afterend", reloaded);
+    discourseLater(() => node?.parentNode?.removeChild(node), 500);
   },
 };
