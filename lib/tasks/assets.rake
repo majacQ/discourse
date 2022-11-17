@@ -1,12 +1,29 @@
 # frozen_string_literal: true
 
 task 'assets:precompile:before' do
-
   require 'uglifier'
   require 'open3'
 
   unless %w{profile production}.include? Rails.env
     raise "rake assets:precompile should only be run in RAILS_ENV=production, you are risking unminified assets"
+  end
+
+  if ENV["EMBER_CLI_COMPILE_DONE"] != "1"
+    compile_command = "yarn --cwd app/assets/javascripts/discourse run ember build -prod"
+
+    if check_node_heap_size_limit < 1024
+      STDERR.puts "Detected low Node.js heap_size_limit. Using --max-old-space-size=1024."
+      compile_command = "NODE_OPTIONS='--max-old-space-size=1024' #{compile_command}"
+    end
+
+    only_assets_precompile_remaining = (ARGV.last == "assets:precompile")
+
+    if only_assets_precompile_remaining
+      # Using exec to free up Rails app memory during ember build
+      exec "#{compile_command} && EMBER_CLI_COMPILE_DONE=1 bin/rake assets:precompile"
+    else
+      system compile_command, exception: true
+    end
   end
 
   # Ensure we ALWAYS do a clean build
@@ -35,14 +52,10 @@ task 'assets:precompile:before' do
   require 'sprockets'
   require 'digest/sha1'
 
-  if ENV['EMBER_CLI_PROD_ASSETS']
-    # Remove the assets that Ember CLI will handle for us
-    Rails.configuration.assets.precompile.reject! do |asset|
-      asset.is_a?(String) &&
-        (%w(application.js admin.js ember_jquery.js pretty-text-bundle.js start-discourse.js vendor.js).include?(asset) ||
-          asset.start_with?("discourse/tests"))
-    end
-  end
+  # Add ember cli chunks
+  Rails.configuration.assets.precompile.push(
+    *EmberCli.script_chunks.values.flatten.flat_map { |name| ["#{name}.js", "#{name}.map"] }
+  )
 end
 
 task 'assets:precompile:css' => 'environment' do
@@ -57,6 +70,7 @@ task 'assets:precompile:css' => 'environment' do
         STDERR.puts "-------------"
         STDERR.puts "Compiling CSS for #{db} #{Time.zone.now}"
         begin
+          Stylesheet::Manager.recalculate_fs_asset_cachebuster!
           Stylesheet::Manager.precompile_css if db == "default"
           Stylesheet::Manager.precompile_theme_css
         rescue PG::UndefinedColumn, ActiveModel::MissingAttributeError, NoMethodError => e
@@ -83,6 +97,12 @@ task 'assets:flush_sw' => 'environment' do
   end
 end
 
+def check_node_heap_size_limit
+  output, status = Open3.capture2("node", "-e", "console.log(v8.getHeapStatistics().heap_size_limit/1024/1024)")
+  raise "Failed to fetch node memory limit" if status != 0
+  output.to_f
+end
+
 def assets_path
   "#{Rails.root}/public/assets"
 end
@@ -106,12 +126,12 @@ def compress_node(from, to)
   assets = cdn_relative_path("/assets")
   assets_additional_path = (d = File.dirname(from)) == "." ? "" : "/#{d}"
   source_map_root = assets + assets_additional_path
-  source_map_url = cdn_path "/assets/#{to}.map"
+  source_map_url = "#{File.basename(to)}.map"
   base_source_map = assets_path + assets_additional_path
 
-  cmd = <<~EOS
-    terser '#{assets_path}/#{from}' -m -c -o '#{to_path}' --source-map "base='#{base_source_map}',root='#{source_map_root}',url='#{source_map_url}'"
-  EOS
+  cmd = <<~SH
+    terser '#{assets_path}/#{from}' -m -c -o '#{to_path}' --source-map "base='#{base_source_map}',root='#{source_map_root}',url='#{source_map_url}',includeSources=true"
+  SH
 
   STDERR.puts cmd
   result = `#{cmd} 2>&1`
@@ -163,6 +183,7 @@ end
 
 def max_compress?(path, locales)
   return false if Rails.configuration.assets.skip_minification.include? path
+  return false if EmberCli.is_ember_cli_asset?(path)
   return true unless path.include? "locales/"
 
   path_locale = path.delete_prefix("locales/").delete_suffix(".js")
@@ -234,75 +255,7 @@ def copy_maxmind(from_path, to_path)
   end
 end
 
-def copy_ember_cli_assets
-  ember_dir = "app/assets/javascripts/discourse"
-  ember_cli_assets = "#{ember_dir}/dist/assets/"
-  assets = {}
-  files = {}
-
-  log_task_duration('ember build -prod') {
-    unless system("yarn --cwd #{ember_dir} run ember build -prod")
-      STDERR.puts "Error running ember build"
-      exit 1
-    end
-  }
-
-  # Copy assets and generate manifest data
-  log_task_duration('Copy assets and generate manifest data') {
-    Dir["#{ember_cli_assets}**/*"].each do |f|
-      if f !~ /test/ && File.file?(f)
-        rel_file = f.sub(ember_cli_assets, "")
-        digest = f.scan(/\-([a-f0-9]+)\./)[0][0]
-
-        dest = "public/assets"
-        dest_sub = dest
-        if rel_file =~ /^([a-z\-\_]+)\//
-          dest_sub = "#{dest}/#{Regexp.last_match[1]}"
-        end
-
-        FileUtils.mkdir_p(dest_sub) unless Dir.exist?(dest_sub)
-        log_file = File.basename(rel_file).sub("-#{digest}", "")
-
-        # It's simpler to serve the file as `application.js`
-        if log_file == "discourse.js"
-          log_file = "application.js"
-          rel_file.sub!(/^discourse/, "application")
-        end
-
-        res = FileUtils.cp(f, "#{dest}/#{rel_file}")
-
-        assets[log_file] = rel_file
-        files[rel_file] = {
-          "logical_path" => log_file,
-          "mtime" => File.mtime(f).iso8601(9),
-          "size" => File.size(f),
-          "digest" => digest,
-          "integrity" => "sha384-#{Base64.encode64(Digest::SHA384.digest(File.read(f))).chomp}"
-        }
-      end
-    end
-  }
-
-  # Update manifest file
-  log_task_duration('Update manifest file') {
-    manifest_result = Dir["public/assets/.sprockets-manifest-*.json"]
-    if manifest_result && manifest_result.size == 1
-      json = JSON.parse(File.read(manifest_result[0]))
-      json['files'].merge!(files)
-      json['assets'].merge!(assets)
-      File.write(manifest_result[0], json.to_json)
-    end
-  }
-end
-
-task 'test_ember_cli_copy' do
-  copy_ember_cli_assets
-end
-
 task 'assets:precompile' => 'assets:precompile:before' do
-
-  copy_ember_cli_assets if ENV['EMBER_CLI_PROD_ASSETS']
-
   refresh_days = GlobalSetting.refresh_maxmind_db_during_precompile_days
 
   if refresh_days.to_i > 0

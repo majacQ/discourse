@@ -5,7 +5,7 @@ require "fileutils"
 require "json"
 require "nokogiri"
 require "open-uri"
-require_dependency "file_helper"
+require "file_helper"
 
 EMOJI_GROUPS_PATH ||= "lib/emoji/groups.json"
 
@@ -116,7 +116,7 @@ EMOJI_ALIASES ||= {
   "nerd_face" => [ "nerd" ],
   "hugs" => [ "hugging", "hugging_face" ],
   "roll_eyes" => [ "rolling_eyes", "face_with_rolling_eyes" ],
-  "slightly_frowning_face" => [ "slight_frown" ],
+  "slightly_frowning_face" => [ "frowning", "slight_frown" ],
   "frowning_face" => [ "frowning2", "white_frowning_face" ],
   "zipper_mouth_face" => [ "zipper_mouth" ],
   "face_with_head_bandage" => [ "head_bandage" ],
@@ -268,7 +268,7 @@ EMOJI_SETS ||= {
   "windows" => "win10",
 }
 
-EMOJI_DB_REPO ||= "git@github.com:jjaffeux/emoji-db.git"
+EMOJI_DB_REPO ||= "git@github.com:xfalcox/emoji-db.git"
 
 EMOJI_DB_REPO_PATH ||= File.join("tmp", "emoji-db")
 
@@ -332,7 +332,7 @@ def optimize_images(images)
 end
 
 def copy_emoji_db
-  `rm -rf tmp/emoji-db && git clone --depth 1 #{EMOJI_DB_REPO} tmp/emoji-db`
+  `rm -rf tmp/emoji-db && git clone -b unicodeorg-as-source-of-truth --depth 1 #{EMOJI_DB_REPO} tmp/emoji-db`
 
   path = "#{EMOJI_IMAGES_PATH}/**/*"
   confirm_overwrite(path)

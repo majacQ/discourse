@@ -1,16 +1,14 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe "Local Dates" do
   before do
     freeze_time DateTime.parse('2018-11-10 12:00')
   end
 
   it "should work without timezone" do
-    post = Fabricate(:post, raw: <<~TXT)
+    post = Fabricate(:post, raw: <<~MD)
       [date=2018-05-08 time=22:00 format="L LTS" timezones="Europe/Paris|America/Los_Angeles"]
-    TXT
+    MD
 
     cooked = post.cooked
 
@@ -28,9 +26,9 @@ RSpec.describe "Local Dates" do
   end
 
   it "should work with timezone" do
-    post = Fabricate(:post, raw: <<~TXT)
+    post = Fabricate(:post, raw: <<~MD)
       [date=2018-05-08 time=22:00 format="L LTS" timezone="Asia/Calcutta" timezones="Europe/Paris|America/Los_Angeles"]
-    TXT
+    MD
 
     cooked = post.cooked
 
@@ -39,9 +37,9 @@ RSpec.describe "Local Dates" do
   end
 
   it 'requires the right attributes to convert to a local date' do
-    post = Fabricate(:post, raw: <<~TXT)
+    post = Fabricate(:post, raw: <<~MD)
       [date]
-    TXT
+    MD
 
     cooked = post.cooked
 
@@ -50,9 +48,9 @@ RSpec.describe "Local Dates" do
   end
 
   it 'requires the right attributes to convert to a local date' do
-    post = Fabricate(:post, raw: <<~TXT)
+    post = Fabricate(:post, raw: <<~MD)
       [date]
-    TXT
+    MD
 
     cooked = post.cooked
 
@@ -87,13 +85,14 @@ RSpec.describe "Local Dates" do
     expect(cooked).to include("data-countdown=")
   end
 
-  context 'ranges' do
+  describe 'ranges' do
     it 'generates ranges without time' do
       raw = "[date-range from=2022-01-06 to=2022-01-08]"
       cooked = Fabricate(:post, raw: raw).cooked
 
       expect(cooked).to include('data-date="2022-01-06')
-      expect(cooked).to include('data-range="true"')
+      expect(cooked).to include('data-range="from"')
+      expect(cooked).to include('data-range="to"')
       expect(cooked).not_to include('data-time=')
     end
 
@@ -102,7 +101,8 @@ RSpec.describe "Local Dates" do
       cooked = Fabricate(:post, raw: raw).cooked
 
       expect(cooked).to include('data-date="2022-01-06')
-      expect(cooked).to include('data-range="true"')
+      expect(cooked).to include('data-range="to"')
+      expect(cooked).to include('data-range="from"')
       expect(cooked).to include('data-time="13:00"')
       expect(cooked).to include('data-timezone="Australia/Sydney"')
     end
@@ -113,7 +113,7 @@ RSpec.describe "Local Dates" do
 
       expect(cooked).to include('data-date="2022-01-06')
       expect(cooked).to include('data-time="13:00"')
-      expect(cooked).not_to include('data-range=')
+      expect(cooked).not_to include('data-range="to"')
     end
   end
 end

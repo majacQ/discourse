@@ -1,11 +1,12 @@
 import {
   acceptance,
   count,
-  queryAll,
+  query,
 } from "discourse/tests/helpers/qunit-helpers";
-import hbs from "htmlbars-inline-precompile";
+import { hbs } from "ember-cli-htmlbars";
 import { test } from "qunit";
 import { visit } from "@ember/test-helpers";
+import Ember from "ember";
 
 const CONNECTOR =
   "javascripts/single-test/connectors/user-profile-primary/hello";
@@ -29,7 +30,7 @@ acceptance("Plugin Outlet - Single Template", function (needs) {
       "it has class names"
     );
     assert.strictEqual(
-      queryAll(".hello-username").text(),
+      query(".hello-username").innerText,
       "eviltrout",
       "it renders into the outlet"
     );

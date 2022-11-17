@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe ReviewableFlaggedPost, type: :model do
 
   def pending_count
@@ -294,7 +292,7 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
       flagged_reply = Fabricate(:reviewable_flagged_post, target: reply)
       flagged_post.perform(moderator, :delete_and_agree_replies)
 
-      expect(flagged_reply.reload.status).to eq(Reviewable.statuses[:ignored])
+      expect(flagged_reply.reload).to be_ignored
     end
 
     it "notifies users that responded to flagged post" do
@@ -310,7 +308,7 @@ RSpec.describe ReviewableFlaggedPost, type: :model do
       flagged_reply = Fabricate(:reviewable_flagged_post, target: reply)
       flagged_post.perform(moderator, :delete_and_agree_replies)
 
-      expect(flagged_reply.reload.status).to eq(Reviewable.statuses[:ignored])
+      expect(flagged_reply.reload).to be_ignored
     end
   end
 

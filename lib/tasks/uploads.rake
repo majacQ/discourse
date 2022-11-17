@@ -8,7 +8,7 @@ require "base62"
 #                                    gather                                    #
 ################################################################################
 
-require_dependency "rake_helpers"
+require "rake_helpers"
 
 task "uploads:gather" => :environment do
   ENV["RAILS_DB"] ? gather_uploads : gather_uploads_for_all_sites
@@ -31,7 +31,7 @@ def gather_uploads
   puts "", "Gathering uploads for '#{current_db}'...", ""
 
   Upload.where("url ~ '^\/uploads\/'")
-    .where("url !~ '^\/uploads\/#{current_db}'")
+    .where("url !~ ?", "^\/uploads\/#{current_db}")
     .find_each do |upload|
     begin
       old_db = upload.url[/^\/uploads\/([^\/]+)\//, 1]
@@ -165,11 +165,11 @@ def clean_up_uploads
     exit 1
   end
 
-  puts <<~OUTPUT
+  puts <<~TEXT
   This task will remove upload records and files permanently.
 
   Would you like to take a full backup before the clean up? (Y/N)
-  OUTPUT
+  TEXT
 
   if STDIN.gets.chomp.downcase == 'y'
     puts "Starting backup..."
@@ -420,7 +420,7 @@ task "uploads:analyze", [:cache_path, :limit] => :environment do |_, args|
   uploads_count = Upload.count
   optimized_images_count = OptimizedImage.count
 
-  puts <<~REPORT
+  puts <<~TEXT
   Report for '#{current_db}'
   -----------#{'-' * current_db.length}
   Number of `Upload` records in DB: #{uploads_count}
@@ -430,7 +430,7 @@ task "uploads:analyze", [:cache_path, :limit] => :environment do |_, args|
   Number of images in uploads folder: #{paths_count}
   ------------------------------------#{'-' * paths_count.to_s.length}
 
-  REPORT
+  TEXT
 
   helper = Class.new do
     include ActionView::Helpers::NumberHelper
@@ -506,64 +506,55 @@ task "uploads:sync_s3_acls" => :environment do
       exit 1
     end
 
-    puts "CAUTION: This task may take a long time to complete!"
+    puts "CAUTION: This task may take a long time to complete! There are #{Upload.count} uploads to sync ACLs for."
+    puts ""
     puts "-" * 30
     puts "Uploads marked as secure will get a private ACL, and uploads marked as not secure will get a public ACL."
-    adjust_acls(Upload.find_each(batch_size: 100))
+    puts "Upload ACLs will be updated in Sidekiq jobs in batches of 100 at a time, check Sidekiq queues for SyncAclsForUploads for progress."
+    Upload.select(:id).find_in_batches(batch_size: 100) do |uploads|
+      adjust_acls(uploads.map(&:id))
+    end
     puts "", "Upload ACL sync complete!"
   end
 end
 
-task "uploads:disable_secure_media" => :environment do
+task "uploads:disable_secure_uploads" => :environment do
   RailsMultisite::ConnectionManagement.each_connection do |db|
     unless Discourse.store.external?
       puts "This task only works for external storage."
       exit 1
     end
 
-    puts "Disabling secure media and resetting uploads to not secure in #{db}...", ""
+    puts "Disabling secure upload and resetting uploads to not secure in #{db}...", ""
 
-    SiteSetting.secure_media = false
+    SiteSetting.secure_uploads = false
 
-    secure_uploads = Upload.includes(:posts).where(secure: true)
+    secure_uploads = Upload.joins(:upload_references).where(upload_references: { target_type: 'Post' }).where(secure: true)
     secure_upload_count = secure_uploads.count
-    uploads_to_adjust_acl_for = []
-    posts_to_rebake = {}
-
-    i = 0
-    secure_uploads.find_each(batch_size: 20).each do |upload|
-      uploads_to_adjust_acl_for << upload
-
-      upload.posts.each do |post|
-        # don't want unnecessary double-ups
-        next if posts_to_rebake.key?(post.id)
-        posts_to_rebake[post.id] = post
-      end
-
-      i += 1
-    end
+    secure_upload_ids = secure_uploads.pluck(:id)
 
     puts "", "Marking #{secure_upload_count} uploads as not secure.", ""
-    secure_uploads.update_all(secure: false)
+    secure_uploads.update_all(
+      secure: false,
+      security_last_changed_at: Time.zone.now,
+      security_last_changed_reason: "marked as not secure by disable_secure_uploads task"
+    )
 
-    adjust_acls(uploads_to_adjust_acl_for)
-    post_rebake_errors = rebake_upload_posts(posts_to_rebake)
+    post_ids_to_rebake = DB.query_single(
+      "SELECT DISTINCT target_id FROM upload_references WHERE upload_id IN (?) AND target_type = 'Post'", secure_upload_ids
+    )
+    adjust_acls(secure_upload_ids)
+    post_rebake_errors = rebake_upload_posts(post_ids_to_rebake)
     log_rebake_errors(post_rebake_errors)
 
-    RakeHelpers.print_status_with_label("Rebaking and updating complete!            ", i, secure_upload_count)
+    puts "", "Rebaking and uploading complete!", ""
   end
 
-  puts "", "Secure media is now disabled!", ""
-end
-
-# Renamed to uploads:secure_upload_analyse_and_update
-task "uploads:ensure_correct_acl" => :environment do
-  puts "This task has been deprecated, run uploads:secure_upload_analyse_and_update task instead."
-  exit 1
+  puts "", "Secure uploads are now disabled!", ""
 end
 
 ##
-# Run this task whenever the secure_media or login_required
+# Run this task whenever the secure_uploads or login_required
 # settings are changed for a Discourse instance to update
 # the upload secure flag and S3 upload ACLs. Any uploads that
 # have their secure status changed will have all associated posts
@@ -576,86 +567,88 @@ task "uploads:secure_upload_analyse_and_update" => :environment do
     end
 
     puts "Analyzing security for uploads in #{db}...", ""
-    upload_ids_to_mark_as_secure, upload_ids_to_mark_as_not_secure, posts_to_rebake, uploads_to_adjust_acl_for = nil
+    all_upload_ids_changed, post_ids_to_rebake = nil
     Upload.transaction do
-      mark_secure_in_loop_because_no_login_required = false
-
-      # If secure media is enabled we need to first set the access control post of
+      # If secure upload is enabled we need to first set the access control post of
       # all post uploads (even uploads that are linked to multiple posts). If the
-      # upload is not set to secure media then this has no other effect on the upload,
-      # but we _must_ know what the access control post is because the with_secure_media?
+      # upload is not set to secure upload then this has no other effect on the upload,
+      # but we _must_ know what the access control post is because the with_secure_uploads?
       # method is on the post, and this knows about the category security & PM status
-      if SiteSetting.secure_media?
+      if SiteSetting.secure_uploads?
         update_uploads_access_control_post
       end
 
-      # Get all uploads in the database, including optimized images. Both media (images, videos,
-      # etc) along with attachments (pdfs, txt, etc.) must be loaded because all can be marked as
-      # secure based on site settings.
-      uploads_to_update = Upload.includes(:posts, :optimized_images).joins(:post_uploads)
-
-      puts "There are #{uploads_to_update.count} upload(s) that could be marked secure.", ""
-
-      # Simply mark all these uploads as secure if login_required because no anons will be able to access them
+      puts "", "Analysing which uploads need to be marked secure and be rebaked.", ""
       if SiteSetting.login_required?
-        mark_secure_in_loop_because_no_login_required = false
+        # Simply mark all uploads linked to posts secure if login_required because no anons will be able to access them.
+        post_ids_to_rebake, all_upload_ids_changed = mark_all_as_secure_login_required
       else
-
-        # If NOT login_required, then we have to go for the other slower flow, where in the loop
-        # we mark the upload secure based on UploadSecurity.should_be_secure?
-        mark_secure_in_loop_because_no_login_required = true
-        puts "Marking posts as secure in the next step because login_required is false."
-      end
-
-      puts "", "Analysing which of #{uploads_to_update.count} uploads need to be marked secure and be rebaked.", ""
-
-      upload_ids_to_mark_as_secure,
-        upload_ids_to_mark_as_not_secure,
-        posts_to_rebake,
-        uploads_to_adjust_acl_for = determine_upload_security_and_posts_to_rebake(
-        uploads_to_update, mark_secure_in_loop_because_no_login_required
-      )
-
-      if !SiteSetting.login_required?
-        update_specific_upload_security_no_login_required(upload_ids_to_mark_as_secure, upload_ids_to_mark_as_not_secure)
-      else
-        mark_all_as_secure_login_required(uploads_to_update)
+        # Otherwise only mark uploads linked to posts in secure categories or PMs as secure.
+        post_ids_to_rebake, all_upload_ids_changed = update_specific_upload_security_no_login_required
       end
     end
 
     # Enqueue rebakes AFTER upload transaction complete, so there is no race condition
     # between updating the DB and the rebakes occurring.
-    post_rebake_errors = rebake_upload_posts(posts_to_rebake)
+    post_rebake_errors = rebake_upload_posts(post_ids_to_rebake)
     log_rebake_errors(post_rebake_errors)
 
     # Also do this AFTER upload transaction complete so we don't end up with any
     # errors leaving ACLs in a bad state (the ACL sync task can be run to fix any
     # outliers at any time).
-    adjust_acls(uploads_to_adjust_acl_for)
+    adjust_acls(all_upload_ids_changed)
   end
   puts "", "", "Done!"
 end
 
-def adjust_acls(uploads_to_adjust_acl_for)
-  total_count = uploads_to_adjust_acl_for.respond_to?(:length) ? uploads_to_adjust_acl_for.length : uploads_to_adjust_acl_for.count
-  puts "", "Updating ACL for #{total_count} uploads.", ""
-  i = 0
-  uploads_to_adjust_acl_for.each do |upload|
-    RakeHelpers.print_status_with_label("Updating ACL for upload.......", i, total_count)
-    Discourse.store.update_upload_ACL(upload)
-    i += 1
+def adjust_acls(upload_ids_to_adjust_acl_for)
+  jobs_to_create = (upload_ids_to_adjust_acl_for.count.to_f / 100.00).ceil
+
+  if jobs_to_create > 1
+    puts "Adjusting ACLs for #{upload_ids_to_adjust_acl_for} uploads. These will be batched across #{jobs_to_create} sync job(s)."
   end
-  RakeHelpers.print_status_with_label("Updating ACLs complete!        ", i, total_count)
+
+  upload_ids_to_adjust_acl_for.each_slice(100) do |upload_ids|
+    Jobs.enqueue(:sync_acls_for_uploads, upload_ids: upload_ids)
+  end
+
+  if jobs_to_create > 1
+    puts "ACL batching complete. Keep an eye on the Sidekiq queue for progress."
+  end
 end
 
-def mark_all_as_secure_login_required(uploads_to_update)
-  puts "Marking #{uploads_to_update.count} upload(s) as secure because login_required is true.", ""
-  uploads_to_update.update_all(
-    secure: true,
-    security_last_changed_at: Time.zone.now,
-    security_last_changed_reason: "upload security rake task all secure login required"
-  )
+def mark_all_as_secure_login_required
+  post_upload_ids_marked_secure = DB.query_single(<<~SQL)
+    WITH upl AS (
+      SELECT DISTINCT ON (upload_id) upload_id
+      FROM upload_references
+      INNER JOIN posts ON posts.id = upload_references.target_id AND upload_references.target_type = 'Post'
+      INNER JOIN topics ON topics.id = posts.topic_id
+    )
+    UPDATE uploads
+    SET secure = true,
+        security_last_changed_reason = 'upload security rake task mark as secure',
+        security_last_changed_at = NOW()
+    FROM upl
+    WHERE uploads.id = upl.upload_id AND NOT uploads.secure
+    RETURNING uploads.id
+  SQL
+  puts "Marked #{post_upload_ids_marked_secure.count} upload(s) as secure because login_required is true.", ""
+  upload_ids_marked_not_secure = DB.query_single(<<~SQL, post_upload_ids_marked_secure)
+    UPDATE uploads
+    SET secure = false,
+        security_last_changed_reason = 'upload security rake task mark as not secure',
+        security_last_changed_at = NOW()
+    WHERE id NOT IN (?) AND uploads.secure
+    RETURNING uploads.id
+  SQL
+  puts "Marked #{upload_ids_marked_not_secure.count} upload(s) as not secure because they are not linked to posts.", ""
   puts "Finished marking upload(s) as secure."
+
+  post_ids_to_rebake = DB.query_single(
+    "SELECT DISTINCT target_id FROM upload_references WHERE upload_id IN (?) AND target_type = 'Post'", post_upload_ids_marked_secure
+  )
+  [post_ids_to_rebake, (post_upload_ids_marked_secure + upload_ids_marked_not_secure).uniq]
 end
 
 def log_rebake_errors(rebake_errors)
@@ -666,45 +659,84 @@ def log_rebake_errors(rebake_errors)
   end
 end
 
-def update_specific_upload_security_no_login_required(upload_ids_to_mark_as_secure, upload_ids_to_mark_as_not_secure)
-  if upload_ids_to_mark_as_secure.any?
-    puts "Marking #{upload_ids_to_mark_as_secure.length} uploads as secure because UploadSecurity determined them to be secure."
-    Upload.where(id: upload_ids_to_mark_as_secure).update_all(
-      secure: true,
-      security_last_changed_at: Time.zone.now,
-      security_last_changed_reason: "upload security rake task mark as secure"
+def update_specific_upload_security_no_login_required
+  # A simplification of the rules found in UploadSecurity which is a lot faster than
+  # having to loop through records and use that class to check security.
+  post_upload_ids_marked_secure = DB.query_single(<<~SQL)
+    WITH upl AS (
+      SELECT DISTINCT ON (upload_id) upload_id
+      FROM upload_references
+      INNER JOIN posts ON posts.id = upload_references.target_id AND upload_references.target_type = 'Post'
+      INNER JOIN topics ON topics.id = posts.topic_id
+      LEFT JOIN categories ON categories.id = topics.category_id
+      WHERE (topics.category_id IS NOT NULL AND categories.read_restricted) OR
+        (topics.archetype = 'private_message')
     )
-  end
-  if upload_ids_to_mark_as_not_secure.any?
-    puts "Marking #{upload_ids_to_mark_as_not_secure.length} uploads as not secure because UploadSecurity determined them to be not secure."
-    Upload.where(id: upload_ids_to_mark_as_not_secure).update_all(
-      secure: false,
-      security_last_changed_at: Time.zone.now,
-      security_last_changed_reason: "upload security rake task mark as not secure"
+    UPDATE uploads
+    SET secure = true,
+        security_last_changed_reason = 'upload security rake task mark as secure',
+        security_last_changed_at = NOW()
+    FROM upl
+    WHERE uploads.id = upl.upload_id AND NOT uploads.secure
+    RETURNING uploads.id
+  SQL
+  puts "Marked #{post_upload_ids_marked_secure.length} uploads as secure."
+
+  # Anything in a public category or a regular topic should not be secure.
+  post_upload_ids_marked_not_secure = DB.query_single(<<~SQL)
+    WITH upl AS (
+      SELECT DISTINCT ON (upload_id) upload_id
+      FROM upload_references
+      INNER JOIN posts ON posts.id = upload_references.target_id AND upload_references.target_type = 'Post'
+      INNER JOIN topics ON topics.id = posts.topic_id
+      LEFT JOIN categories ON categories.id = topics.category_id
+      WHERE (topics.archetype = 'regular' AND topics.category_id IS NOT NULL AND NOT categories.read_restricted) OR
+            (topics.archetype = 'regular' AND topics.category_id IS NULL)
     )
-  end
-  puts "Finished updating upload security."
+    UPDATE uploads
+    SET secure = false,
+        security_last_changed_reason = 'upload security rake task mark as not secure',
+        security_last_changed_at = NOW()
+    FROM upl
+    WHERE uploads.id = upl.upload_id AND uploads.secure
+    RETURNING uploads.id
+  SQL
+  puts "Marked #{post_upload_ids_marked_not_secure.length} uploads as not secure."
+
+  # Everything else should not be secure!
+  upload_ids_changed = (post_upload_ids_marked_secure + post_upload_ids_marked_not_secure).uniq
+  upload_ids_marked_not_secure = DB.query_single(<<~SQL, upload_ids_changed)
+    UPDATE uploads
+    SET secure = false,
+        security_last_changed_reason = 'upload security rake task mark as not secure',
+        security_last_changed_at = NOW()
+    WHERE id NOT IN (?) AND uploads.secure
+    RETURNING uploads.id
+  SQL
+  puts "Finished updating upload security. Marked #{upload_ids_marked_not_secure.length} uploads not linked to posts as not secure."
+
+  all_upload_ids_changed = (upload_ids_changed + upload_ids_marked_not_secure).uniq
+  post_ids_to_rebake = DB.query_single("SELECT DISTINCT target_id FROM upload_references WHERE upload_id IN (?) AND target_type = 'Post'", upload_ids_changed)
+  [post_ids_to_rebake, all_upload_ids_changed]
 end
 
 def update_uploads_access_control_post
-  access_control_post_updates = []
-  uploads_with_post_ids = DB.query(<<-SQL
-    SELECT upload_id, (
-      SELECT string_agg(CAST(post_uploads.post_id AS varchar), ',' ORDER BY post_uploads.id) as post_ids
-      FROM post_uploads
-      WHERE pu.upload_id = post_uploads.upload_id
-    ) FROM post_uploads pu
+  DB.exec(<<~SQL)
+    WITH upl AS (
+      SELECT DISTINCT ON (upload_id) upload_id, target_id AS post_id
+      FROM upload_references
+      WHERE target_type = 'Post'
+      ORDER BY upload_id, target_id
+    )
+    UPDATE uploads
+    SET access_control_post_id = upl.post_id
+    FROM upl
+    WHERE uploads.id = upl.upload_id
   SQL
-  )
-  uploads_with_post_ids.each do |row|
-    first_post_id = row.post_ids.split(",").first.to_i
-    access_control_post_updates << "UPDATE uploads SET access_control_post_id = #{first_post_id} WHERE id = #{row.upload_id};"
-  end
-  DB.exec(access_control_post_updates.join("\n"))
 end
 
-def rebake_upload_posts(posts_to_rebake)
-  posts_to_rebake = posts_to_rebake.values
+def rebake_upload_posts(post_ids_to_rebake)
+  posts_to_rebake = Post.where(id: post_ids_to_rebake)
   post_rebake_errors = []
   puts "", "Rebaking #{posts_to_rebake.length} posts with affected uploads.", ""
   begin
@@ -721,69 +753,6 @@ def rebake_upload_posts(posts_to_rebake)
     post_rebake_errors << e.message
   end
   post_rebake_errors
-end
-
-def determine_upload_security_and_posts_to_rebake(uploads_to_update, mark_secure_in_loop_because_no_login_required)
-  upload_ids_to_mark_as_secure = []
-  upload_ids_to_mark_as_not_secure = []
-  uploads_to_adjust_acl_for = []
-  posts_to_rebake = {}
-
-  # we do this to avoid a heavier post query, and to make sure we only
-  # get unique posts AND include deleted posts (unscoped)
-  unique_access_control_posts = {}
-  Post.unscoped.select(:id, :topic_id)
-    .includes(topic: :category)
-    .where(id: uploads_to_update.pluck(:access_control_post_id).uniq).find_each do |post|
-    unique_access_control_posts[post.id] = post
-  end
-
-  i = 0
-  uploads_to_update.find_each do |upload_to_update|
-
-    # fetch the post out of the already populated map to avoid n1s
-    upload_to_update.access_control_post = unique_access_control_posts[upload_to_update.access_control_post_id]
-
-    # we just need to determine the post security here so the ACL is set to the correct thing,
-    # because the update_upload_ACL method uses upload.secure?
-    original_update_secure_status = upload_to_update.secure
-    upload_to_update.secure = UploadSecurity.new(upload_to_update).should_be_secure?
-
-    # no point changing ACLs or rebaking or doing any such shenanigans
-    # when the secure status hasn't even changed!
-    if original_update_secure_status == upload_to_update.secure
-      i += 1
-      next
-    end
-
-    # we only want to update the acl later once the secure status
-    # has been saved in the DB; otherwise if there is a later failure
-    # we get stuck with an incorrect ACL in S3
-    uploads_to_adjust_acl_for << upload_to_update
-    RakeHelpers.print_status_with_label("Analysing which upload posts to rebake.....", i, uploads_to_update.count)
-    upload_to_update.posts.each do |post|
-      # don't want unnecessary double-ups
-      next if posts_to_rebake.key?(post.id)
-      posts_to_rebake[post.id] = post
-    end
-
-    # some uploads will be marked as not secure here.
-    # we need to address this with upload_ids_to_mark_as_not_secure
-    # e.g. turning off SiteSetting.login_required
-    if mark_secure_in_loop_because_no_login_required
-      if upload_to_update.secure?
-        upload_ids_to_mark_as_secure << upload_to_update.id
-      else
-        upload_ids_to_mark_as_not_secure << upload_to_update.id
-      end
-    end
-
-    i += 1
-  end
-  RakeHelpers.print_status_with_label("Analysis complete!            ", i, uploads_to_update.count)
-  puts ""
-
-  [upload_ids_to_mark_as_secure, upload_ids_to_mark_as_not_secure, posts_to_rebake, uploads_to_adjust_acl_for]
 end
 
 def inline_uploads(post)
@@ -888,11 +857,11 @@ end
 def analyze_missing_s3
   puts "List of posts with missing images:"
   sql = <<~SQL
-    SELECT post_id, url, sha1, extension, uploads.id
-    FROM post_uploads pu
-    RIGHT JOIN uploads on uploads.id = pu.upload_id
-    WHERE verification_status = :invalid_etag
-    ORDER BY created_at
+    SELECT ur.target_id, u.url, u.sha1, u.extension, u.id
+    FROM upload_references ur
+    RIGHT JOIN uploads u ON u.id = ur.upload_id
+    WHERE ur.target_type = 'Post' AND u.verification_status = :invalid_etag
+    ORDER BY ur.created_at
   SQL
 
   lookup = {}
@@ -901,9 +870,9 @@ def analyze_missing_s3
 
   DB.query(sql, invalid_etag: Upload.verification_statuses[:invalid_etag]).each do |r|
     all << r
-    if r.post_id
-      lookup[r.post_id] ||= []
-      lookup[r.post_id] << [r.url, r.sha1, r.extension]
+    if r.target_id
+      lookup[r.target_id] ||= []
+      lookup[r.target_id] << [r.url, r.sha1, r.extension]
     else
       other << r
     end
@@ -928,7 +897,7 @@ def analyze_missing_s3
     ids = all.map { |r| r.id }
 
     lookups = [
-      [:post_uploads, :upload_id],
+      [:upload_references, :upload_id],
       [:users, :uploaded_avatar_id],
       [:user_avatars, :gravatar_upload_id],
       [:user_avatars, :custom_upload_id],
@@ -936,6 +905,7 @@ def analyze_missing_s3
       [:user_profiles, :profile_background_upload_id],
       [:user_profiles, :card_background_upload_id],
       [:categories, :uploaded_logo_id],
+      [:categories, :uploaded_logo_dark_id],
       [:categories, :uploaded_background_id],
       [:custom_emojis, :upload_id],
       [:theme_fields, :upload_id],
@@ -1010,15 +980,26 @@ def fix_missing_s3
     next if !upload
 
     tempfile = nil
+    downloaded_from = nil
 
     begin
       tempfile = FileHelper.download(upload.url, max_file_size: 30.megabyte, tmp_file_name: "#{SecureRandom.hex}.#{upload.extension}")
+      downloaded_from = upload.url
     rescue => e
-      puts "Failed to download #{upload.url} #{e}"
+      if upload.origin.present?
+        begin
+          tempfile = FileHelper.download(upload.origin, max_file_size: 30.megabyte, tmp_file_name: "#{SecureRandom.hex}.#{upload.extension}")
+          downloaded_from = upload.origin
+        rescue => e
+          puts "Failed to download #{upload.origin} #{e}"
+        end
+      else
+        puts "Failed to download #{upload.url} #{e}"
+      end
     end
 
     if tempfile
-      puts "Successfully downloaded upload id: #{upload.id} - #{upload.url} fixing upload"
+      puts "Successfully downloaded upload id: #{upload.id} - #{downloaded_from} fixing upload"
 
       fixed_upload = nil
       fix_error = nil
@@ -1049,7 +1030,7 @@ def fix_missing_s3
           puts "Failed to save upload #{save_error}"
         else
           OptimizedImage.where(upload_id: upload.id).destroy_all
-          rebake_ids = PostUpload.where(upload_id: upload.id).pluck(:post_id)
+          rebake_ids = UploadReference.where(upload_id: upload.id).where(target_type: 'Post').pluck(:target_id)
 
           if rebake_ids.present?
             Post.where(id: rebake_ids).each do |post|
@@ -1067,11 +1048,11 @@ def fix_missing_s3
   puts "Rebaking posts with missing uploads, this can take a while as all rebaking runs inline"
 
   sql = <<~SQL
-    SELECT post_id
-    FROM post_uploads pu
-    JOIN uploads on uploads.id = pu.upload_id
-    WHERE verification_status = :invalid_etag
-    ORDER BY post_id DESC
+    SELECT ur.target_id
+    FROM upload_references ur
+    JOIN uploads u ON u.id = ur.upload_id
+    WHERE ur.target_type = 'Post' AND u.verification_status = :invalid_etag
+    ORDER BY ur.target_id DESC
   SQL
 
   DB.query_single(sql, invalid_etag: Upload.verification_statuses[:invalid_etag]).each do |post_id|
@@ -1094,4 +1075,155 @@ task "uploads:fix_missing_s3" => :environment do
       fix_missing_s3
     end
   end
+end
+
+# Supported ENV arguments:
+#
+# VERBOSE=1
+# Shows debug information.
+#
+# INTERACTIVE=1
+# Shows debug information and pauses for input on issues.
+#
+# WORKER_ID/WORKER_COUNT
+# When running the script on a single forum in multiple terminals.
+# For example, if you want 4 concurrent scripts use WORKER_COUNT=4
+# and WORKER_ID from 0 to 3.
+#
+# START_ID
+# Skip uploads with id lower than START_ID.
+task "uploads:downsize" => :environment do
+  min_image_pixels = 500_000 # 0.5 megapixels
+  default_image_pixels = 1_000_000 # 1 megapixel
+
+  max_image_pixels = [
+    ARGV[0]&.to_i || default_image_pixels,
+    min_image_pixels
+  ].max
+
+  ENV["VERBOSE"] = "1" if ENV["INTERACTIVE"]
+
+  def log(*args)
+    puts(*args) if ENV["VERBOSE"]
+  end
+
+  puts "", "Downsizing images to no more than #{max_image_pixels} pixels"
+
+  dimensions_count = 0
+  downsized_count = 0
+
+  scope = Upload
+    .by_users
+    .with_no_non_post_relations
+    .where("LOWER(extension) IN ('jpg', 'jpeg', 'gif', 'png')")
+
+  scope = scope.where(<<-SQL, max_image_pixels)
+    COALESCE(width, 0) = 0 OR
+    COALESCE(height, 0) = 0 OR
+    COALESCE(thumbnail_width, 0) = 0 OR
+    COALESCE(thumbnail_height, 0) = 0 OR
+    width * height > ?
+  SQL
+
+  if ENV["WORKER_ID"] && ENV["WORKER_COUNT"]
+    scope = scope.where("uploads.id % ? = ?", ENV["WORKER_COUNT"], ENV["WORKER_ID"])
+  end
+
+  if ENV["START_ID"]
+    scope = scope.where("uploads.id >= ?", ENV["START_ID"])
+  end
+
+  skipped = 0
+  total_count = scope.count
+  puts "Uploads to process: #{total_count}"
+
+  scope.find_each.with_index do |upload, index|
+    progress = (index * 100.0 / total_count).round(1)
+
+    log "\n"
+    print "\r#{progress}% Fixed dimensions: #{dimensions_count} Downsized: #{downsized_count} Skipped: #{skipped} (upload id: #{upload.id})"
+    log "\n"
+
+    path = if upload.local?
+      Discourse.store.path_for(upload)
+    else
+      (Discourse.store.download(upload, max_file_size_kb: 100.megabytes) rescue nil)&.path
+    end
+
+    unless path
+      log "No image path"
+      skipped += 1
+      next
+    end
+
+    begin
+      w, h = FastImage.size(path, raise_on_failure: true)
+    rescue FastImage::UnknownImageType
+      log "Unknown image type"
+      skipped += 1
+      next
+    rescue FastImage::SizeNotFound
+      log "Size not found"
+      skipped += 1
+      next
+    end
+
+    if !w || !h
+      log "Invalid image dimensions"
+      skipped += 1
+      next
+    end
+
+    ww, hh = ImageSizer.resize(w, h)
+
+    if w == 0 || h == 0 || ww == 0 || hh == 0
+      log "Invalid image dimensions"
+      skipped += 1
+      next
+    end
+
+    upload.attributes = {
+      width: w,
+      height: h,
+      thumbnail_width: ww,
+      thumbnail_height: hh,
+      filesize: File.size(path)
+    }
+
+    if upload.changed?
+      log "Correcting the upload dimensions"
+      log "Before: #{upload.width_was}x#{upload.height_was} #{upload.thumbnail_width_was}x#{upload.thumbnail_height_was} (#{upload.filesize_was})"
+      log "After:  #{w}x#{h} #{ww}x#{hh} (#{upload.filesize})"
+
+      dimensions_count += 1
+
+      # Don't validate the size - max image size setting might have
+      # changed since the file was uploaded, so this could fail
+      upload.validate_file_size = false
+      upload.save!
+    end
+
+    if w * h < max_image_pixels
+      log "Image size within allowed range"
+      skipped += 1
+      next
+    end
+
+    result = ShrinkUploadedImage.new(
+      upload: upload,
+      path: path,
+      max_pixels: max_image_pixels,
+      verbose: ENV["VERBOSE"],
+      interactive: ENV["INTERACTIVE"]
+    ).perform
+
+    if result
+      downsized_count += 1
+    else
+      skipped += 1
+    end
+  end
+
+  STDIN.beep
+  puts "", "Done", Time.zone.now
 end

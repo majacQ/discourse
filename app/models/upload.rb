@@ -3,10 +3,6 @@
 require "digest/sha1"
 
 class Upload < ActiveRecord::Base
-  self.ignored_columns = [
-    "verified" # TODO(2020-12-10): remove
-  ]
-
   include ActionView::Helpers::NumberHelper
   include HasUrl
 
@@ -14,6 +10,7 @@ class Upload < ActiveRecord::Base
   SEEDED_ID_THRESHOLD = 0
   URL_REGEX ||= /(\/original\/\dX[\/\.\w]*\/(\h+)[\.\w]*)/
   MAX_IDENTIFY_SECONDS = 5
+  DOMINANT_COLOR_COMMAND_TIMEOUT_SECONDS = 5
 
   belongs_to :user
   belongs_to :access_control_post, class_name: 'Post'
@@ -24,11 +21,11 @@ class Upload < ActiveRecord::Base
     Post.unscoped { super }
   end
 
-  has_many :post_uploads, dependent: :destroy
-  has_many :posts, through: :post_uploads
-
+  has_many :post_hotlinked_media, dependent: :destroy, class_name: "PostHotlinkedMedia"
   has_many :optimized_images, dependent: :destroy
   has_many :user_uploads, dependent: :destroy
+  has_many :upload_references, dependent: :destroy
+  has_many :posts, through: :upload_references, source: :target, source_type: 'Post'
   has_many :topic_thumbnails
 
   attr_accessor :for_group_message
@@ -37,9 +34,11 @@ class Upload < ActiveRecord::Base
   attr_accessor :for_export
   attr_accessor :for_site_setting
   attr_accessor :for_gravatar
+  attr_accessor :validate_file_size
 
   validates_presence_of :filesize
   validates_presence_of :original_filename
+  validates :dominant_color, length: { is: 6 }, allow_blank: true, allow_nil: true
 
   validates_with UploadValidator
 
@@ -64,44 +63,39 @@ class Upload < ActiveRecord::Base
     )
   end
 
+  def self.add_unused_callback(&block)
+    (@unused_callbacks ||= []) << block
+  end
+
+  def self.unused_callbacks
+    @unused_callbacks
+  end
+
+  def self.reset_unused_callbacks
+    @unused_callbacks = []
+  end
+
+  def self.add_in_use_callback(&block)
+    (@in_use_callbacks ||= []) << block
+  end
+
+  def self.in_use_callbacks
+    @in_use_callbacks
+  end
+
+  def self.reset_in_use_callbacks
+    @in_use_callbacks = []
+  end
+
   def self.with_no_non_post_relations
-    scope = self
-      .joins(<<~SQL)
-        LEFT JOIN site_settings ss
-        ON NULLIF(ss.value, '')::integer = uploads.id
-        AND ss.data_type = #{SiteSettings::TypeSupervisor.types[:upload].to_i}
-      SQL
-      .where("ss.value IS NULL")
-      .joins("LEFT JOIN users u ON u.uploaded_avatar_id = uploads.id")
-      .where("u.uploaded_avatar_id IS NULL")
-      .joins("LEFT JOIN user_avatars ua ON ua.gravatar_upload_id = uploads.id OR ua.custom_upload_id = uploads.id")
-      .where("ua.gravatar_upload_id IS NULL AND ua.custom_upload_id IS NULL")
-      .joins("LEFT JOIN user_profiles up ON up.profile_background_upload_id = uploads.id OR up.card_background_upload_id = uploads.id")
-      .where("up.profile_background_upload_id IS NULL AND up.card_background_upload_id IS NULL")
-      .joins("LEFT JOIN categories c ON c.uploaded_logo_id = uploads.id OR c.uploaded_background_id = uploads.id")
-      .where("c.uploaded_logo_id IS NULL AND c.uploaded_background_id IS NULL")
-      .joins("LEFT JOIN custom_emojis ce ON ce.upload_id = uploads.id")
-      .where("ce.upload_id IS NULL")
-      .joins("LEFT JOIN theme_fields tf ON tf.upload_id = uploads.id")
-      .where("tf.upload_id IS NULL")
-      .joins("LEFT JOIN user_exports ue ON ue.upload_id = uploads.id")
-      .where("ue.upload_id IS NULL")
-      .joins("LEFT JOIN groups g ON g.flair_upload_id = uploads.id")
-      .where("g.flair_upload_id IS NULL")
-      .joins("LEFT JOIN badges b ON b.image_upload_id = uploads.id")
-      .where("b.image_upload_id IS NULL")
-      .joins(<<~SQL)
-        LEFT JOIN theme_settings ts
-        ON NULLIF(ts.value, '')::integer = uploads.id
-        AND ts.data_type = #{ThemeSetting.types[:upload].to_i}
-      SQL
-      .where("ts.value IS NULL")
+    self
+      .joins("LEFT JOIN upload_references ur ON ur.upload_id = uploads.id AND ur.target_type != 'Post'")
+      .where("ur.upload_id IS NULL")
+  end
 
-    if SiteSetting.selectable_avatars.present?
-      scope = scope.where.not(id: SiteSetting.selectable_avatars.map(&:id))
-    end
-
-    scope
+  def initialize(*args)
+    super
+    self.validate_file_size = true
   end
 
   def to_s
@@ -147,6 +141,22 @@ class Upload < ActiveRecord::Base
     end
   end
 
+  def content
+    original_path = Discourse.store.path_for(self)
+    external_copy = nil
+
+    if original_path.blank?
+      external_copy = Discourse.store.download(self)
+      original_path = external_copy.path
+    end
+
+    File.read(original_path)
+  ensure
+    if external_copy
+      File.unlink(external_copy.path)
+    end
+  end
+
   def fix_image_extension
     return false if extension == "unknown"
 
@@ -182,7 +192,7 @@ class Upload < ActiveRecord::Base
     "upload://#{short_url_basename}"
   end
 
-  def uploaded_before_secure_media_enabled?
+  def uploaded_before_secure_uploads_enabled?
     original_sha1.blank?
   end
 
@@ -200,14 +210,14 @@ class Upload < ActiveRecord::Base
   end
 
   def self.consider_for_reuse(upload, post)
-    return upload if !SiteSetting.secure_media? || upload.blank? || post.blank?
-    return nil if !upload.matching_access_control_post?(post) || upload.uploaded_before_secure_media_enabled?
+    return upload if !SiteSetting.secure_uploads? || upload.blank? || post.blank?
+    return nil if !upload.matching_access_control_post?(post) || upload.uploaded_before_secure_uploads_enabled?
     upload
   end
 
-  def self.secure_media_url?(url)
+  def self.secure_uploads_url?(url)
     # we do not want to exclude topic links that for whatever reason
-    # have secure-media-uploads in the URL e.g. /t/secure-media-uploads-are-cool/223452
+    # have secure-uploads in the URL e.g. /t/secure-uploads-are-cool/223452
     route = UrlHelper.rails_route_from_url(url)
     return false if route.blank?
     route[:action] == "show_secure" && route[:controller] == "uploads" && FileHelper.is_supported_media?(url)
@@ -215,14 +225,14 @@ class Upload < ActiveRecord::Base
     false
   end
 
-  def self.signed_url_from_secure_media_url(url)
+  def self.signed_url_from_secure_uploads_url(url)
     route = UrlHelper.rails_route_from_url(url)
     url = Rails.application.routes.url_for(route.merge(only_path: true))
     secure_upload_s3_path = url[url.index(route[:path])..-1]
     Discourse.store.signed_url_for_path(secure_upload_s3_path)
   end
 
-  def self.secure_media_url_from_upload_url(url)
+  def self.secure_uploads_url_from_upload_url(url)
     return url if !url.include?(SiteSetting.Upload.absolute_base_url)
     uri = URI.parse(url)
     Rails.application.routes.url_for(
@@ -314,6 +324,82 @@ class Upload < ActiveRecord::Base
     get_dimension(:thumbnail_height)
   end
 
+  def dominant_color(calculate_if_missing: false)
+    val = read_attribute(:dominant_color)
+    if val.nil? && calculate_if_missing
+      calculate_dominant_color!
+      read_attribute(:dominant_color)
+    else
+      val
+    end
+  end
+
+  def calculate_dominant_color!(local_path = nil)
+    color = nil
+
+    if !FileHelper.is_supported_image?("image.#{extension}") || extension == "svg"
+      color = ""
+    end
+
+    if color.nil?
+      local_path ||=
+        if local?
+          Discourse.store.path_for(self)
+        else
+          begin
+            Discourse.store.download(self)&.path
+          rescue OpenURI::HTTPError => e
+            # Some issue with downloading the image from a remote store.
+            # Assume the upload is broken and save an empty string to prevent re-evaluation
+            nil
+          end
+        end
+
+      if local_path.nil?
+        # Download failed. Could be too large to download, or file could be missing in s3
+        color = ""
+      end
+
+      color ||= begin
+        data = Discourse::Utils.execute_command(
+          "nice",
+          "-n",
+          "10",
+          "convert",
+          local_path,
+          "-resize",
+          "1x1",
+          "-define",
+          "histogram:unique-colors=true",
+          "-format",
+          "%c",
+          "histogram:info:",
+          timeout: DOMINANT_COLOR_COMMAND_TIMEOUT_SECONDS
+        )
+
+        # Output format:
+        # 1: (110.873,116.226,93.8821) #6F745E srgb(43.4798%,45.5789%,36.8165%)
+
+        color = data[/#([0-9A-F]{6})/, 1]
+
+        raise "Calculated dominant color but unable to parse output:\n#{data}" if color.nil?
+
+        color
+      rescue Discourse::Utils::CommandError => e
+        # Timeout or unable to parse image
+        # This can happen due to bad user input - ignore and save
+        # an empty string to prevent re-evaluation
+        ""
+      end
+    end
+
+    if persisted?
+      self.update_column(:dominant_color, color)
+    else
+      self.dominant_color = color
+    end
+  end
+
   def target_image_quality(local_path, test_quality)
     @file_quality ||= Discourse::Utils.execute_command("identify", "-format", "%Q", local_path, timeout: MAX_IDENTIFY_SECONDS).to_i rescue 0
 
@@ -400,7 +486,7 @@ class Upload < ActiveRecord::Base
         db = RailsMultisite::ConnectionManagement.current_db
 
         scope = Upload.by_users
-          .where("url NOT LIKE '%/original/_X/%' AND url LIKE '%/uploads/#{db}%'")
+          .where("url NOT LIKE '%/original/_X/%' AND url LIKE ?", "%/uploads/#{db}%")
           .order(id: :desc)
 
         scope = scope.limit(limit) if limit
@@ -504,6 +590,28 @@ class Upload < ActiveRecord::Base
     problems
   end
 
+  def self.extract_upload_ids(raw)
+    return [] if raw.blank?
+
+    sha1s = []
+
+    raw.scan(/\/(\h{40})/).each do |match|
+      sha1s << match[0]
+    end
+
+    raw.scan(/\/([a-zA-Z0-9]+)/).each do |match|
+      sha1s << Upload.sha1_from_base62_encoded(match[0])
+    end
+
+    Upload.where(sha1: sha1s.uniq).pluck(:id)
+  end
+
+  def self.backfill_dominant_colors!(count)
+    Upload.where(dominant_color: nil).order("id desc").first(count).each do |upload|
+      upload.calculate_dominant_color!
+    end
+  end
+
   private
 
   def short_url_basename
@@ -535,10 +643,11 @@ end
 #  secure                       :boolean          default(FALSE), not null
 #  access_control_post_id       :bigint
 #  original_sha1                :string
-#  verification_status          :integer          default(1), not null
 #  animated                     :boolean
+#  verification_status          :integer          default(1), not null
 #  security_last_changed_at     :datetime
 #  security_last_changed_reason :string
+#  dominant_color               :text
 #
 # Indexes
 #
@@ -546,6 +655,7 @@ end
 #  index_uploads_on_access_control_post_id  (access_control_post_id)
 #  index_uploads_on_etag                    (etag)
 #  index_uploads_on_extension               (lower((extension)::text))
+#  index_uploads_on_id                      (id) WHERE (dominant_color IS NULL)
 #  index_uploads_on_id_and_url              (id,url)
 #  index_uploads_on_original_sha1           (original_sha1)
 #  index_uploads_on_sha1                    (sha1) UNIQUE

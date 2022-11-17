@@ -11,10 +11,14 @@ export function registerOption() {
     {
       since: "2.8.0.beta9",
       dropFrom: "2.9.0.beta1",
+      id: "discourse.pretty-text.registerOption",
     }
   );
 }
 
+// see also: __optInput in PrettyText#cook and PrettyText#markdown,
+// the options are passed here and must be explicitly allowed with
+// the const options & state below
 export function buildOptions(state) {
   const {
     siteSettings,
@@ -23,6 +27,7 @@ export function buildOptions(state) {
     lookupPrimaryUserGroup,
     getTopicInfo,
     topicId,
+    forceQuoteLink,
     categoryHashtagLookup,
     userId,
     getCurrentUser,
@@ -38,6 +43,9 @@ export function buildOptions(state) {
     customEmojiTranslation,
     watchedWordsReplace,
     watchedWordsLink,
+    featuresOverride,
+    markdownItRules,
+    additionalOptions,
   } = state;
 
   let features = {};
@@ -54,6 +62,7 @@ export function buildOptions(state) {
     lookupPrimaryUserGroup,
     getTopicInfo,
     topicId,
+    forceQuoteLink,
     categoryHashtagLookup,
     userId,
     getCurrentUser,
@@ -76,6 +85,9 @@ export function buildOptions(state) {
     disableEmojis,
     watchedWordsReplace,
     watchedWordsLink,
+    featuresOverride,
+    markdownItRules,
+    additionalOptions,
   };
 
   // note, this will mutate options due to the way the API is designed

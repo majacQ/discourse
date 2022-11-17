@@ -1,10 +1,9 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
 require 'i18n/backend/discourse_i18n'
 require 'translation_override'
 
-describe I18n::Backend::DiscourseI18n do
+RSpec.describe I18n::Backend::DiscourseI18n do
 
   let(:backend) { I18n::Backend::DiscourseI18n.new }
 

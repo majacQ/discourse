@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-describe DiscourseConnect do
+RSpec.describe DiscourseConnect do
   before do
     @discourse_connect_url = "http://example.com/discourse_sso"
     @discourse_connect_secret = "shjkfdhsfkjh"
@@ -140,7 +138,7 @@ describe DiscourseConnect do
     expect(user.name).to eq("Bob O'Bob")
   end
 
-  context "reviewables" do
+  describe "reviewables" do
     let(:sso) do
       new_discourse_sso.tap do |sso|
         sso.username = "staged"
@@ -208,7 +206,7 @@ describe DiscourseConnect do
     expect(group2.usernames).to eq("")
 
     group1.add(user)
-    group1.save
+    group1.save!
 
     sso.lookup_or_create_user(ip_address)
     expect(group1.usernames).to eq("")
@@ -217,6 +215,16 @@ describe DiscourseConnect do
     sso.groups = "badname,trust_level_4"
     sso.lookup_or_create_user(ip_address)
     expect(group1.usernames).to eq("")
+    expect(group2.usernames).to eq("")
+
+    group1.add(user)
+    group1.save!
+    group2.add(user)
+    group2.save!
+    sso.groups = "#{group1.name},badname,trust_level_4"
+
+    sso.lookup_or_create_user(ip_address)
+    expect(group1.usernames).to eq(user.username)
     expect(group2.usernames).to eq("")
   end
 
@@ -263,6 +271,104 @@ describe DiscourseConnect do
 
     add_group4.reload
     expect(add_group4.usernames).to eq(user.username)
+  end
+
+  it 'creates group logs when users are added to groups' do
+    user = Fabricate(:user)
+    group = Fabricate(:group, name: 'group1')
+
+    sso = new_discourse_sso
+    sso.username = "bobsky"
+    sso.name = "Bob"
+    sso.email = user.email
+    sso.external_id = "A"
+    sso.add_groups = "#{group.name},badname"
+
+    GroupHistory.destroy_all
+
+    sso.lookup_or_create_user(ip_address)
+
+    expect(group.reload.usernames).to eq(user.username)
+    expect(GroupHistory.exists?(
+      target_user_id: user.id,
+      acting_user: Discourse.system_user.id,
+      action: GroupHistory.actions[:add_user_to_group]
+    )).to eq(true)
+  end
+
+  it 'creates group logs when users are removed from groups' do
+    user = Fabricate(:user)
+    group = Fabricate(:group, name: 'group1')
+    group.add(user)
+
+    sso = new_discourse_sso
+    sso.username = "bobsky"
+    sso.name = "Bob"
+    sso.email = user.email
+    sso.external_id = "A"
+    sso.remove_groups = "#{group.name},badname"
+
+    GroupHistory.destroy_all
+
+    sso.lookup_or_create_user(ip_address)
+
+    expect(group.reload.usernames).to be_blank
+    expect(GroupHistory.exists?(
+      target_user_id: user.id,
+      acting_user: Discourse.system_user.id,
+      action: GroupHistory.actions[:remove_user_from_group]
+    )).to eq(true)
+  end
+
+  it 'creates group logs when users are added to groups when discourse_connect_overrides_groups setting is true' do
+    SiteSetting.discourse_connect_overrides_groups = true
+
+    user = Fabricate(:user)
+    group = Fabricate(:group, name: 'group1')
+
+    sso = new_discourse_sso
+    sso.username = "bobsky"
+    sso.name = "Bob"
+    sso.email = user.email
+    sso.external_id = "A"
+    sso.groups = "#{group.name},badname"
+
+    GroupHistory.destroy_all
+
+    sso.lookup_or_create_user(ip_address)
+
+    expect(group.reload.usernames).to eq(user.username)
+    expect(GroupHistory.exists?(
+      target_user_id: user.id,
+      acting_user: Discourse.system_user.id,
+      action: GroupHistory.actions[:add_user_to_group]
+    )).to eq(true)
+  end
+
+  it 'creates group logs when users are removed from groups when discourse_connect_overrides_groups setting is true' do
+    SiteSetting.discourse_connect_overrides_groups = true
+
+    user = Fabricate(:user)
+    group = Fabricate(:group, name: 'group1')
+    group.add(user)
+
+    sso = new_discourse_sso
+    sso.username = "bobsky"
+    sso.name = "Bob"
+    sso.email = user.email
+    sso.external_id = "A"
+    sso.groups = "badname"
+
+    GroupHistory.destroy_all
+
+    sso.lookup_or_create_user(ip_address)
+
+    expect(group.reload.usernames).to be_blank
+    expect(GroupHistory.exists?(
+      target_user_id: user.id,
+      acting_user: Discourse.system_user.id,
+      action: GroupHistory.actions[:remove_user_from_group]
+    )).to eq(true)
   end
 
   it 'behaves properly when auth_overrides_username is set but username is missing or blank' do
@@ -452,6 +558,20 @@ describe DiscourseConnect do
     expect(user.username).to eq sso.name
   end
 
+  it "stops using name as a source for username suggestions when disabled" do
+    SiteSetting.use_name_for_username_suggestions = false
+
+    sso = new_discourse_sso
+    sso.external_id = "100"
+
+    sso.username = nil
+    sso.name = "John Smith"
+    sso.email = "mail@mail.com"
+
+    user = sso.lookup_or_create_user(ip_address)
+    expect(user.username).to eq "user"
+  end
+
   it "doesn't use email as a source for username suggestions by default" do
     sso = new_discourse_sso
     sso.external_id = "100"
@@ -627,7 +747,7 @@ describe DiscourseConnect do
     expect(sso.nonce).to_not be_nil
   end
 
-  context 'nonce error' do
+  describe 'nonce error' do
     it "generates correct error message when nonce has already been used" do
       _ , payload = DiscourseConnect.generate_url(secure_session: secure_session).split("?")
 
@@ -660,7 +780,7 @@ describe DiscourseConnect do
     end
   end
 
-  context 'user locale' do
+  describe 'user locale' do
     it 'sets default user locale if specified' do
       SiteSetting.allow_user_locale = true
 
@@ -690,7 +810,7 @@ describe DiscourseConnect do
     end
   end
 
-  context 'trusting emails' do
+  describe 'trusting emails' do
     let(:sso) do
       sso = new_discourse_sso
       sso.username = "test"
@@ -763,7 +883,7 @@ describe DiscourseConnect do
 
   end
 
-  context 'welcome emails' do
+  describe 'welcome emails' do
     let(:sso) {
       sso = new_discourse_sso
       sso.username = "test"
@@ -785,7 +905,7 @@ describe DiscourseConnect do
     end
   end
 
-  context 'setting title for a user' do
+  describe 'setting title for a user' do
     let(:sso) {
       sso = new_discourse_sso
       sso.username = 'test'
@@ -812,7 +932,7 @@ describe DiscourseConnect do
     end
   end
 
-  context 'setting bio for a user' do
+  describe 'setting bio for a user' do
     let(:sso) do
       sso = new_discourse_sso
       sso.username = "test"

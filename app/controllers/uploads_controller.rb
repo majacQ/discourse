@@ -5,13 +5,13 @@ require "mini_mime"
 class UploadsController < ApplicationController
   include ExternalUploadHelpers
 
-  requires_login except: [:show, :show_short, :show_secure]
+  requires_login except: [:show, :show_short, :_show_secure_deprecated, :show_secure]
 
-  skip_before_action :preload_json, :check_xhr, :redirect_to_login_if_required, only: [:show, :show_short, :show_secure]
+  skip_before_action :preload_json, :check_xhr, :redirect_to_login_if_required, only: [:show, :show_short, :_show_secure_deprecated, :show_secure]
   protect_from_forgery except: :show
 
-  before_action :is_asset_path, :apply_cdn_headers, only: [:show, :show_short, :show_secure]
-  before_action :external_store_check, only: [:show_secure]
+  before_action :is_asset_path, :apply_cdn_headers, only: [:show, :show_short, :_show_secure_deprecated, :show_secure]
+  before_action :external_store_check, only: [:_show_secure_deprecated, :show_secure]
 
   SECURE_REDIRECT_GRACE_SECONDS = 5
 
@@ -111,18 +111,25 @@ class UploadsController < ApplicationController
     sha1 = Upload.sha1_from_base62_encoded(params[:base62])
 
     if upload = Upload.find_by(sha1: sha1)
-      if upload.secure? && SiteSetting.secure_media?
+      if upload.secure? && SiteSetting.secure_uploads?
         return handle_secure_upload_request(upload)
       end
 
       if Discourse.store.internal?
         send_file_local_upload(upload)
       else
-        redirect_to Discourse.store.url_for(upload, force_download: force_download?)
+        redirect_to Discourse.store.url_for(upload, force_download: force_download?), allow_other_host: true
       end
     else
       render_404
     end
+  end
+
+  # Kept to avoid rebaking old posts with /show-secure-uploads/ in their
+  # contents, this will ensure the uploads in these posts continue to
+  # work in future.
+  def _show_secure_deprecated
+    show_secure
   end
 
   def show_secure
@@ -139,9 +146,9 @@ class UploadsController < ApplicationController
     return render_404 if upload.blank?
 
     return render_404 if SiteSetting.prevent_anons_from_downloading_files && current_user.nil?
-    return handle_secure_upload_request(upload, path_with_ext) if SiteSetting.secure_media?
+    return handle_secure_upload_request(upload, path_with_ext) if SiteSetting.secure_uploads?
 
-    # we don't want to 404 here if secure media gets disabled
+    # we don't want to 404 here if secure uploads gets disabled
     # because all posts with secure uploads will show broken media
     # until rebaked, which could take some time
     #
@@ -149,7 +156,7 @@ class UploadsController < ApplicationController
     # private, so we don't want to go to the CDN url just yet otherwise we
     # will get a 403. if the upload is not secure we assume the ACL is public
     signed_secure_url = Discourse.store.signed_url_for_path(path_with_ext)
-    redirect_to upload.secure? ? signed_secure_url : Discourse.store.cdn_url(upload.url)
+    redirect_to upload.secure? ? signed_secure_url : Discourse.store.cdn_url(upload.url), allow_other_host: true
   end
 
   def handle_secure_upload_request(upload, path_with_ext = nil)
@@ -160,20 +167,20 @@ class UploadsController < ApplicationController
     end
 
     # defaults to public: false, so only cached by the client browser
-    cache_seconds = S3Helper::DOWNLOAD_URL_EXPIRES_AFTER_SECONDS - SECURE_REDIRECT_GRACE_SECONDS
+    cache_seconds = SiteSetting.s3_presigned_get_url_expires_after_seconds - SECURE_REDIRECT_GRACE_SECONDS
     expires_in cache_seconds.seconds
 
     # url_for figures out the full URL, handling multisite DBs,
     # and will return a presigned URL for the upload
     if path_with_ext.blank?
-      return redirect_to Discourse.store.url_for(upload, force_download: force_download?)
+      return redirect_to Discourse.store.url_for(upload, force_download: force_download?), allow_other_host: true
     end
 
     redirect_to Discourse.store.signed_url_for_path(
       path_with_ext,
-      expires_in: S3Helper::DOWNLOAD_URL_EXPIRES_AFTER_SECONDS,
+      expires_in: SiteSetting.s3_presigned_get_url_expires_after_seconds,
       force_download: force_download?
-    )
+    ), allow_other_host: true
   end
 
   def metadata
@@ -200,6 +207,10 @@ class UploadsController < ApplicationController
   end
 
   def validate_file_size(file_name:, file_size:)
+    if file_size.zero?
+      raise ExternalUploadValidationError.new(I18n.t("upload.size_zero_failure"))
+    end
+
     if file_size_too_big?(file_name, file_size)
       raise ExternalUploadValidationError.new(
         I18n.t(

@@ -1,10 +1,9 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
 require 'net/smtp'
 require 'net/imap'
 
-describe GroupEmailCredentialsCheck do
+RSpec.describe GroupEmailCredentialsCheck do
   fab!(:group1) { Fabricate(:group) }
   fab!(:group2) { Fabricate(:smtp_group) }
   fab!(:group3) { Fabricate(:imap_group) }

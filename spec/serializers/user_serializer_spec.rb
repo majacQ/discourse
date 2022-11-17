@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
-describe UserSerializer do
+RSpec.describe UserSerializer do
   fab!(:user) { Fabricate(:user, trust_level: 0) }
 
   context "with a TL0 user seen as anonymous" do
@@ -40,12 +38,8 @@ describe UserSerializer do
       SiteSetting.default_other_notification_level_when_replying = 3
       SiteSetting.default_other_new_topic_duration_minutes = 60 * 24
 
-      user = Fabricate.build(:user,
-                             id: 1,
-                             user_profile: Fabricate.build(:user_profile),
-                             user_option: UserOption.new(dynamic_favicon: true, skip_new_user_tips: true),
-                             user_stat: UserStat.new
-                            )
+      user = Fabricate(:user)
+      user.user_option.update(dynamic_favicon: true, skip_new_user_tips: true)
 
       json = UserSerializer.new(user, scope: Guardian.new(user), root: false).as_json
 
@@ -256,6 +250,16 @@ describe UserSerializer do
           expect(json[:second_factor_enabled]).to eq(true)
         end
       end
+
+      context "when backup codes enabled" do
+        before do
+          User.any_instance.stubs(:backup_codes_enabled?).returns(true)
+        end
+
+        it "is true" do
+          expect(json[:second_factor_enabled]).to eq(true)
+        end
+      end
     end
 
     describe "ignored and muted" do
@@ -377,4 +381,54 @@ describe UserSerializer do
       expect(json[:user_api_keys][2][:id]).to eq(user_api_key_2.id)
     end
   end
+
+  describe '#sidebar_tags' do
+    fab!(:tag_sidebar_section_link) { Fabricate(:tag_sidebar_section_link, user: user) }
+    fab!(:tag_sidebar_section_link_2) { Fabricate(:tag_sidebar_section_link, user: user) }
+
+    context 'when viewing self' do
+      subject(:json) { UserSerializer.new(user, scope: Guardian.new(user), root: false).as_json }
+
+      it "is not included when SiteSetting.enable_experimental_sidebar_hamburger is false" do
+        SiteSetting.enable_experimental_sidebar_hamburger = false
+        SiteSetting.tagging_enabled = true
+
+        expect(json[:sidebar_tags]).to eq(nil)
+      end
+
+      it "is not included when SiteSetting.tagging_enabled is false" do
+        SiteSetting.enable_experimental_sidebar_hamburger = true
+        SiteSetting.tagging_enabled = false
+
+        expect(json[:sidebar_tags]).to eq(nil)
+      end
+
+      it "is present when experimental sidebar and tagging has been enabled" do
+        SiteSetting.enable_experimental_sidebar_hamburger = true
+        SiteSetting.tagging_enabled = true
+
+        tag_sidebar_section_link_2.linkable.update!(pm_topic_count: 5, topic_count: 0)
+
+        expect(json[:sidebar_tags]).to contain_exactly(
+          { name: tag_sidebar_section_link.linkable.name, pm_only: false },
+          { name: tag_sidebar_section_link_2.linkable.name, pm_only: true }
+        )
+      end
+    end
+
+    context 'when viewing another user' do
+      fab!(:user2) { Fabricate(:user) }
+
+      subject(:json) { UserSerializer.new(user, scope: Guardian.new(user2), root: false).as_json }
+
+      it "is not present even when experimental sidebar and tagging has been enabled" do
+        SiteSetting.enable_experimental_sidebar_hamburger = true
+        SiteSetting.tagging_enabled = true
+
+        expect(json[:sidebar_tags]).to eq(nil)
+      end
+    end
+  end
+
+  include_examples "#display_sidebar_tags", UserSerializer
 end

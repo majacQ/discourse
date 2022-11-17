@@ -1,8 +1,92 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
+RSpec.describe UserProfile do
+  describe "Validations" do
+    subject(:profile) { user.user_profile }
 
-describe UserProfile do
+    fab!(:user) { Fabricate(:user) }
+    fab!(:watched_word) { Fabricate(:watched_word, word: "bad") }
+
+    describe "#location" do
+      context "when it contains watched words" do
+        before { profile.location = location }
+
+        context "when watched words are of type 'Block'" do
+          let(:location) { "bad location" }
+
+          it "is not valid" do
+            profile.valid?
+            expect(profile.errors[:base].size).to eq(1)
+            expect(profile.errors.messages[:base]).to include(/you can't post the word/)
+          end
+        end
+
+        context "when watched words are of type 'Censor'" do
+          let!(:censored_word) { Fabricate(:watched_word, word: "censored", action: WatchedWord.actions[:censor]) }
+          let(:location) { "censored location" }
+
+          it "censors the words upon saving" do
+            expect { profile.save! }.to change { profile.location }.to eq "■■■■■■■■ location"
+          end
+        end
+
+        context "when watched words are of type 'Replace'" do
+          let(:location) { "word to replace" }
+          let!(:replace_word) do
+            Fabricate(:watched_word, word: "to replace", replacement: "replaced", action: WatchedWord.actions[:replace])
+          end
+
+          it "replaces the words upon saving" do
+            expect { profile.save! }.to change { profile.location }.to eq "word replaced"
+          end
+        end
+      end
+
+      context "when it is > 3000 characters" do
+        before { profile.location = "a" * 3500 }
+
+        it "is not valid" do
+          expect(profile.valid?).to eq(false)
+          expect(profile.errors.full_messages).to include(/Location is too long \(maximum is 3000 characters\)/)
+        end
+      end
+
+      context "when it does not contain watched words" do
+        it { is_expected.to be_valid }
+      end
+
+      it "is not cooked" do
+        profile.location = "https://discourse.org"
+        expect { profile.save! }.not_to change { profile.location }
+      end
+    end
+
+    describe "#bio_raw" do
+      context "when it contains watched words" do
+        before { profile.bio_raw = "bad bio" }
+
+        it "is not valid" do
+          profile.valid?
+          expect(profile.errors[:base].size).to eq(1)
+          expect(profile.errors.messages[:base]).to include(/you can't post the word/)
+        end
+      end
+
+      context "when it is > 3000 characters" do
+        before { profile.bio_raw = "a" * 3500 }
+
+        it "is not valid" do
+          expect(profile.valid?).to eq(false)
+          expect(profile.errors.full_messages).to include(/About Me is too long \(maximum is 3000 characters\)/)
+        end
+      end
+
+      context "when it does not contain watched words" do
+        it { is_expected.to be_valid }
+      end
+    end
+  end
+
   it 'is created automatically when a user is created' do
     user = Fabricate(:evil_trout)
     expect(user.user_profile).to be_present
@@ -39,7 +123,7 @@ describe UserProfile do
       expect(user_profile).not_to be_valid
     end
 
-    context "website validation" do
+    context "with website validation" do
       let(:user_profile) { Fabricate.build(:user_profile, user: Fabricate(:user)) }
 
       it "should not allow invalid URLs" do
@@ -62,6 +146,11 @@ describe UserProfile do
 
         user_profile.website = 'user - https://forum.example.com/user'
         expect { user_profile.save! }.to raise_error(ActiveRecord::RecordInvalid)
+      end
+
+      it "does not allow > 3000 characters" do
+        user_profile.website = "a" * 3500
+        expect(user_profile).to_not be_valid
       end
     end
 
@@ -111,7 +200,7 @@ describe UserProfile do
     end
 
     it 'supports emoji images' do
-      expect(user.user_profile.bio_excerpt(500, keep_emoji_images: true)).to eq("hello <img src=\"#{upload.url}?v=#{Emoji::EMOJI_VERSION}\" title=\":test:\" class=\"emoji emoji-custom\" alt=\":test:\"> <img src=\"/images/emoji/twitter/woman_scientist/5.png?v=#{Emoji::EMOJI_VERSION}\" title=\":woman_scientist:t5:\" class=\"emoji\" alt=\":woman_scientist:t5:\"> <img src=\"/images/emoji/twitter/thinking.png?v=#{Emoji::EMOJI_VERSION}\" title=\":thinking:\" class=\"emoji\" alt=\":thinking:\">")
+      expect(user.user_profile.bio_excerpt(500, keep_emoji_images: true)).to eq("hello <img src=\"#{upload.url}?v=#{Emoji::EMOJI_VERSION}\" title=\":test:\" class=\"emoji emoji-custom\" alt=\":test:\" loading=\"lazy\" width=\"20\" height=\"20\"> <img src=\"/images/emoji/twitter/woman_scientist/5.png?v=#{Emoji::EMOJI_VERSION}\" title=\":woman_scientist:t5:\" class=\"emoji\" alt=\":woman_scientist:t5:\" loading=\"lazy\" width=\"20\" height=\"20\"> <img src=\"/images/emoji/twitter/thinking.png?v=#{Emoji::EMOJI_VERSION}\" title=\":thinking:\" class=\"emoji\" alt=\":thinking:\" loading=\"lazy\" width=\"20\" height=\"20\">")
     end
   end
 
@@ -156,7 +245,7 @@ describe UserProfile do
         expect(user_profile.bio_processed).to eq("<p>I love http://discourse.org</p>")
       end
 
-      context 'tl3_links_no_follow is false' do
+      context 'when tl3_links_no_follow is false' do
         before { SiteSetting.tl3_links_no_follow = false }
 
         it 'includes the link without nofollow if the user is trust level 3 or higher' do
@@ -182,7 +271,7 @@ describe UserProfile do
         end
       end
 
-      context 'tl3_links_no_follow is true' do
+      context 'when tl3_links_no_follow is true' do
         before { SiteSetting.tl3_links_no_follow = true }
 
         it 'includes the link with nofollow if the user is trust level 3 or higher' do
@@ -195,7 +284,7 @@ describe UserProfile do
     end
   end
 
-  context '.import_url_for_user' do
+  describe '.import_url_for_user' do
     fab!(:user) { Fabricate(:user) }
 
     before do
@@ -226,7 +315,5 @@ describe UserProfile do
         expect(user.card_background_upload).to eq(nil)
       end
     end
-
   end
-
 end

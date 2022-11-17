@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-require 'rails_helper'
-
 RSpec.describe Admin::SiteTextsController do
   fab!(:admin) { Fabricate(:admin) }
+  fab!(:moderator) { Fabricate(:moderator) }
   fab!(:user) { Fabricate(:user) }
   let(:default_locale) { I18n.locale }
 
@@ -12,40 +11,10 @@ RSpec.describe Admin::SiteTextsController do
     I18n.reload!
   end
 
-  it "is a subclass of AdminController" do
-    expect(Admin::SiteTextsController < Admin::AdminController).to eq(true)
-  end
+  describe '#index' do
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
 
-  context "when not logged in as an admin" do
-    it "raises an error if you aren't logged in" do
-      put '/admin/customize/site_texts/some_key.json', params: {
-        site_text: { value: 'foo' }, locale: default_locale
-      }
-
-      expect(response.status).to eq(404)
-    end
-
-    it "raises an error if you aren't an admin" do
-      sign_in(user)
-
-      put "/admin/customize/site_texts/some_key.json", params: {
-        site_text: { value: 'foo' }, locale: default_locale
-      }
-      expect(response.status).to eq(404)
-
-      put "/admin/customize/reseed.json", params: {
-        category_ids: [], topic_ids: []
-      }
-      expect(response.status).to eq(404)
-    end
-  end
-
-  context "when logged in as admin" do
-    before do
-      sign_in(admin)
-    end
-
-    describe '#index' do
       it 'returns json' do
         get "/admin/customize/site_texts.json", params: { q: 'title', locale: default_locale }
         expect(response.status).to eq(200)
@@ -166,7 +135,7 @@ RSpec.describe Admin::SiteTextsController do
         expect(value).to eq('education.new-topic override')
       end
 
-      context 'plural keys' do
+      context 'with plural keys' do
         before do
           I18n.backend.store_translations(:en, colour: { one: '%{count} colour', other: '%{count} colours' })
         end
@@ -193,21 +162,21 @@ RSpec.describe Admin::SiteTextsController do
           end
         end
 
-        context 'English' do
+        context 'with English' do
           let(:locale) { :en }
           let(:expected_translations) { { one: '%{count} colour', other: '%{count} colours' } }
 
           include_examples 'finds correct plural keys'
         end
 
-        context 'language with different plural keys and missing translations' do
+        context 'with language with different plural keys and missing translations' do
           let(:locale) { :ru }
           let(:expected_translations) { { one: '%{count} colour', few: '%{count} colours', other: '%{count} colours' } }
 
           include_examples 'finds correct plural keys'
         end
 
-        context 'language with different plural keys and partial translation' do
+        context 'with language with different plural keys and partial translation' do
           before do
             I18n.backend.store_translations(:ru, colour: { few: '%{count} цвета', many: '%{count} цветов' })
           end
@@ -234,7 +203,32 @@ RSpec.describe Admin::SiteTextsController do
       end
     end
 
-    describe '#show' do
+    shared_examples "site texts inaccessible" do
+      it "denies access with a 404 response" do
+        get "/admin/customize/site_texts.json", params: { q: 'title', locale: default_locale }
+
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+      end
+    end
+
+    context "when logged in as a moderator" do
+      before { sign_in(moderator) }
+
+      include_examples "site texts inaccessible"
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      include_examples "site texts inaccessible"
+    end
+  end
+
+  describe '#show' do
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
+
       it 'returns a site text for a key that exists' do
         get "/admin/customize/site_texts/js.topic.list.json", params: { locale: default_locale }
         expect(response.status).to eq(200)
@@ -323,7 +317,7 @@ RSpec.describe Admin::SiteTextsController do
         expect(site_text['value']).to eq('education.new-topic override')
       end
 
-      context 'plural keys' do
+      context 'with plural keys' do
         before do
           I18n.backend.store_translations(:en, colour: { one: '%{count} colour', other: '%{count} colours' })
         end
@@ -348,21 +342,21 @@ RSpec.describe Admin::SiteTextsController do
           end
         end
 
-        context 'English' do
+        context 'with English' do
           let(:locale) { :en }
           let(:expected_translations) { { one: '%{count} colour', other: '%{count} colours' } }
 
           include_examples 'has correct plural keys'
         end
 
-        context 'language with different plural keys and missing translations' do
+        context 'with language with different plural keys and missing translations' do
           let(:locale) { :ru }
           let(:expected_translations) { { one: '%{count} colour', few: '%{count} colours', other: '%{count} colours' } }
 
           include_examples 'has correct plural keys'
         end
 
-        context 'language with different plural keys and partial translation' do
+        context 'with language with different plural keys and partial translation' do
           before do
             I18n.backend.store_translations(:ru, colour: { few: '%{count} цвета' })
           end
@@ -375,7 +369,32 @@ RSpec.describe Admin::SiteTextsController do
       end
     end
 
-    describe '#update & #revert' do
+    shared_examples "site text inaccessible" do
+      it "denies access with a 404 response" do
+        get "/admin/customize/site_texts/js.topic.list.json", params: { locale: default_locale }
+
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+      end
+    end
+
+    context "when logged in as a moderator" do
+      before { sign_in(moderator) }
+
+      include_examples "site text inaccessible"
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      include_examples "site text inaccessible"
+    end
+  end
+
+  describe '#update & #revert' do
+    context "when logged in as an admin" do
+      before { sign_in(admin) }
+
       it "returns 'not found' when an unknown key is used" do
         put '/admin/customize/site_texts/some_key.json', params: {
           site_text: { value: 'foo', locale: default_locale }
@@ -553,26 +572,53 @@ RSpec.describe Admin::SiteTextsController do
       end
     end
 
-    context "reseeding" do
-      before do
-        staff_category = Fabricate(
-          :category,
-          name: "Staff EN",
-          user: Discourse.system_user
-        )
-        SiteSetting.staff_category_id = staff_category.id
+    shared_examples "site text update not allowed" do
+      it "prevents updates with a 404 response" do
+        put "/admin/customize/site_texts/js.emoji_picker.animals_%26_nature.json", params: {
+          site_text: { value: 'foo', locale: default_locale }
+        }
 
-        guidelines_topic = Fabricate(
-          :topic,
-          title: "The English Guidelines",
-          category: @staff_category,
-          user: Discourse.system_user
-        )
-        Fabricate(:post, topic: guidelines_topic, user: Discourse.system_user)
-        SiteSetting.guidelines_topic_id = guidelines_topic.id
+        expect(response.status).to eq(404)
+        expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
       end
+    end
 
-      describe '#get_reseed_options' do
+    context "when logged in as a moderator" do
+      before { sign_in(moderator) }
+
+      include_examples "site text update not allowed"
+    end
+
+    context "when logged in as a non-staff user" do
+      before  { sign_in(user) }
+
+      include_examples "site text update not allowed"
+    end
+  end
+
+  context "when reseeding" do
+    before do
+      staff_category = Fabricate(
+        :category,
+        name: "Staff EN",
+        user: Discourse.system_user
+      )
+      SiteSetting.staff_category_id = staff_category.id
+
+      guidelines_topic = Fabricate(
+        :topic,
+        title: "The English Guidelines",
+        category: @staff_category,
+        user: Discourse.system_user
+      )
+      Fabricate(:post, topic: guidelines_topic, user: Discourse.system_user)
+      SiteSetting.guidelines_topic_id = guidelines_topic.id
+    end
+
+    describe '#get_reseed_options' do
+      context "when logged in as an admin" do
+        before { sign_in(admin) }
+
         it 'returns correct json' do
           get "/admin/customize/reseed.json"
           expect(response.status).to eq(200)
@@ -589,7 +635,32 @@ RSpec.describe Admin::SiteTextsController do
         end
       end
 
-      describe '#reseed' do
+      shared_examples "reseed options inaccessible" do
+        it "denies access with a 404 response" do
+          get "/admin/customize/reseed.json"
+
+          expect(response.status).to eq(404)
+          expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+        end
+      end
+
+      context "when logged in as a moderator" do
+        before { sign_in(moderator) }
+
+        include_examples "reseed options inaccessible"
+      end
+
+      context "when logged in as a non-staff user" do
+        before  { sign_in(user) }
+
+        include_examples "reseed options inaccessible"
+      end
+    end
+
+    describe '#reseed' do
+      context "when logged in as an admin" do
+        before { sign_in(admin) }
+
         it 'reseeds categories and topics' do
           SiteSetting.default_locale = :de
 
@@ -602,6 +673,30 @@ RSpec.describe Admin::SiteTextsController do
           expect(Category.find(SiteSetting.staff_category_id).name).to eq(I18n.t("staff_category_name", locale: :de))
           expect(Topic.find(SiteSetting.guidelines_topic_id).title).to eq(I18n.t("guidelines_topic.title", locale: :de))
         end
+      end
+
+      shared_examples "reseed not allowed" do
+        it "prevents reseeds with a 404 response" do
+          post "/admin/customize/reseed.json", params: {
+            category_ids: ["staff_category_id"],
+            topic_ids: ["guidelines_topic_id"]
+          }
+
+          expect(response.status).to eq(404)
+          expect(response.parsed_body["errors"]).to include(I18n.t("not_found"))
+        end
+      end
+
+      context "when logged in as a moderator" do
+        before { sign_in(moderator) }
+
+        include_examples "reseed not allowed"
+      end
+
+      context "when logged in as a non-staff user" do
+        before  { sign_in(user) }
+
+        include_examples "reseed not allowed"
       end
     end
   end

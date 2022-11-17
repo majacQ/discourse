@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 require 'swagger_helper'
 
-describe 'posts' do
+RSpec.describe 'posts' do
 
   let(:'Api-Key') { Fabricate(:api_key).key }
   let(:'Api-Username') { 'system' }
@@ -19,6 +19,7 @@ describe 'posts' do
       operationId 'listPosts'
       parameter name: 'Api-Key', in: :header, type: :string, required: true
       parameter name: 'Api-Username', in: :header, type: :string, required: true
+      parameter name: 'before', in: :query, type: :string, description: "Load posts with an id lower than this value. Useful for pagination.", required: false
       produces 'application/json'
 
       response '200', 'latest posts' do
@@ -318,6 +319,33 @@ describe 'posts' do
     end
   end
 
+  path '/posts/{id}/replies.json' do
+    get 'List replies to a post' do
+      tags 'Posts'
+      operationId 'postReplies'
+      consumes 'application/json'
+      expected_request_schema = nil
+      parameter name: :id, in: :path, schema: { type: :string }
+
+      produces 'application/json'
+      response '200', 'post replies' do
+        expected_response_schema = load_spec_schema('post_replies_response')
+        schema expected_response_schema
+
+        fab!(:user) { Fabricate(:user) }
+        fab!(:topic) { Fabricate(:topic) }
+        fab!(:post) { Fabricate(:post, topic: topic, user: user) }
+        let!(:reply) { PostCreator.new(user, raw: "this is some text for my post", topic_id: topic.id, reply_to_post_number: post.post_number).create }
+        let!(:id) { post.id }
+
+        it_behaves_like "a JSON endpoint", 200 do
+          let(:expected_response_schema) { expected_response_schema }
+          let(:expected_request_schema) { expected_request_schema }
+        end
+      end
+    end
+  end
+
   path '/posts/{id}/locked.json' do
     put 'Lock a post from being edited' do
       tags 'Posts'
@@ -330,7 +358,7 @@ describe 'posts' do
       parameter name: :post_body, in: :body, schema: {
         type: :object,
         properties: {
-          locked: { type: :boolean }
+          locked: { type: :string }
         }, required: [ 'locked' ]
       }
 

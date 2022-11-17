@@ -3,7 +3,7 @@
 module CookedProcessorMixin
 
   def post_process_oneboxes
-    limit = SiteSetting.max_oneboxes_per_post
+    limit = SiteSetting.max_oneboxes_per_post - @doc.css("aside.onebox, a.inline-onebox").size
     oneboxes = {}
     inlineOneboxes = {}
 
@@ -40,6 +40,8 @@ module CookedProcessorMixin
       end
     end
 
+    PrettyText.sanitize_hotlinked_media(@doc)
+
     oneboxed_images.each do |img|
       next if img["src"].blank?
 
@@ -48,18 +50,9 @@ module CookedProcessorMixin
       img_classes = (img["class"] || "").split(" ")
       link_classes = ((parent&.name == "a" && parent["class"]) || "").split(" ")
 
-      if img_classes.include?("onebox") || link_classes.include?("onebox")
-        next if add_image_placeholder!(img)
-      elsif large_images.include?(src) || broken_images.include?(src)
-        img.remove
-        next
-      end
-
-      upload_id = downloaded_images[src]
-      upload = Upload.find_by_id(upload_id) if upload_id
-
-      if upload.present?
-        img["src"] = UrlHelper.cook_url(upload.url, secure: @with_secure_media)
+      if respond_to?(:process_hotlinked_image, true)
+        still_an_image = process_hotlinked_image(img)
+        next if !still_an_image
       end
 
       # make sure we grab dimensions for oneboxed images
@@ -182,10 +175,10 @@ module CookedProcessorMixin
     # FastImage fails when there's no scheme
     absolute_url = SiteSetting.scheme + ":" + absolute_url if absolute_url.start_with?("//")
 
-    # we can't direct FastImage to our secure-media-uploads url because it bounces
+    # we can't direct FastImage to our secure-uploads url because it bounces
     # anonymous requests with a 404 error
-    if url && Upload.secure_media_url?(url)
-      absolute_url = Upload.signed_url_from_secure_media_url(absolute_url)
+    if url && Upload.secure_uploads_url?(url)
+      absolute_url = Upload.signed_url_from_secure_uploads_url(absolute_url)
     end
 
     return unless is_valid_image_url?(absolute_url)
@@ -199,18 +192,6 @@ module CookedProcessorMixin
     uri = URI.parse(url)
     %w(http https).include? uri.scheme
   rescue URI::Error
-  end
-
-  def add_image_placeholder!(img)
-    src = img["src"].sub(/^https?:/i, "")
-
-    if large_images.include?(src)
-      return add_large_image_placeholder!(img)
-    elsif broken_images.include?(src)
-      return add_broken_image_placeholder!(img)
-    end
-
-    false
   end
 
   def add_large_image_placeholder!(img)
@@ -272,6 +253,31 @@ module CookedProcessorMixin
     true
   end
 
+  def add_blocked_hotlinked_image_placeholder!(el)
+    el.name = "a"
+    el.set_attribute("href", el[PrettyText::BLOCKED_HOTLINKED_SRC_ATTR])
+    el.set_attribute("class", "blocked-hotlinked-placeholder")
+    el.set_attribute("title", I18n.t("post.image_placeholder.blocked_hotlinked_title"))
+    el << "<svg class=\"fa d-icon d-icon-link svg-icon\" aria-hidden=\"true\"><use href=\"#link\"></use></svg>"
+    el << "<span class=\"notice\">#{CGI.escapeHTML(I18n.t("post.image_placeholder.blocked_hotlinked"))}</span>"
+
+    true
+  end
+
+  def add_blocked_hotlinked_media_placeholder!(el, src)
+    placeholder = Nokogiri::XML::Node.new("a", el.document)
+    placeholder.name = "a"
+    placeholder.set_attribute("href", src)
+    placeholder.set_attribute("class", "blocked-hotlinked-placeholder")
+    placeholder.set_attribute("title", I18n.t("post.media_placeholder.blocked_hotlinked_title"))
+    placeholder << "<svg class=\"fa d-icon d-icon-link svg-icon\" aria-hidden=\"true\"><use href=\"#link\"></use></svg>"
+    placeholder << "<span class=\"notice\">#{CGI.escapeHTML(I18n.t("post.media_placeholder.blocked_hotlinked"))}</span>"
+
+    el.replace(placeholder)
+
+    true
+  end
+
   def oneboxed_images
     @doc.css(".onebox-body img, .onebox img, img.onebox")
   end
@@ -330,8 +336,9 @@ module CookedProcessorMixin
   end
 
   def create_node(tag_name, klass)
-    node = Nokogiri::XML::Node.new(tag_name, @doc)
+    node = @doc.document.create_element(tag_name)
     node["class"] = klass if klass.present?
+    @doc.add_child(node)
     node
   end
 

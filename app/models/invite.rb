@@ -31,8 +31,10 @@ class Invite < ActiveRecord::Base
   validates_presence_of :invited_by_id
   validates :email, email: true, allow_blank: true
   validate :ensure_max_redemptions_allowed
+  validate :valid_redemption_count
   validate :valid_domain, if: :will_save_change_to_domain?
-  validate :user_doesnt_already_exist
+  validate :user_doesnt_already_exist, if: :will_save_change_to_email?
+  validate :email_xor_domain
 
   before_create do
     self.invite_key ||= SecureRandom.base58(10)
@@ -49,34 +51,47 @@ class Invite < ActiveRecord::Base
     self.email = Email.downcase(email) unless email.nil?
   end
 
-  attr_accessor :email_already_exists
+  attribute :email_already_exists
 
   def self.emailed_status_types
     @emailed_status_types ||= Enum.new(not_required: 0, pending: 1, bulk_pending: 2, sending: 3, sent: 4)
   end
 
   def user_doesnt_already_exist
-    @email_already_exists = false
+    self.email_already_exists = false
     return if email.blank?
     user = Invite.find_user_by_email(email)
 
     if user && user.id != self.invited_users&.first&.user_id
-      @email_already_exists = true
-      errors.add(:base, I18n.t(
-        "invite.user_exists",
-        email: email,
-        username: user.username,
-        base_path: Discourse.base_path
-      ))
+      self.email_already_exists = true
+      errors.add(:base, user_exists_error_msg(email))
     end
   end
 
+  def email_xor_domain
+    if email.present? && domain.present?
+      errors.add(:base, I18n.t('invite.email_xor_domain'))
+    end
+  end
+
+  # Even if a domain is specified on the invite, it still counts as
+  # an invite link.
   def is_invite_link?
-    email.blank?
+    self.email.blank?
+  end
+
+  # Email invites have specific behaviour and it's easier to visually
+  # parse is_email_invite? than !is_invite_link?
+  def is_email_invite?
+    self.email.present?
   end
 
   def redeemable?
     !redeemed? && !expired? && !deleted_at? && !destroyed? && link_valid?
+  end
+
+  def redeemed_by_user?(redeeming_user)
+    self.invited_users.exists?(user: redeeming_user)
   end
 
   def redeemed?
@@ -85,6 +100,22 @@ class Invite < ActiveRecord::Base
     else
       self.invited_users.count > 0
     end
+  end
+
+  def email_matches?(email)
+    email.downcase == self.email.downcase
+  end
+
+  def domain_matches?(email)
+    _, domain = email.split('@')
+    self.domain == domain
+  end
+
+  def can_be_redeemed_by?(user)
+    return false if !self.redeemable?
+    return false if redeemed_by_user?(user)
+    return true if self.email.present? && email_matches?(user.email)
+    self.domain.present? && domain_matches?(user.email)
   end
 
   def expired?
@@ -105,14 +136,7 @@ class Invite < ActiveRecord::Base
 
     email = Email.downcase(opts[:email]) if opts[:email].present?
 
-    if user = find_user_by_email(email)
-      raise UserExists.new(I18n.t(
-        "invite.user_exists",
-        email: email,
-        username: user.username,
-        base_path: Discourse.base_path
-      ))
-    end
+    raise UserExists.new(new.user_exists_error_msg(email)) if find_user_by_email(email)
 
     if email.present?
       invite = Invite
@@ -125,6 +149,8 @@ class Invite < ActiveRecord::Base
         invite.destroy
         invite = nil
       end
+      email_digest = Digest::SHA256.hexdigest(email)
+      RateLimiter.new(invited_by, "reinvites-per-day-#{email_digest}", 3, 1.day.to_i).performed!
     end
 
     emailed_status = if opts[:skip_email] || invite&.emailed_status == emailed_status_types[:not_required]
@@ -174,14 +200,19 @@ class Invite < ActiveRecord::Base
     invite.reload
   end
 
-  def redeem(email: nil, username: nil, name: nil, password: nil, user_custom_fields: nil, ip_address: nil, session: nil, email_token: nil)
+  def redeem(
+    email: nil,
+    username: nil,
+    name: nil,
+    password: nil,
+    user_custom_fields: nil,
+    ip_address: nil,
+    session: nil,
+    email_token: nil,
+    redeeming_user: nil
+  )
     return if !redeemable?
 
-    if is_invite_link? && UserEmail.exists?(email: email)
-      raise UserExists.new I18n.t("invite_link.email_taken")
-    end
-
-    email = self.email if email.blank? && !is_invite_link?
     InviteRedeemer.new(
       invite: self,
       email: email,
@@ -191,13 +222,16 @@ class Invite < ActiveRecord::Base
       user_custom_fields: user_custom_fields,
       ip_address: ip_address,
       session: session,
-      email_token: email_token
+      email_token: email_token,
+      redeeming_user: redeeming_user
     ).redeem
   end
 
-  def self.redeem_from_email(email)
-    invite = Invite.find_by(email: Email.downcase(email))
-    InviteRedeemer.new(invite: invite, email: invite.email).redeem if invite
+  def self.redeem_for_existing_user(user)
+    invite = Invite.find_by(email: Email.downcase(user.email))
+    if invite.present? && invite.redeemable?
+      InviteRedeemer.new(invite: invite, redeeming_user: user).redeem
+    end
     invite
   end
 
@@ -249,23 +283,6 @@ class Invite < ActiveRecord::Base
     Jobs.enqueue(:invite_email, invite_id: self.id)
   end
 
-  def warnings(guardian)
-    @warnings ||= begin
-      warnings = []
-
-      topic = self.topics.first
-      if topic&.read_restricted_category?
-        topic_groups = topic.category.groups
-        if (self.groups & topic_groups).blank?
-          editable_topic_groups = topic_groups.filter { |g| guardian.can_edit_group?(g) }
-          warnings << I18n.t("invite.requires_groups", groups: editable_topic_groups.pluck(:name).join(", "))
-        end
-      end
-
-      warnings
-    end
-  end
-
   def limit_invites_per_day
     RateLimiter.new(invited_by, "invites-per-day", SiteSetting.max_invites_per_day, 1.day.to_i)
   end
@@ -281,9 +298,17 @@ class Invite < ActiveRecord::Base
       limit = invited_by&.staff? ? SiteSetting.invite_link_max_redemptions_limit
                                  : SiteSetting.invite_link_max_redemptions_limit_users
 
-      if !self.max_redemptions_allowed.between?(1, limit)
+      if self.email.present? && self.max_redemptions_allowed != 1
+        errors.add(:max_redemptions_allowed, I18n.t("invite.max_redemptions_allowed_one"))
+      elsif !self.max_redemptions_allowed.between?(1, limit)
         errors.add(:max_redemptions_allowed, I18n.t("invite_link.max_redemptions_limit", max_limit: limit))
       end
+    end
+  end
+
+  def valid_redemption_count
+    if self.redemption_count > self.max_redemptions_allowed
+      errors.add(:redemption_count, I18n.t("invite.redemption_count_less_than_max", max_redemptions_allowed: self.max_redemptions_allowed))
     end
   end
 
@@ -293,8 +318,12 @@ class Invite < ActiveRecord::Base
     self.domain.downcase!
 
     if self.domain !~ Invite::DOMAIN_REGEX
-      self.errors.add(:base, I18n.t('invite.domain_not_allowed', domain: self.domain))
+      self.errors.add(:base, I18n.t('invite.domain_not_allowed'))
     end
+  end
+
+  def user_exists_error_msg(email)
+    I18n.t("invite.user_exists", email: CGI.escapeHTML(email))
   end
 end
 

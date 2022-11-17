@@ -15,6 +15,31 @@ class Notification < ActiveRecord::Base
   scope :recent, lambda { |n = nil| n ||= 10; order('notifications.created_at desc').limit(n) }
   scope :visible , lambda { joins('LEFT JOIN topics ON notifications.topic_id = topics.id')
     .where('topics.id IS NULL OR topics.deleted_at IS NULL') }
+  scope :unread_type, ->(user, type, limit = 30) do
+    unread_types(user, [type], limit)
+  end
+  scope :unread_types, ->(user, types, limit = 30) do
+    where(user_id: user.id, read: false, notification_type: types)
+      .visible
+      .includes(:topic)
+      .limit(limit)
+  end
+  scope :prioritized, ->(deprioritized_types = []) do
+    scope = order("notifications.high_priority AND NOT notifications.read DESC")
+    if deprioritized_types.present?
+      scope = scope.order(DB.sql_fragment("NOT notifications.read AND notifications.notification_type NOT IN (?) DESC", deprioritized_types))
+    else
+      scope = scope.order("NOT notifications.read DESC")
+    end
+    scope.order("notifications.created_at DESC")
+  end
+  scope :for_user_menu, ->(user_id, limit: 30) do
+    where(user_id: user_id)
+      .visible
+      .prioritized
+      .includes(:topic)
+      .limit(limit)
+  end
 
   attr_accessor :skip_send_email
 
@@ -64,7 +89,7 @@ class Notification < ActiveRecord::Base
       DELETE
         FROM notifications n
        WHERE high_priority
-         AND notification_type NOT IN (#{types[:chat_mention].to_i}, #{types[:chat_message].to_i})
+         AND n.topic_id IS NOT NULL
          AND NOT EXISTS (
             SELECT 1
               FROM posts p
@@ -108,7 +133,11 @@ class Notification < ActiveRecord::Base
                         event_invitation: 28,
                         chat_mention: 29,
                         chat_message: 30,
-                        chat_invitation: 31
+                        chat_invitation: 31,
+                        chat_group_mention: 32, # March 2022 - This is obsolete, as all chat_mentions use `chat_mention` type
+                        chat_quoted: 33,
+                        assigned: 34,
+                        question_answer_user_commented: 35, # Used by https://github.com/discourse/discourse-question-answer
                        )
   end
 
@@ -142,6 +171,12 @@ class Notification < ActiveRecord::Base
         read: false
       )
       .update_all(read: true)
+  end
+
+  def self.read_types(user, types = nil)
+    query = Notification.where(user_id: user.id, read: false)
+    query = query.where(notification_type: types) if types
+    query.update_all(read: true)
   end
 
   def self.interesting_after(min_date)
@@ -201,7 +236,37 @@ class Notification < ActiveRecord::Base
     Post.find_by(topic_id: topic_id, post_number: post_number)
   end
 
-  def self.recent_report(user, count = nil)
+  def self.like_types
+    [
+      Notification.types[:liked],
+      Notification.types[:liked_consolidated],
+      Notification.types[:reaction]
+    ]
+  end
+
+  def self.prioritized_list(user, count: 30, types: [])
+    return [] if !user&.user_option
+
+    notifications = user.notifications
+      .includes(:topic)
+      .visible
+      .prioritized(types.present? ? [] : like_types)
+      .limit(count)
+
+    if types.present?
+      notifications = notifications.where(notification_type: types)
+    elsif user.user_option.like_notification_frequency == UserOption.like_notification_frequency_type[:never]
+      like_types.each do |notification_type|
+        notifications = notifications.where(
+          'notification_type <> ?', notification_type
+        )
+      end
+    end
+    notifications.to_a
+  end
+
+  # TODO(osama): deprecate this method when redesigned_user_menu_enabled is removed
+  def self.recent_report(user, count = nil, types = [])
     return unless user && user.user_option
 
     count ||= 10
@@ -210,6 +275,7 @@ class Notification < ActiveRecord::Base
       .recent(count)
       .includes(:topic)
 
+    notifications = notifications.where(notification_type: types) if types.present?
     if user.user_option.like_notification_frequency == UserOption.like_notification_frequency_type[:never]
       [
         Notification.types[:liked],
@@ -224,16 +290,22 @@ class Notification < ActiveRecord::Base
     notifications = notifications.to_a
 
     if notifications.present?
-
-      ids = DB.query_single(<<~SQL, limit: count.to_i)
+      builder = DB.build(<<~SQL)
          SELECT n.id FROM notifications n
-         WHERE
-           n.high_priority = TRUE AND
-           n.user_id = #{user.id.to_i} AND
-           NOT read
+         /*where*/
         ORDER BY n.id ASC
-        LIMIT :limit
+        /*limit*/
       SQL
+
+      builder.where(<<~SQL, user_id: user.id)
+        n.high_priority = TRUE AND
+        n.user_id = :user_id AND
+        NOT read
+      SQL
+      builder.where("notification_type IN (:types)", types: types) if types.present?
+      builder.limit(count.to_i)
+
+      ids = builder.query_single
 
       if ids.length > 0
         notifications += user

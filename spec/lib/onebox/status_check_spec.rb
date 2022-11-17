@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
-describe Onebox::StatusCheck do
+RSpec.describe Onebox::StatusCheck do
   before do
     stub_request(:get, "http://www.amazon.com/200-url").to_return(status: 200)
     stub_request(:get, "http://www.amazon.com/201-url").to_return(status: 201)
@@ -55,6 +53,12 @@ describe Onebox::StatusCheck do
 
     it 'returns :connection_error if there is a general HTTP error' do
       expect(described_class.new("http://www.amazon.com/http-error").human_status).to eq(:connection_error)
+    end
+
+    it 'returns :connection_error for private ips' do
+      FinalDestination::TestHelper.stub_to_fail do
+        expect(described_class.new("http://www.amazon.com/http-error").human_status).to eq(:connection_error)
+      end
     end
   end
 
