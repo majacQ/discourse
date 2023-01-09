@@ -43,7 +43,7 @@ jobs:
             target: core-plugins
 
     steps:
-      - uses: actions/checkout@v3.1.0
+      - uses: actions/checkout@v3.3.0
         with:
           fetch-depth: 1
 
@@ -198,7 +198,7 @@ jobs:
         browser: ["Chrome", "Firefox", "Headless Firefox"]
 
     steps:
-      - uses: actions/checkout@v3.1.0
+      - uses: actions/checkout@v3.3.0
         with:
           fetch-depth: 1
 
